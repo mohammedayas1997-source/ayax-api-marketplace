@@ -1,3 +1,6 @@
+"use client";
+
+import { socket } from "@/lib/socket";
 import Link from "next/link";
 import {
   Wallet,

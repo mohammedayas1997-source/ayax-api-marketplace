@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import Link from "next/link";
 import {
   Users,
@@ -30,42 +30,32 @@ const links = [
   { name: "System Health", href: "/admin/health", icon: <Server /> },
 ];
 
-useEffect(() => {
-  socket.connect();
-
-  socket.on("connect", () => {
-    console.log("Socket Connected");
-  });
-
-  socket.on("funding-request-created", (data) => {
-    console.log(data);
-
-    fetchFundingRequests();
-  });
-
-  socket.on("refund-request-created", () => {
-    fetchRefundRequests();
-  });
-
-  socket.on("support-ticket-created", () => {
-    fetchTickets();
-  });
-
-  socket.on("purchase-successful", () => {
-    fetchTransactions();
-  });
-
-  return () => {
-    socket.off("funding-request-created");
-    socket.off("refund-request-created");
-    socket.off("support-ticket-created");
-    socket.off("purchase-successful");
-
-    socket.disconnect();
-  };
-}, []);
-
 export default function AdminDashboardPage() {
+  useEffect(() => {
+    socket.connect();
+
+    socket.on("connect", () => {
+      console.log("Socket Connected");
+    });
+
+    socket.on("funding-request-created", (data) => {
+      console.log(data);
+    });
+
+    socket.on("refund-request-created", () => {});
+    socket.on("support-ticket-created", () => {});
+    socket.on("purchase-successful", () => {});
+
+    return () => {
+      socket.off("connect");
+      socket.off("funding-request-created");
+      socket.off("refund-request-created");
+      socket.off("support-ticket-created");
+      socket.off("purchase-successful");
+      socket.disconnect();
+    };
+  }, []);
+
   return (
     <main className="min-h-screen bg-slate-950 text-white">
       <div className="flex">
@@ -93,9 +83,7 @@ export default function AdminDashboardPage() {
               >
                 <div className="text-blue-400 mb-5">{item.icon}</div>
                 <p className="text-slate-400">{item.title}</p>
-                <h2 className="text-3xl font-extrabold mt-2">
-                  {item.value}
-                </h2>
+                <h2 className="text-3xl font-extrabold mt-2">{item.value}</h2>
               </div>
             ))}
           </div>

@@ -13,7 +13,7 @@ import Image from "next/image";
 export default function HomePage() {
   return (
     <main className="min-h-screen bg-slate-950 text-white">
-      <nav className="flex items-center justify-between px-6 py-5 max-w-7xl mx-auto">
+      <nav className="bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-md">
         <Link href="/" className="flex items-center gap-3">
   <Image
     src="/assets/logo.png"

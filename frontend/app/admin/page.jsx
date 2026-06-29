@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Users,
@@ -9,7 +12,6 @@ import {
   Settings,
   ShieldCheck,
 } from "lucide-react";
-import { useEffect } from "react";
 import { socket } from "@/lib/socket";
 import AdminSidebar from "@/components/AdminSidebar";
 

@@ -1,0 +1,807 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  STAFF_ADMIN
+  CUSTOMER_SERVICE
+  CUSTOMER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  BLOCKED
+}
+
+enum ApiKeyStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum TransactionType {
+  CREDIT
+  DEBIT
+  REFUND
+  REVERSAL
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  SUCCESSFUL
+  FAILED
+  REVERSED
+}
+
+enum FundingStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum WithdrawalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
+  CANCELLED
+}
+
+enum RefundStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum LedgerType {
+  CREDIT
+  DEBIT
+  REFUND
+  REVERSAL
+  ADJUSTMENT
+}
+
+enum NotificationType {
+  INFO
+  SUCCESS
+  WARNING
+  ERROR
+}
+
+enum NotificationStatus {
+  UNREAD
+  READ
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum ActivityType {
+  LOGIN
+  LOGOUT
+  CREATE
+  UPDATE
+  DELETE
+  APPROVE
+  REJECT
+  API_CALL
+  WALLET
+  SYSTEM
+}
+
+enum SecurityEventType {
+  LOGIN_SUCCESS
+  LOGIN_FAILED
+  PASSWORD_CHANGED
+  PASSWORD_RESET
+  TWO_FACTOR_ENABLED
+  ACCOUNT_LOCKED
+  API_KEY_CREATED
+  API_KEY_REVOKED
+}
+
+enum GsmSimStatus {
+  ACTIVE
+  INACTIVE
+  BUSY
+  ERROR
+  BLOCKED
+}
+
+enum GsmTransactionStatus {
+  PENDING
+  PROCESSING
+  SUCCESSFUL
+  FAILED
+}
+
+enum GsmRechargeStatus {
+  PENDING
+  SUCCESSFUL
+  FAILED
+}
+
+enum GsmHealthStatus {
+  HEALTHY
+  WARNING
+  CRITICAL
+}
+
+enum QueueJobStatus {
+  WAITING
+  ACTIVE
+  COMPLETED
+  FAILED
+  DELAYED
+}
+
+enum BackupStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum PaymentGatewayStatus {
+  ACTIVE
+  DISABLED
+  TEST
+}
+
+enum ProviderStatus {
+  ACTIVE
+  DISABLED
+  MAINTENANCE
+}
+
+enum ServiceStatus {
+  ACTIVE
+  DISABLED
+  MAINTENANCE
+}
+
+enum PlanStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum ApiUsageStatus {
+  SUCCESSFUL
+  FAILED
+  PROCESSING
+}
+
+enum WebhookStatus {
+  ACTIVE
+  DISABLED
+}
+
+model User {
+  id       String     @id @default(cuid())
+  name     String
+  email    String     @unique
+  phone    String?
+  password String
+  role     UserRole   @default(CUSTOMER)
+  status   UserStatus @default(ACTIVE)
+
+  wallet            Wallet?
+  apiKeys           ApiKey[]
+  transactions      Transaction[]
+  fundingRequests   FundingRequest[]
+  refundRequests    RefundRequest[]
+  supportTickets    SupportTicket[]
+  walletFundings    WalletFunding[]
+  walletWithdrawals WalletWithdrawal[]
+  walletLedgers     WalletLedger[]
+  notifications     Notification[]
+  loginHistory      LoginHistory[]
+  activityLogs      ActivityLog[]
+  securityLogs      SecurityLog[]
+  apiUsages         ApiUsage[]
+  webhooks          Webhook[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Wallet {
+  id      String @id @default(cuid())
+  userId  String @unique
+  balance Float  @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ApiKey {
+  id     String       @id @default(cuid())
+  userId String
+  key    String       @unique
+  name   String       @default("Live API Key")
+  status ApiKeyStatus @default(ACTIVE)
+  usages ApiUsage[]
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Transaction {
+  id          String            @id @default(cuid())
+  reference   String            @unique
+  userId      String
+  type        TransactionType
+  service     String?
+  amount      Float
+  status      TransactionStatus @default(PENDING)
+  description String?
+
+  retryCount Int @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model FundingRequest {
+  id        String @id @default(cuid())
+  userId    String
+  amount    Float
+  status    String @default("PENDING")
+  reference String @unique
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model WalletFunding {
+  id         String        @id @default(cuid())
+  userId     String
+  amount     Float
+  reference  String        @unique
+  channel    String?
+  proofUrl   String?
+  status     FundingStatus @default(PENDING)
+  approvedBy String?
+  rejectedBy String?
+  note       String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  approvedAt DateTime?
+  rejectedAt DateTime?
+}
+
+model WalletWithdrawal {
+  id            String           @id @default(cuid())
+  userId        String
+  amount        Float
+  reference     String           @unique
+  bankName      String?
+  accountName   String?
+  accountNumber String?
+  status        WithdrawalStatus @default(PENDING)
+  approvedBy    String?
+  rejectedBy    String?
+  paidBy        String?
+  note          String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  approvedAt DateTime?
+  rejectedAt DateTime?
+  paidAt     DateTime?
+}
+
+model WalletLedger {
+  id            String     @id @default(cuid())
+  userId        String
+  reference     String     @unique
+  type          LedgerType
+  amount        Float
+  balanceBefore Float
+  balanceAfter  Float
+  description   String?
+  module        String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
+
+model RefundRequest {
+  id            String       @id @default(cuid())
+  transactionId String
+  userId        String
+  amount        Float
+  reason        String?
+  status        RefundStatus @default(PENDING)
+  adminPinUsed  Boolean      @default(false)
+  approvedBy    String?
+  rejectedBy    String?
+  rejectionNote String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  approvedAt DateTime?
+  rejectedAt DateTime?
+}
+
+model SupportTicket {
+  id         String  @id @default(cuid())
+  userId     String
+  subject    String
+  message    String
+  status     String  @default("OPEN")
+  priority   String  @default("NORMAL")
+  assignedTo String?
+  escalated  Boolean @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ApiProvider {
+  id          String         @id @default(cuid())
+  name        String
+  slug        String         @unique
+  baseUrl     String?
+  apiKey      String?
+  secretKey   String?
+  status      ProviderStatus @default(ACTIVE)
+  description String?
+
+  services ApiService[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ApiService {
+  id          String        @id @default(cuid())
+  providerId  String
+  name        String
+  slug        String        @unique
+  category    String
+  endpoint    String
+  method      String        @default("POST")
+  status      ServiceStatus @default(ACTIVE)
+  description String?
+
+  provider ApiProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  plans    ApiPlan[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ApiPlan {
+  id           String     @id @default(cuid())
+  serviceId    String
+  name         String
+  code         String     @unique
+  category     String
+  costPrice    Float
+  sellingPrice Float
+  status       PlanStatus @default(ACTIVE)
+  description  String?
+
+  service ApiService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model GsmSim {
+  id String @id @default(cuid())
+
+  slot Int @unique
+
+  number String @unique
+
+  network String
+
+  provider String?
+
+  imei String?
+
+  serial String?
+
+  balance Float @default(0)
+
+  signal Int?
+
+  status GsmSimStatus @default(ACTIVE)
+
+  lastSeen DateTime?
+
+  transactions GsmTransaction[]
+  recharges    GsmRecharge[]
+  healthLogs   GsmHealthLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model GsmTransaction {
+  id String @id @default(cuid())
+
+  simId String
+
+  phoneNumber String
+
+  network String
+
+  amount Float
+
+  reference String @unique
+
+  status GsmTransactionStatus @default(PENDING)
+
+  response String?
+
+  sim GsmSim @relation(fields: [simId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  updatedAt DateTime @updatedAt
+}
+
+model GsmRecharge {
+  id String @id @default(cuid())
+
+  simId String
+
+  amount Float
+
+  reference String @unique
+
+  status GsmRechargeStatus @default(PENDING)
+
+  sim GsmSim @relation(fields: [simId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  updatedAt DateTime @updatedAt
+}
+
+model GsmHealthLog {
+  id String @id @default(cuid())
+
+  simId String
+
+  signal Int?
+
+  battery Int?
+
+  temperature Float?
+
+  status GsmHealthStatus @default(HEALTHY)
+
+  message String?
+
+  sim GsmSim @relation(fields: [simId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  userEmail   String?
+  action      String
+  module      String
+  description String?
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+}
+
+model Notification {
+  id     String @id @default(cuid())
+  userId String
+
+  title   String
+  message String
+
+  type   NotificationType   @default(INFO)
+  status NotificationStatus @default(UNREAD)
+
+  actionUrl String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime  @default(now())
+  readAt    DateTime?
+}
+
+model LoginHistory {
+  id String @id @default(cuid())
+
+  userId String
+
+  ipAddress String?
+  browser   String?
+  os        String?
+  device    String?
+
+  successful Boolean @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
+
+model ActivityLog {
+  id String @id @default(cuid())
+
+  userId String
+
+  type ActivityType
+
+  module String
+
+  description String?
+
+  ipAddress String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
+
+model SecurityLog {
+  id String @id @default(cuid())
+
+  userId String
+
+  event SecurityEventType
+
+  ipAddress String?
+
+  description String?
+
+  successful Boolean @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+}
+
+model SystemSetting {
+  id String @id @default(cuid())
+
+  key String @unique
+
+  value String
+
+  group String?
+
+  createdAt DateTime @default(now())
+
+  updatedAt DateTime @updatedAt
+}
+
+model ApiUsage {
+  id       String  @id @default(cuid())
+  userId   String
+  apiKeyId String?
+
+  endpoint String
+  method   String
+
+  amount Float @default(0)
+
+  status ApiUsageStatus @default(PROCESSING)
+
+  requestBody  String?
+  responseBody String?
+
+  ipAddress String?
+  userAgent String?
+  latency   Int?
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKey ApiKey? @relation(fields: [apiKeyId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+model Webhook {
+  id     String        @id @default(cuid())
+  userId String
+  name   String
+  url    String
+  secret String?
+  status WebhookStatus @default(ACTIVE)
+  events String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ApiDocumentation {
+  id       String  @id @default(cuid())
+  title    String
+  slug     String  @unique
+  content  String
+  category String?
+  status   String  @default("PUBLISHED")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model QueueJob {
+  id       String         @id @default(cuid())
+  name     String
+  queue    String
+  payload  String?
+  status   QueueJobStatus @default(WAITING)
+  attempts Int            @default(0)
+  error    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Backup {
+  id      String       @id @default(cuid())
+  name    String
+  fileUrl String?
+  size    String?
+  status  BackupStatus @default(PENDING)
+  error   String?
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+}
+
+model ServerHealth {
+  id          String  @id @default(cuid())
+  cpuUsage    Float?
+  memoryUsage Float?
+  diskUsage   Float?
+  apiLatency  Int?
+  status      String  @default("HEALTHY")
+  message     String?
+
+  createdAt DateTime @default(now())
+}
+
+model RedisMonitor {
+  id      String  @id @default(cuid())
+  status  String  @default("CONNECTED")
+  memory  String?
+  keys    Int?
+  uptime  String?
+  message String?
+
+  createdAt DateTime @default(now())
+}
+
+model EmailLog {
+  id      String        @id @default(cuid())
+  to      String
+  subject String
+  body    String?
+  status  MessageStatus @default(PENDING)
+  error   String?
+
+  createdAt DateTime  @default(now())
+  sentAt    DateTime?
+}
+
+model SmsLog {
+  id      String        @id @default(cuid())
+  phone   String
+  message String
+  status  MessageStatus @default(PENDING)
+  error   String?
+
+  createdAt DateTime  @default(now())
+  sentAt    DateTime?
+}
+
+model PaymentGateway {
+  id        String               @id @default(cuid())
+  name      String
+  slug      String               @unique
+  publicKey String?
+  secretKey String?
+  baseUrl   String?
+  status    PaymentGatewayStatus @default(TEST)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CompanySetting {
+  id      String  @id @default(cuid())
+  name    String
+  email   String?
+  phone   String?
+  website String?
+  address String?
+  logoUrl String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Currency {
+  id     String  @id @default(cuid())
+  code   String  @unique
+  name   String
+  symbol String
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Country {
+  id       String  @id @default(cuid())
+  name     String
+  code     String  @unique
+  currency String?
+  active   Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SystemConfig {
+  id    String  @id @default(cuid())
+  key   String  @unique
+  value String
+  group String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

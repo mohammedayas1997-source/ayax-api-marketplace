@@ -11,7 +11,7 @@ import {
   XCircle,
 } from "lucide-react";
 
-import DashboardLayout from "../../components/DashboardLayout";
+import SuperAdminLayout from "@/components/layouts/SuperAdminLayout";
 import api from "@/lib/api";
 
 const emptyForm = {
@@ -132,7 +132,7 @@ export default function DataPlansAdminPage() {
   };
 
   return (
-    <DashboardLayout
+    <SuperAdminLayout
       title="Data Plans Management"
       description="Manage data plans from 500MB to 100GB, prices and status."
     >
@@ -291,7 +291,7 @@ export default function DataPlansAdminPage() {
           </div>
         </div>
       )}
-    </DashboardLayout>
+    </SuperAdminLayout>
   );
 }
 

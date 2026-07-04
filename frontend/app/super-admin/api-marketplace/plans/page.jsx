@@ -17,8 +17,12 @@ import {
 import DashboardLayout from "../../components/DashboardLayout";
 import KpiGrid from "../../components/KpiGrid";
 import ActionButton from "../../components/ActionButton";
-import LoadingSkeleton from "../../components/LoadingSkeleton";
 import api from "@/lib/api";
+
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import Loader from "@/components/ui/Loader";
+import Modal from "@/components/ui/Modal";
 
 const emptyForm = {
   serviceId: "",
@@ -42,10 +46,12 @@ export default function ApiPlansPage() {
   const [status, setStatus] = useState("ALL");
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
-
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [editing, setEditing] = useState(null);
+
+  const profit = (plan) =>
+    Number(plan.sellingPrice || 0) - Number(plan.costPrice || 0);
 
   const loadPlans = async () => {
     try {
@@ -148,17 +154,6 @@ export default function ApiPlansPage() {
     }
   };
 
-  const profit = (plan) =>
-    Number(plan.sellingPrice || 0) - Number(plan.costPrice || 0);
-
-  if (loading) {
-    return (
-      <DashboardLayout title="API Plans">
-        <LoadingSkeleton />
-      </DashboardLayout>
-    );
-  }
-
   return (
     <DashboardLayout
       title="API Plans"
@@ -245,204 +240,183 @@ export default function ApiPlansPage() {
         </ActionButton>
       </div>
 
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden">
-        <div className="hidden xl:grid grid-cols-9 gap-4 px-6 py-4 border-b border-slate-800 text-sm text-slate-400 font-semibold">
-          <span>Name</span>
-          <span>Code</span>
-          <span>Service</span>
-          <span>Category</span>
-          <span>Cost</span>
-          <span>Selling</span>
-          <span>Profit</span>
-          <span>Status</span>
-          <span>Actions</span>
-        </div>
+      {loading ? (
+        <Loader text="Loading API plans..." />
+      ) : (
+        <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden">
+          <div className="hidden xl:grid grid-cols-9 gap-4 px-6 py-4 border-b border-slate-800 text-sm text-slate-400 font-semibold">
+            <span>Name</span>
+            <span>Code</span>
+            <span>Service</span>
+            <span>Category</span>
+            <span>Cost</span>
+            <span>Selling</span>
+            <span>Profit</span>
+            <span>Status</span>
+            <span>Actions</span>
+          </div>
 
-        <div className="divide-y divide-slate-800">
-          {plans.length === 0 ? (
-            <div className="p-8 text-slate-500">No API plans found.</div>
-          ) : (
-            plans.map((plan) => (
-              <div
-                key={plan.id}
-                className="grid xl:grid-cols-9 gap-4 px-6 py-5 items-center"
-              >
-                <div>
-                  <h3 className="font-bold">{plan.name}</h3>
-                  <p className="text-xs text-slate-500">
-                    {plan.description || "No description"}
-                  </p>
+          <div className="divide-y divide-slate-800">
+            {plans.length === 0 ? (
+              <div className="p-8 text-slate-500">No API plans found.</div>
+            ) : (
+              plans.map((plan) => (
+                <div
+                  key={plan.id}
+                  className="grid xl:grid-cols-9 gap-4 px-6 py-5 items-center"
+                >
+                  <div>
+                    <h3 className="font-bold">{plan.name}</h3>
+                    <p className="text-xs text-slate-500">
+                      {plan.description || "No description"}
+                    </p>
+                  </div>
+
+                  <span className="text-slate-400">{plan.code}</span>
+                  <span className="text-slate-400">
+                    {plan.service?.name || "-"}
+                  </span>
+                  <span className="text-slate-400">
+                    {plan.category || "-"}
+                  </span>
+                  <span className="text-slate-400">
+                    {formatNaira(plan.costPrice)}
+                  </span>
+                  <span className="font-bold">
+                    {formatNaira(plan.sellingPrice)}
+                  </span>
+                  <span className="text-green-400">
+                    {formatNaira(profit(plan))}
+                  </span>
+
+                  <span
+                    className={`w-fit px-3 py-1 rounded-full text-xs ${
+                      plan.status === "ACTIVE"
+                        ? "bg-green-500/10 text-green-400"
+                        : "bg-red-500/10 text-red-400"
+                    }`}
+                  >
+                    {plan.status}
+                  </span>
+
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => openEdit(plan)}
+                      className="bg-slate-800 hover:bg-slate-700 p-2 rounded-lg"
+                    >
+                      <Edit size={16} />
+                    </button>
+
+                    <button
+                      onClick={() => changeStatus(plan)}
+                      className="bg-slate-800 hover:bg-slate-700 p-2 rounded-lg"
+                    >
+                      <Power size={16} />
+                    </button>
+
+                    <button
+                      onClick={() => deletePlan(plan)}
+                      className="bg-red-500/10 text-red-400 hover:bg-red-500/20 p-2 rounded-lg"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                 </div>
-
-                <span className="text-slate-400">{plan.code}</span>
-                <span className="text-slate-400">
-                  {plan.service?.name || "-"}
-                </span>
-                <span className="text-slate-400">{plan.category || "-"}</span>
-                <span className="text-slate-400">
-                  {formatNaira(plan.costPrice)}
-                </span>
-                <span className="font-bold">
-                  {formatNaira(plan.sellingPrice)}
-                </span>
-                <span className="text-green-400">
-                  {formatNaira(profit(plan))}
-                </span>
-
-                <span
-                  className={`w-fit px-3 py-1 rounded-full text-xs ${
-                    plan.status === "ACTIVE"
-                      ? "bg-green-500/10 text-green-400"
-                      : "bg-red-500/10 text-red-400"
-                  }`}
-                >
-                  {plan.status}
-                </span>
-
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => openEdit(plan)}
-                    className="bg-slate-800 hover:bg-slate-700 p-2 rounded-lg"
-                  >
-                    <Edit size={16} />
-                  </button>
-
-                  <button
-                    onClick={() => changeStatus(plan)}
-                    className="bg-slate-800 hover:bg-slate-700 p-2 rounded-lg"
-                  >
-                    <Power size={16} />
-                  </button>
-
-                  <button
-                    onClick={() => deletePlan(plan)}
-                    className="bg-red-500/10 text-red-400 hover:bg-red-500/20 p-2 rounded-lg"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-
-      {formOpen && (
-        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center px-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 w-full max-w-2xl">
-            <h2 className="text-xl font-bold mb-5">
-              {editing ? "Edit API Plan" : "Add API Plan"}
-            </h2>
-
-            <div className="grid gap-4">
-              <div>
-                <label className="text-sm text-slate-400">Service</label>
-                <select
-                  value={form.serviceId}
-                  onChange={(e) =>
-                    setForm({ ...form, serviceId: e.target.value })
-                  }
-                  className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 outline-none"
-                >
-                  <option value="">Select Service</option>
-                  {services.map((service) => (
-                    <option key={service.id} value={service.id}>
-                      {service.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <Input
-                label="Plan Name"
-                value={form.name}
-                onChange={(v) => setForm({ ...form, name: v })}
-                placeholder="MTN SME 1GB"
-              />
-
-              <Input
-                label="Plan Code"
-                value={form.code}
-                onChange={(v) => setForm({ ...form, code: v.toUpperCase() })}
-                placeholder="MTN_SME_1GB"
-              />
-
-              <Input
-                label="Category"
-                value={form.category}
-                onChange={(v) => setForm({ ...form, category: v.toUpperCase() })}
-                placeholder="DATA"
-              />
-
-              <Input
-                label="Cost Price"
-                type="number"
-                value={form.costPrice}
-                onChange={(v) => setForm({ ...form, costPrice: v })}
-                placeholder="500"
-              />
-
-              <Input
-                label="Selling Price"
-                type="number"
-                value={form.sellingPrice}
-                onChange={(v) => setForm({ ...form, sellingPrice: v })}
-                placeholder="600"
-              />
-
-              <div>
-                <label className="text-sm text-slate-400">Status</label>
-                <select
-                  value={form.status}
-                  onChange={(e) => setForm({ ...form, status: e.target.value })}
-                  className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 outline-none"
-                >
-                  <option value="ACTIVE">ACTIVE</option>
-                  <option value="DISABLED">DISABLED</option>
-                </select>
-              </div>
-
-              <Input
-                label="Description"
-                value={form.description}
-                onChange={(v) => setForm({ ...form, description: v })}
-                placeholder="Plan description"
-              />
-            </div>
-
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                onClick={() => setFormOpen(false)}
-                className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-2xl"
-              >
-                Cancel
-              </button>
-
-              <button
-                onClick={submitPlan}
-                className="bg-blue-600 hover:bg-blue-700 px-5 py-3 rounded-2xl font-semibold"
-              >
-                {editing ? "Update Plan" : "Create Plan"}
-              </button>
-            </div>
+              ))
+            )}
           </div>
         </div>
       )}
-    </DashboardLayout>
-  );
-}
 
-function Input({ label, value, onChange, placeholder, type = "text" }) {
-  return (
-    <div>
-      <label className="text-sm text-slate-400">{label}</label>
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 outline-none"
-      />
-    </div>
+      <Modal
+        open={formOpen}
+        title={editing ? "Edit API Plan" : "Add API Plan"}
+        onClose={() => setFormOpen(false)}
+      >
+        <div className="grid gap-4">
+          <div>
+            <label className="text-sm text-slate-400">Service</label>
+            <select
+              value={form.serviceId}
+              onChange={(e) => setForm({ ...form, serviceId: e.target.value })}
+              className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 outline-none"
+            >
+              <option value="">Select Service</option>
+              {services.map((service) => (
+                <option key={service.id} value={service.id}>
+                  {service.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <Input
+            label="Plan Name"
+            value={form.name}
+            onChange={(v) => setForm({ ...form, name: v })}
+            placeholder="MTN SME 1GB"
+          />
+
+          <Input
+            label="Plan Code"
+            value={form.code}
+            onChange={(v) => setForm({ ...form, code: v.toUpperCase() })}
+            placeholder="MTN_SME_1GB"
+          />
+
+          <Input
+            label="Category"
+            value={form.category}
+            onChange={(v) => setForm({ ...form, category: v.toUpperCase() })}
+            placeholder="DATA"
+          />
+
+          <Input
+            label="Cost Price"
+            type="number"
+            value={form.costPrice}
+            onChange={(v) => setForm({ ...form, costPrice: v })}
+            placeholder="500"
+          />
+
+          <Input
+            label="Selling Price"
+            type="number"
+            value={form.sellingPrice}
+            onChange={(v) => setForm({ ...form, sellingPrice: v })}
+            placeholder="600"
+          />
+
+          <div>
+            <label className="text-sm text-slate-400">Status</label>
+            <select
+              value={form.status}
+              onChange={(e) => setForm({ ...form, status: e.target.value })}
+              className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 outline-none"
+            >
+              <option value="ACTIVE">ACTIVE</option>
+              <option value="DISABLED">DISABLED</option>
+            </select>
+          </div>
+
+          <Input
+            label="Description"
+            value={form.description}
+            onChange={(v) => setForm({ ...form, description: v })}
+            placeholder="Plan description"
+          />
+
+          <div className="mt-4 flex justify-end gap-3">
+            <Button variant="dark" onClick={() => setFormOpen(false)}>
+              Cancel
+            </Button>
+
+            <Button onClick={submitPlan}>
+              {editing ? "Update Plan" : "Create Plan"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </DashboardLayout>
   );
 }

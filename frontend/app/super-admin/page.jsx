@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-
 import {
   Users,
   ShieldCheck,
@@ -17,8 +16,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
-import SuperSidebar from "./components/SuperSidebar";
-import SuperTopbar from "./components/SuperTopbar";
+import SuperAdminLayout from "@/components/layouts/SuperAdminLayout";
 import api from "@/lib/api";
 
 const formatNaira = (amount) =>
@@ -94,88 +92,82 @@ export default function SuperAdminDashboard() {
   ];
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white">
-      <div className="flex">
-        <SuperSidebar />
+    <SuperAdminLayout
+      title="Super Admin Dashboard"
+      description="Monitor users, wallet, funding, API marketplace, GSM gateway and system activity."
+    >
+      {loading ? (
+        <div className="text-slate-400">Loading dashboard...</div>
+      ) : (
+        <>
+          <section className="grid sm:grid-cols-2 xl:grid-cols-4 gap-5 mb-8">
+            {statCards.map((item) => (
+              <StatCard key={item.title} item={item} />
+            ))}
+          </section>
 
-        <section className="flex-1 p-6 lg:p-10">
-          <SuperTopbar title="Super Admin Dashboard" />
+          <section className="grid xl:grid-cols-[1.1fr_0.9fr] gap-8">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6">
+              <h2 className="text-xl font-bold mb-5">Requests Center</h2>
 
-          {loading ? (
-            <div className="text-slate-400">Loading dashboard...</div>
-          ) : (
-            <>
-              <section
-                className="grid gap-5 mb-8"
-                style={{
-                  gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                }}
-              >
-                {statCards.map((item) => (
-                  <StatCard key={item.title} item={item} />
-                ))}
-              </section>
-
-              <section className="grid xl:grid-cols-[1.1fr_0.9fr] gap-8">
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6">
-                  <h2 className="text-xl font-bold mb-5">
-                    Requests Center
-                  </h2>
-
-                  <div className="space-y-4">
-                    {requests.map((item, index) => (
-                      <div
-                        key={index}
-                        className="bg-slate-950 border border-slate-800 rounded-2xl p-5 flex items-center justify-between gap-4"
-                      >
-                        <div>
-                          <h3 className="font-bold">{item.title}</h3>
-                          <p className="text-sm text-slate-500 mt-1">
-                            {item.desc}
-                          </p>
-                        </div>
-
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs ${
-                            item.status === "Alert"
-                              ? "bg-red-500/10 text-red-400"
-                              : "bg-yellow-500/10 text-yellow-400"
-                          }`}
-                        >
-                          {item.status}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6">
-                  <h2 className="text-xl font-bold mb-5">
-                    Live Activity Feed
-                  </h2>
-
-                  <div className="space-y-4">
-                    {activities.map((item, index) => (
-                      <div
-                        key={index}
-                        className="bg-slate-950 border border-slate-800 rounded-2xl p-4"
-                      >
-                        <p className="text-slate-300">{item.text}</p>
-                        <p className="text-xs text-slate-500 mt-1">
-                          {item.time
-                            ? new Date(item.time).toLocaleString()
-                            : "Just now"}
+              <div className="space-y-4">
+                {requests.length === 0 ? (
+                  <p className="text-slate-500">No pending requests.</p>
+                ) : (
+                  requests.map((item, index) => (
+                    <div
+                      key={index}
+                      className="bg-slate-950 border border-slate-800 rounded-2xl p-5 flex items-center justify-between gap-4"
+                    >
+                      <div>
+                        <h3 className="font-bold">{item.title}</h3>
+                        <p className="text-sm text-slate-500 mt-1">
+                          {item.desc}
                         </p>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              </section>
-            </>
-          )}
-        </section>
-      </div>
-    </main>
+
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs ${
+                          item.status === "Alert"
+                            ? "bg-red-500/10 text-red-400"
+                            : "bg-yellow-500/10 text-yellow-400"
+                        }`}
+                      >
+                        {item.status}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6">
+              <h2 className="text-xl font-bold mb-5">Live Activity Feed</h2>
+
+              <div className="space-y-4">
+                {activities.length === 0 ? (
+                  <p className="text-slate-500">No recent activity.</p>
+                ) : (
+                  activities.map((item, index) => (
+                    <div
+                      key={index}
+                      className="bg-slate-950 border border-slate-800 rounded-2xl p-4"
+                    >
+                      <p className="text-slate-300">{item.text}</p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {item.time
+                          ? new Date(item.time).toLocaleString()
+                          : "Just now"}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </section>
+        </>
+      )}
+    </SuperAdminLayout>
   );
 }
 
@@ -189,7 +181,6 @@ function StatCard({ item }) {
       </div>
 
       <p className="text-slate-400 text-sm">{item.title}</p>
-
       <h2 className="text-3xl font-extrabold mt-2">{item.value}</h2>
     </div>
   );

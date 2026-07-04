@@ -8,7 +8,8 @@
     "start": "node src/server.js",
     "prisma:format": "prisma format",
     "prisma:validate": "prisma validate",
-    "prisma:generate": "prisma generate"
+    "prisma:generate": "prisma generate",
+    "seed": "node prisma/seed.js"
   },
   "keywords": [
     "api-marketplace",
@@ -21,6 +22,7 @@
   "type": "commonjs",
   "dependencies": {
     "@prisma/client": "^6.15.0",
+    "axios": "^1.18.1",
     "bcryptjs": "^3.0.3",
     "bullmq": "^5.78.1",
     "cors": "^2.8.6",

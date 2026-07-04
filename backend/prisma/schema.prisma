@@ -295,11 +295,17 @@ model WalletFunding {
   userId     String
   amount     Float
   reference  String        @unique
+
   channel    String?
+  paymentReference String?
+
   proofUrl   String?
+
   status     FundingStatus @default(PENDING)
+
   approvedBy String?
   rejectedBy String?
+
   note       String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -804,4 +810,63 @@ model SystemConfig {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+enum GsmDeviceStatus {
+  ONLINE
+  OFFLINE
+  BUSY
+  ERROR
+}
+
+enum GsmCommandStatus {
+  PENDING
+  PROCESSING
+  SUCCESSFUL
+  FAILED
+  CANCELLED
+}
+
+enum GsmCommandType {
+  BUY_AIRTIME
+  BUY_DATA
+  CHECK_BALANCE
+  SEND_SMS
+  READ_SMS
+  USSD
+}
+
+model GsmDevice {
+  id        String          @id @default(cuid())
+  name      String
+  code      String          @unique
+  secretKey String
+  location  String?
+
+  status    GsmDeviceStatus @default(OFFLINE)
+  battery   Int?
+  charging  Boolean?
+  signal    Int?
+  internet  Boolean?
+  lastSeen  DateTime?
+
+  commands  GsmCommand[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model GsmCommand {
+  id          String           @id @default(cuid())
+  reference   String           @unique
+  deviceId    String?
+  type        GsmCommandType
+  payload     String?
+  status      GsmCommandStatus @default(PENDING)
+  response    String?
+
+  device      GsmDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
 }

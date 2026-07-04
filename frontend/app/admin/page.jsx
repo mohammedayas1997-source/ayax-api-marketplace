@@ -13,7 +13,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { socket } from "@/lib/socket";
-import AdminSidebar from "@/components/AdminSidebar";
+import AdminLayout from "@/components/layouts/AdminLayout";
 
 const stats = [
   { title: "Total Users", value: "1,248", icon: <Users /> },
@@ -57,58 +57,49 @@ export default function AdminDashboardPage() {
   }, []);
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white">
-      <div className="flex">
-        <AdminSidebar active="admin" />
+    <AdminLayout
+      title="Admin Dashboard"
+      description="Monitor users, revenue, API usage, pricing and system health."
+    >
+      <div className="mb-10">
+        <div className="flex items-center gap-3 text-blue-400 mb-3">
+          <ShieldCheck />
+          <span className="font-semibold">Admin Control Panel</span>
+        </div>
+      </div>
 
-        <section className="flex-1 p-6 lg:p-10">
-          <div className="mb-10">
-            <div className="flex items-center gap-3 text-blue-400 mb-3">
-              <ShieldCheck />
-              <span className="font-semibold">Super Admin Control Panel</span>
+      <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-6">
+        {stats.map((item) => (
+          <div
+            key={item.title}
+            className="bg-slate-900 border border-slate-800 rounded-3xl p-6"
+          >
+            <div className="text-blue-400 mb-5">{item.icon}</div>
+            <p className="text-slate-400">{item.title}</p>
+            <h2 className="text-3xl font-extrabold mt-2">{item.value}</h2>
+          </div>
+        ))}
+      </div>
+
+      <section className="mt-8 grid md:grid-cols-2 xl:grid-cols-3 gap-6">
+        {links.map((item) => (
+          <Link
+            key={item.href}
+            href={item.href}
+            className="bg-slate-900 border border-slate-800 hover:border-blue-500 rounded-3xl p-6 transition"
+          >
+            <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center mb-5">
+              {item.icon}
             </div>
 
-            <h1 className="text-3xl font-extrabold">Admin Dashboard</h1>
+            <h2 className="text-xl font-bold">{item.name}</h2>
 
-            <p className="text-slate-400 mt-2">
-              Monitor users, revenue, API usage, pricing and system health.
+            <p className="text-slate-400 mt-3">
+              Open and manage {item.name.toLowerCase()}.
             </p>
-          </div>
-
-          <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-6">
-            {stats.map((item) => (
-              <div
-                key={item.title}
-                className="bg-slate-900 border border-slate-800 rounded-3xl p-6"
-              >
-                <div className="text-blue-400 mb-5">{item.icon}</div>
-                <p className="text-slate-400">{item.title}</p>
-                <h2 className="text-3xl font-extrabold mt-2">{item.value}</h2>
-              </div>
-            ))}
-          </div>
-
-          <section className="mt-8 grid md:grid-cols-2 xl:grid-cols-3 gap-6">
-            {links.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="bg-slate-900 border border-slate-800 hover:border-blue-500 rounded-3xl p-6 transition"
-              >
-                <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center mb-5">
-                  {item.icon}
-                </div>
-
-                <h2 className="text-xl font-bold">{item.name}</h2>
-
-                <p className="text-slate-400 mt-3">
-                  Open and manage {item.name.toLowerCase()}.
-                </p>
-              </Link>
-            ))}
-          </section>
-        </section>
-      </div>
-    </main>
+          </Link>
+        ))}
+      </section>
+    </AdminLayout>
   );
 }

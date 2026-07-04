@@ -24,7 +24,7 @@ const walletModuleRoutes = require("./modules/wallet/wallet.routes");
 
 const apiProviderRoutes = require("./modules/api-marketplace/api-provider.routes");
 const apiServiceRoutes = require("./modules/api-marketplace/api-service.routes");
-const apiPlanRoutes = require("./modules/api-marketplace/api-plan.routes");
+
 const apiKeyModuleRoutes = require("./modules/api-marketplace/api-key.routes");
 const apiUsageRoutes = require("./modules/api-marketplace/api-usage.routes");
 const webhookRoutes = require("./modules/api-marketplace/webhook.routes");
@@ -35,12 +35,20 @@ const {
   errorHandler,
 } = require("./middlewares/error.middleware");
 const apiMarketplaceDashboardRoutes = require("./modules/api-marketplace/api-marketplace-dashboard.routes");
+const walletRoutes = require("./routes/wallet.routes");
+const apiPlanRoutes = require("./routes/apiPlan.routes");
+const marketplaceRoutes = require("./routes/marketplace.routes");
+const gatewayRoutes = require("./routes/gateway.routes");
 
 const app = express();
 
 app.use(cors());
 app.use(helmet());
 app.use(morgan("dev"));
+app.use(
+  "/api/v1/wallet/paystack/webhook",
+  express.raw({ type: "application/json" })
+);
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -68,7 +76,7 @@ app.use("/api/v1/wallet", walletModuleRoutes);
 
 app.use("/api/v1/api-providers", apiProviderRoutes);
 app.use("/api/v1/api-services", apiServiceRoutes);
-app.use("/api/v1/api-plans", apiPlanRoutes);
+
 app.use("/api/v1/api-keys", apiKeyModuleRoutes);
 app.use("/api/v1/api-usage", apiUsageRoutes);
 app.use("/api/v1/webhooks", webhookRoutes);
@@ -77,7 +85,10 @@ app.use("/api/v1/super-admin", superAdminRoutes);
 app.use("/api/v1/data", dataRoutes);
 app.use("/api/v1/airtime", airtimeRoutes);
 app.use("/api/v1/api-marketplace", apiMarketplaceDashboardRoutes);
-
+app.use("/api/v1/wallet", walletRoutes);
+app.use("/api/v1/plans", apiPlanRoutes);
+app.use("/api/v1/marketplace", marketplaceRoutes);
+app.use("/api/v1/gateway", gatewayRoutes);
 app.use(notFound);
 app.use(errorHandler);
 

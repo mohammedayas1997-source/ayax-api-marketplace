@@ -870,3 +870,58 @@ model GsmCommand {
   updatedAt   DateTime  @updatedAt
   completedAt DateTime?
 }
+model GatewayDevice {
+  id            String   @id @default(cuid())
+
+  pairCode      String   @unique
+  token         String   @unique
+
+  deviceName    String
+  brand         String
+  model         String
+
+  uniqueId      String   @unique
+
+  androidVersion String?
+
+  manufacturer  String?
+
+  batteryLevel  Int       @default(0)
+
+  signalLevel   Int       @default(0)
+
+  simCount      Int       @default(0)
+
+  ipAddress     String?
+
+  appVersion    String?
+
+  socketId      String?
+
+  status        String    @default("OFFLINE")
+
+  lastSeen      DateTime?
+
+  createdAt     DateTime  @default(now())
+
+  updatedAt     DateTime  @updatedAt
+}
+model GsmPairCode {
+  id          String   @id @default(cuid())
+
+  code        String   @unique
+
+  status      PairStatus @default(PENDING)
+
+  expiresAt   DateTime
+
+  usedAt      DateTime?
+
+  createdAt   DateTime @default(now())
+}
+
+enum PairStatus {
+  PENDING
+  USED
+  EXPIRED
+}

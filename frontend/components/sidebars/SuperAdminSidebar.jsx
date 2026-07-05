@@ -34,6 +34,7 @@ const links = [
   { name: "Customer Service", href: "/super-admin/customer-service", icon: Headphones },
 
   { section: "MARKETPLACE" },
+  { name: "Gateway Devices", href: "/super-admin/gateway-devices", icon: Smartphone },
   { name: "API Marketplace", href: "/super-admin/api-marketplace", icon: Database },
   { name: "Data Plans", href: "/super-admin/api-marketplace/data-plans", icon: Wifi },
   { name: "Providers", href: "/super-admin/api-marketplace/providers", icon: ShieldCheck },

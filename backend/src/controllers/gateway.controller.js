@@ -123,3 +123,126 @@ exports.receiveCommandResult = async (req, res) => {
     });
   }
 };
+exports.generatePairCode = async (req, res) => {
+  try {
+    const code =
+      "AYAX-" + crypto.randomBytes(3).toString("hex").toUpperCase();
+
+    const pairCode = await prisma.gsmPairCode.create({
+      data: {
+        code,
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+      },
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Pair code generated",
+      code: pairCode.code,
+      expiresAt: pairCode.expiresAt,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+exports.getDevices = async (req, res) => {
+  try {
+    const devices = await prisma.gsmDevice.findMany({
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    return res.json({
+      success: true,
+      devices,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.disconnectDevice = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const device = await prisma.gsmDevice.update({
+      where: { id },
+      data: {
+        status: "OFFLINE",
+      },
+    });
+
+    emitEvent("gsm-device-disconnected", {
+      device,
+    });
+
+    return res.json({
+      success: true,
+      message: "Device disconnected successfully",
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.deleteDevice = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    await prisma.gsmDevice.delete({
+      where: { id },
+    });
+
+    emitEvent("gsm-device-deleted", {
+      id,
+    });
+
+    return res.json({
+      success: true,
+      message: "Device deleted successfully",
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.renameDevice = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
+
+    const device = await prisma.gsmDevice.update({
+      where: { id },
+      data: {
+        name,
+      },
+    });
+
+    emitEvent("gsm-device-renamed", {
+      device,
+    });
+
+    return res.json({
+      success: true,
+      device,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};

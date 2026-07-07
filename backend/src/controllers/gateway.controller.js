@@ -13,6 +13,47 @@ exports.pairDevice = async (req, res) => {
       });
     }
 
+    const pairCode = await prisma.gsmPairCode.findUnique({
+      where: { code: deviceCode },
+    });
+
+    if (!pairCode) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid pair code. Generate a new pair code.",
+      });
+    }
+
+    if (pairCode.status !== "PENDING") {
+      return res.status(400).json({
+        success: false,
+        message: "This pair code has already been used.",
+      });
+    }
+
+    if (new Date(pairCode.expiresAt) < new Date()) {
+      await prisma.gsmPairCode.update({
+        where: { code: deviceCode },
+        data: { status: "EXPIRED" },
+      });
+
+      return res.status(400).json({
+        success: false,
+        message: "Pair code expired. Generate a new pair code.",
+      });
+    }
+
+    const existingDevice = await prisma.gsmDevice.findUnique({
+      where: { code: deviceCode },
+    });
+
+    if (existingDevice) {
+      return res.status(400).json({
+        success: false,
+        message: "This pair code has already been used by another device.",
+      });
+    }
+
     const secretKey = crypto.randomBytes(32).toString("hex");
 
     const device = await prisma.gsmDevice.create({
@@ -23,6 +64,14 @@ exports.pairDevice = async (req, res) => {
         location: location || null,
         status: "ONLINE",
         lastSeen: new Date(),
+      },
+    });
+
+    await prisma.gsmPairCode.update({
+      where: { code: deviceCode },
+      data: {
+        status: "USED",
+        usedAt: new Date(),
       },
     });
 
@@ -78,10 +127,7 @@ exports.heartbeat = async (req, res) => {
       device: updated,
     });
   } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: error.message,
-    });
+    return res.status(400).json({ success: false, message: error.message });
   }
 };
 
@@ -117,16 +163,13 @@ exports.receiveCommandResult = async (req, res) => {
       command,
     });
   } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: error.message,
-    });
+    return res.status(400).json({ success: false, message: error.message });
   }
 };
+
 exports.generatePairCode = async (req, res) => {
   try {
-    const code =
-      "AYAX-" + crypto.randomBytes(3).toString("hex").toUpperCase();
+    const code = "AYAX-" + crypto.randomBytes(3).toString("hex").toUpperCase();
 
     const pairCode = await prisma.gsmPairCode.create({
       data: {
@@ -142,29 +185,19 @@ exports.generatePairCode = async (req, res) => {
       expiresAt: pairCode.expiresAt,
     });
   } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: error.message,
-    });
+    return res.status(400).json({ success: false, message: error.message });
   }
 };
+
 exports.getDevices = async (req, res) => {
   try {
     const devices = await prisma.gsmDevice.findMany({
-      orderBy: {
-        createdAt: "desc",
-      },
+      orderBy: { createdAt: "desc" },
     });
 
-    return res.json({
-      success: true,
-      devices,
-    });
+    return res.json({ success: true, devices });
   } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: error.message,
-    });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -174,24 +207,17 @@ exports.disconnectDevice = async (req, res) => {
 
     const device = await prisma.gsmDevice.update({
       where: { id },
-      data: {
-        status: "OFFLINE",
-      },
+      data: { status: "OFFLINE" },
     });
 
-    emitEvent("gsm-device-disconnected", {
-      device,
-    });
+    emitEvent("gsm-device-disconnected", { device });
 
     return res.json({
       success: true,
       message: "Device disconnected successfully",
     });
   } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: error.message,
-    });
+    return res.status(400).json({ success: false, message: error.message });
   }
 };
 
@@ -203,19 +229,14 @@ exports.deleteDevice = async (req, res) => {
       where: { id },
     });
 
-    emitEvent("gsm-device-deleted", {
-      id,
-    });
+    emitEvent("gsm-device-deleted", { id });
 
     return res.json({
       success: true,
       message: "Device deleted successfully",
     });
   } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: error.message,
-    });
+    return res.status(400).json({ success: false, message: error.message });
   }
 };
 
@@ -226,26 +247,17 @@ exports.renameDevice = async (req, res) => {
 
     const device = await prisma.gsmDevice.update({
       where: { id },
-      data: {
-        name,
-      },
+      data: { name },
     });
 
-    emitEvent("gsm-device-renamed", {
-      device,
-    });
+    emitEvent("gsm-device-renamed", { device });
 
-    return res.json({
-      success: true,
-      device,
-    });
+    return res.json({ success: true, device });
   } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: error.message,
-    });
+    return res.status(400).json({ success: false, message: error.message });
   }
 };
+
 exports.receiveIncomingSms = async (req, res) => {
   try {
     const { deviceId, secretKey, phoneNumber, message } = req.body;
@@ -262,69 +274,27 @@ exports.receiveIncomingSms = async (req, res) => {
     }
 
     const sms = await prisma.smsInbox.create({
-      data: {
-        deviceId,
-        phoneNumber,
-        message,
-      },
+      data: { deviceId, phoneNumber, message },
     });
 
     emitEvent("gsm-sms-received", { sms });
 
-    return res.status(201).json({
-      success: true,
-      sms,
-    });
+    return res.status(201).json({ success: true, sms });
   } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: error.message,
-    });
+    return res.status(400).json({ success: false, message: error.message });
   }
 };
+
 exports.getIncomingSms = async (req, res) => {
   try {
     const sms = await prisma.smsInbox.findMany({
-      include: {
-        device: true,
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
+      include: { device: true },
+      orderBy: { createdAt: "desc" },
       take: 200,
     });
 
-    return res.json({
-      success: true,
-      sms,
-    });
+    return res.json({ success: true, sms });
   } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
-exports.getIncomingSms = async (req, res) => {
-  try {
-    const sms = await prisma.smsInbox.findMany({
-      include: {
-        device: true,
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-      take: 200,
-    });
-
-    return res.json({
-      success: true,
-      sms,
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: error.message,
-    });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };

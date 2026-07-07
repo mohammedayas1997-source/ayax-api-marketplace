@@ -1,6 +1,7 @@
 const prisma = require("../config/prisma");
 const crypto = require("crypto");
 const { emitEvent } = require("../config/socket");
+const { findBestDevice } = require("../services/gsmRouting.service");
 
 exports.buyAirtime = async (req, res) => {
   try {
@@ -26,18 +27,15 @@ exports.buyAirtime = async (req, res) => {
     const reference =
       "AIRTIME-" + crypto.randomBytes(8).toString("hex").toUpperCase();
 
+    const device = await findBestDevice();
+
     const result = await prisma.$transaction(async (tx) => {
       const wallet = await tx.wallet.findUnique({
         where: { userId },
       });
 
-      if (!wallet) {
-        throw new Error("Wallet not found");
-      }
-
-      if (wallet.balance < value) {
-        throw new Error("Insufficient wallet balance");
-      }
+      if (!wallet) throw new Error("Wallet not found");
+      if (wallet.balance < value) throw new Error("Insufficient wallet balance");
 
       const balanceBefore = wallet.balance;
       const balanceAfter = balanceBefore - value;
@@ -72,26 +70,41 @@ exports.buyAirtime = async (req, res) => {
         },
       });
 
-      return {
-        wallet: updatedWallet,
-        transaction,
-      };
+      const command = await tx.gsmCommand.create({
+        data: {
+          reference,
+          deviceId: device.id,
+          type: "USSD",
+          status: "PENDING",
+          payload: {
+            network,
+            phone,
+            amount: value,
+            ussdCode: `*000*${phone}*${value}#`,
+          },
+        },
+      });
+
+      return { wallet: updatedWallet, transaction, command };
     });
 
-    emitEvent("wallet-updated", {
-      userId,
-      wallet: result.wallet,
-    });
+    emitEvent("wallet-updated", { userId, wallet: result.wallet });
 
-    emitEvent("purchase-successful", {
-      userId,
-      transaction: result.transaction,
-    });
+    emitEvent(
+      "gateway-command",
+      {
+        reference,
+        type: "USSD",
+        ussdCode: result.command.payload.ussdCode,
+      },
+      device.id
+    );
 
     return res.status(201).json({
       success: true,
-      message: "Airtime purchase created successfully",
-      ...result,
+      message: "Airtime purchase sent to GSM Gateway",
+      transaction: result.transaction,
+      command: result.command,
     });
   } catch (error) {
     return res.status(400).json({

@@ -13,8 +13,23 @@ exports.initSocket = (server) => {
   io.on("connection", (socket) => {
     console.log("Socket connected:", socket.id);
 
+    const { deviceId } = socket.handshake.auth || {};
+
+    if (deviceId) {
+      socket.join(deviceId);
+      console.log(`Gateway joined device room: ${deviceId}`);
+    }
+
     socket.on("join", (room) => {
       socket.join(room);
+      console.log(`${socket.id} joined room: ${room}`);
+    });
+
+    socket.on("gateway-device-online", ({ deviceId }) => {
+      if (deviceId) {
+        socket.join(deviceId);
+        console.log(`Gateway online room joined: ${deviceId}`);
+      }
     });
 
     socket.on("disconnect", () => {
@@ -25,20 +40,15 @@ exports.initSocket = (server) => {
   return io;
 };
 
-exports.getIO = () => {
-  if (!io) {
-    return null;
-  }
-
-  return io;
-};
+exports.getIO = () => io;
 
 exports.emitEvent = (event, payload, room = null) => {
   if (!io) return;
 
   if (room) {
     io.to(room).emit(event, payload);
-  } else {
-    io.emit(event, payload);
+    return;
   }
+
+  io.emit(event, payload);
 };

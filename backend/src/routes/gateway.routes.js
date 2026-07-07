@@ -8,6 +8,8 @@ const {
   disconnectDevice,
   deleteDevice,
   renameDevice,
+  getIncomingSms,
+  receiveIncomingSms,
 } = require("../controllers/gateway.controller");
 
 const {
@@ -28,8 +30,9 @@ router.get("/devices", getDevices);
 router.patch("/devices/:id/rename", renameDevice);
 
 router.patch("/devices/:id/disconnect", disconnectDevice);
-
+router.get("/incoming-sms", getIncomingSms);
 router.delete("/devices/:id", deleteDevice);
+router.post("/incoming-sms", receiveIncomingSms);
 // =========================
 // Pair Codes
 // =========================

@@ -41,6 +41,8 @@ const marketplaceRoutes = require("./routes/marketplace.routes");
 const gatewayRoutes = require("./routes/gateway.routes");
 const pairCodeRoutes =
 require("./routes/pairCode.routes");
+const commandRoutes =
+require("./routes/command.routes");
 
 const app = express();
 
@@ -91,6 +93,11 @@ app.use("/api/v1/wallet", walletRoutes);
 app.use("/api/v1/plans", apiPlanRoutes);
 app.use("/api/v1/marketplace", marketplaceRoutes);
 app.use("/api/v1/gateway", gatewayRoutes);
+
+app.use(
+"/api/v1/commands",
+commandRoutes
+);
 app.use(
 "/api/v1/pair-codes",
 pairCodeRoutes

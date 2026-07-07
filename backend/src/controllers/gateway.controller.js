@@ -246,3 +246,85 @@ exports.renameDevice = async (req, res) => {
     });
   }
 };
+exports.receiveIncomingSms = async (req, res) => {
+  try {
+    const { deviceId, secretKey, phoneNumber, message } = req.body;
+
+    const device = await prisma.gsmDevice.findFirst({
+      where: { id: deviceId, secretKey },
+    });
+
+    if (!device) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid device credentials",
+      });
+    }
+
+    const sms = await prisma.smsInbox.create({
+      data: {
+        deviceId,
+        phoneNumber,
+        message,
+      },
+    });
+
+    emitEvent("gsm-sms-received", { sms });
+
+    return res.status(201).json({
+      success: true,
+      sms,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+exports.getIncomingSms = async (req, res) => {
+  try {
+    const sms = await prisma.smsInbox.findMany({
+      include: {
+        device: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: 200,
+    });
+
+    return res.json({
+      success: true,
+      sms,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+exports.getIncomingSms = async (req, res) => {
+  try {
+    const sms = await prisma.smsInbox.findMany({
+      include: {
+        device: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: 200,
+    });
+
+    return res.json({
+      success: true,
+      sms,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};

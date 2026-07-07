@@ -850,6 +850,7 @@ model GsmDevice {
   lastSeen  DateTime?
 
   commands  GsmCommand[]
+  smsInbox SmsInbox[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -924,4 +925,47 @@ enum PairStatus {
   PENDING
   USED
   EXPIRED
+}
+model SmsInbox {
+  id          String   @id @default(cuid())
+  deviceId    String
+  phoneNumber String
+  message     String
+  createdAt   DateTime @default(now())
+
+  device      GsmDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+}
+model SimRoutingRule {
+  id          String   @id @default(cuid())
+
+  network     String
+  service     String
+
+  preferredSim Int
+
+  enabled     Boolean @default(true)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+model NetworkProfile {
+  id                String   @id @default(cuid())
+
+  network           String   @unique
+
+  displayName       String
+
+  enabled           Boolean  @default(true)
+
+  airtimeTemplate   String?
+  dataTemplate      String?
+  balanceTemplate   String?
+  rechargeTemplate  String?
+
+  defaultSimSlot    Int      @default(0)
+
+  priority          Int      @default(1)
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }

@@ -38,6 +38,11 @@ export default function WalletDashboardPage() {
     loadStatistics();
   }, []);
 
+   useGatewaySocket({
+    "wallet-updated": loadStatistics,
+    "transaction-updated": loadStatistics,
+  });
+
   if (loading) {
     return (
       <DashboardLayout title="Wallet Management">
@@ -45,19 +50,6 @@ export default function WalletDashboardPage() {
       </DashboardLayout>
     );
   }
-  useGatewaySocket({
-
-    "wallet-updated": loadData,
-
-    "gsm-command-updated": loadData,
-
-    "transaction-updated": loadData,
-
-    "gateway-device-online": loadData,
-
-    "gateway-device-offline": loadData,
-
-});
 
   return (
     <DashboardLayout

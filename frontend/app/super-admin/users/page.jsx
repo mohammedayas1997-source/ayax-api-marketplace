@@ -42,20 +42,11 @@ export default function UsersPage() {
     loadUsers();
   }, [role, status]);
 
-  useGatewaySocket({
-
-    "wallet-updated": loadData,
-
-    "gsm-command-updated": loadData,
-
-    "transaction-updated": loadData,
-
-    "gateway-device-online": loadData,
-
-    "gateway-device-offline": loadData,
-
+useGatewaySocket({
+  "wallet-updated": loadUsers,
+  "gsm-command-updated": loadUsers,
+  "transaction-updated": loadUsers,
 });
-
   const stats = {
     totalUsers: users.length,
     activeUsers: users.filter((u) => u.status === "ACTIVE").length,

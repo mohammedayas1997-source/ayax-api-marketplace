@@ -49,18 +49,14 @@ export default function SuperAdminDashboard() {
   }, []);
 
   useGatewaySocket({
-
-    "wallet-updated": loadData,
-
-    "gsm-command-updated": loadData,
-
-    "transaction-updated": loadData,
-
-    "gateway-device-online": loadData,
-
-    "gateway-device-offline": loadData,
-
-});
+    "wallet-updated": loadDashboard,
+    "gsm-command-updated": loadDashboard,
+    "transaction-updated": loadDashboard,
+    "gateway-device-online": loadDashboard,
+    "gateway-device-offline": loadDashboard,
+    "gateway-location": loadDashboard,
+    "gateway-security-alert": loadDashboard,
+  });
 
   const statCards = [
     { title: "Total Users", value: stats?.totalUsers || 0, icon: Users },

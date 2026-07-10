@@ -32,17 +32,13 @@ export default function SimManagerPage() {
   };
 
   useGatewaySocket({
-
-    "wallet-updated": loadData,
-
-    "gsm-command-updated": loadData,
-
-    "transaction-updated": loadData,
-
-    "gateway-device-online": loadData,
-
-    "gateway-device-offline": loadData,
-
+  "wallet-updated": loadDevices,
+  "gsm-command-updated": loadDevices,
+  "transaction-updated": loadDevices,
+  "gateway-device-online": loadDevices,
+  "gateway-device-offline": loadDevices,
+  "gateway-location": loadDevices,
+  "gateway-security-alert": loadDevices,
 });
 
   const refreshBalance = async (simId, type) => {

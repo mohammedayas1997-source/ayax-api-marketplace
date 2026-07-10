@@ -13,8 +13,8 @@ import {
   MapPin,
   Clock,
 } from "lucide-react";
-import useGatewaySocket from "@/hooks/useGatewaySocket";
 
+import useGatewaySocket from "@/hooks/useGatewaySocket";
 import api from "@/lib/api";
 import DashboardLayout from "../../components/DashboardLayout";
 
@@ -41,18 +41,14 @@ export default function GSMDevicesPage() {
   }, []);
 
   useGatewaySocket({
-
-    "wallet-updated": loadData,
-
-    "gsm-command-updated": loadData,
-
-    "transaction-updated": loadData,
-
-    "gateway-device-online": loadData,
-
-    "gateway-device-offline": loadData,
-
-});
+    "wallet-updated": loadDevices,
+    "gsm-command-updated": loadDevices,
+    "transaction-updated": loadDevices,
+    "gateway-device-online": loadDevices,
+    "gateway-device-offline": loadDevices,
+    "gateway-location": loadDevices,
+    "gateway-security-alert": loadDevices,
+  });
 
   const filteredDevices = useMemo(() => {
     const q = query.toLowerCase();
@@ -80,21 +76,9 @@ export default function GSMDevicesPage() {
 
       <div className="grid md:grid-cols-4 gap-5 mb-8">
         <Stat title="Total Devices" value={devices.length} icon={<Smartphone />} />
-        <Stat
-          title="Online"
-          value={devices.filter((d) => d.status === "ONLINE").length}
-          icon={<CheckCircle />}
-        />
-        <Stat
-          title="Offline"
-          value={devices.filter((d) => d.status === "OFFLINE").length}
-          icon={<XCircle />}
-        />
-        <Stat
-          title="Busy"
-          value={devices.filter((d) => d.status === "BUSY").length}
-          icon={<RefreshCcw />}
-        />
+        <Stat title="Online" value={devices.filter((d) => d.status === "ONLINE").length} icon={<CheckCircle />} />
+        <Stat title="Offline" value={devices.filter((d) => d.status === "OFFLINE").length} icon={<XCircle />} />
+        <Stat title="Busy" value={devices.filter((d) => d.status === "BUSY").length} icon={<RefreshCcw />} />
       </div>
 
       <div className="mb-6 grid lg:grid-cols-[1fr_180px] gap-4">
@@ -124,10 +108,7 @@ export default function GSMDevicesPage() {
           <p className="text-slate-500">No devices found.</p>
         ) : (
           filteredDevices.map((device) => (
-            <div
-              key={device.id}
-              className="rounded-3xl border border-slate-800 bg-slate-900 p-6"
-            >
+            <div key={device.id} className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
               <div className="flex items-start justify-between gap-4 mb-6">
                 <div className="flex items-center gap-3">
                   <div className="w-14 h-14 rounded-2xl bg-blue-600/10 text-blue-400 flex items-center justify-center">
@@ -156,24 +137,12 @@ export default function GSMDevicesPage() {
               <div className="space-y-4 text-sm">
                 <Info icon={<Battery />} label="Battery" value={`${device.battery || 0}%`} />
                 <Info icon={<Signal />} label="Signal" value={`${device.signal || 0}%`} />
-                <Info
-                  icon={<Wifi />}
-                  label="Internet"
-                  value={device.internet ? "Connected" : "Disconnected"}
-                />
-                <Info
-                  icon={<MapPin />}
-                  label="Location"
-                  value={device.location || "Not set"}
-                />
+                <Info icon={<Wifi />} label="Internet" value={device.internet ? "Connected" : "Disconnected"} />
+                <Info icon={<MapPin />} label="Location" value={device.location || "Not set"} />
                 <Info
                   icon={<Clock />}
                   label="Last Seen"
-                  value={
-                    device.lastSeen
-                      ? new Date(device.lastSeen).toLocaleString()
-                      : "Never"
-                  }
+                  value={device.lastSeen ? new Date(device.lastSeen).toLocaleString() : "Never"}
                 />
               </div>
             </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Send, Smartphone, RefreshCcw, MessageSquare, Radio } from "lucide-react";
+import { Smartphone, RefreshCcw, MessageSquare, Radio } from "lucide-react";
 
 import SuperAdminLayout from "@/components/layouts/SuperAdminLayout";
 import api from "@/lib/api";
@@ -23,7 +23,6 @@ export default function GatewayCommandCenterPage() {
       setLoading(true);
       const res = await api.get("/gateway/devices");
       const list = res.data.devices || [];
-
       setDevices(list);
 
       if (list.length > 0 && !deviceId) {
@@ -36,28 +35,30 @@ export default function GatewayCommandCenterPage() {
     }
   };
 
-  useEffect(() => {
+  const loadCommands = async () => {
+    try {
+      const res = await api.get("/commands");
+      setCommands(res.data.commands || []);
+    } catch (error) {
+      setMessage(error.response?.data?.message || "Failed to load commands.");
+    }
+  };
+
+  const loadPageData = () => {
     loadDevices();
     loadCommands();
+  };
+
+  useEffect(() => {
+    loadPageData();
   }, []);
 
-  const loadCommands = async () => {
-  const res = await api.get("/commands");
-  setCommands(res.data.commands || []);
-};
-useGatewaySocket({
-
-    "wallet-updated": loadData,
-
-    "gsm-command-updated": loadData,
-
-    "transaction-updated": loadData,
-
-    "gateway-device-online": loadData,
-
-    "gateway-device-offline": loadData,
-
-});
+  useGatewaySocket({
+    "gsm-command-updated": loadCommands,
+    "transaction-updated": loadCommands,
+    "gateway-device-online": loadDevices,
+    "gateway-device-offline": loadDevices,
+  });
 
   const sendCommand = async () => {
     try {
@@ -97,6 +98,7 @@ useGatewaySocket({
 
         setMessage(res.data.message || "USSD command sent successfully.");
         setUssdCode("");
+        loadCommands();
       }
     } catch (error) {
       setMessage(error.response?.data?.message || "Failed to send command.");
@@ -234,40 +236,41 @@ useGatewaySocket({
           )}
         </div>
       </div>
-      <div className="mt-8 rounded-3xl border border-slate-800 bg-slate-900 overflow-hidden">
-  <div className="border-b border-slate-800 px-6 py-4">
-    <h2 className="text-xl font-bold">Command History</h2>
-  </div>
 
-  {commands.length === 0 ? (
-    <div className="p-8 text-slate-500">No command history yet.</div>
-  ) : (
-    commands.map((cmd) => (
-      <div
-        key={cmd.id}
-        className="grid xl:grid-cols-5 gap-4 border-b border-slate-800 px-6 py-5"
-      >
-        <span className="font-bold">{cmd.reference}</span>
-        <span>{cmd.type}</span>
-        <span>{cmd.device?.name || cmd.deviceId}</span>
-        <span
-          className={`w-fit rounded-full px-3 py-1 text-xs ${
-            cmd.status === "SUCCESSFUL"
-              ? "bg-green-500/10 text-green-400"
-              : cmd.status === "FAILED"
-              ? "bg-red-500/10 text-red-400"
-              : "bg-yellow-500/10 text-yellow-400"
-          }`}
-        >
-          {cmd.status}
-        </span>
-        <span className="text-slate-400">
-          {cmd.createdAt ? new Date(cmd.createdAt).toLocaleString() : "-"}
-        </span>
+      <div className="mt-8 rounded-3xl border border-slate-800 bg-slate-900 overflow-hidden">
+        <div className="border-b border-slate-800 px-6 py-4">
+          <h2 className="text-xl font-bold">Command History</h2>
+        </div>
+
+        {commands.length === 0 ? (
+          <div className="p-8 text-slate-500">No command history yet.</div>
+        ) : (
+          commands.map((cmd) => (
+            <div
+              key={cmd.id}
+              className="grid xl:grid-cols-5 gap-4 border-b border-slate-800 px-6 py-5"
+            >
+              <span className="font-bold">{cmd.reference}</span>
+              <span>{cmd.type}</span>
+              <span>{cmd.device?.name || cmd.deviceId}</span>
+              <span
+                className={`w-fit rounded-full px-3 py-1 text-xs ${
+                  cmd.status === "SUCCESSFUL"
+                    ? "bg-green-500/10 text-green-400"
+                    : cmd.status === "FAILED"
+                    ? "bg-red-500/10 text-red-400"
+                    : "bg-yellow-500/10 text-yellow-400"
+                }`}
+              >
+                {cmd.status}
+              </span>
+              <span className="text-slate-400">
+                {cmd.createdAt ? new Date(cmd.createdAt).toLocaleString() : "-"}
+              </span>
+            </div>
+          ))
+        )}
       </div>
-    ))
-  )}
-</div>
     </SuperAdminLayout>
   );
 }

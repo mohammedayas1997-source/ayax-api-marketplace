@@ -19,6 +19,8 @@ const {
   getSecurityAlerts,
   resolveSecurityAlert,
   lockGatewayDevice,
+  startDeviceAlarm,
+  stopDeviceAlarm,
 } = require("../controllers/gateway.controller");
 
 const {

@@ -23,6 +23,8 @@ import {
   MessageSquare,
   Database,
   LogOut,
+  ShieldAlert,
+  MapPin,
 } from "lucide-react";
 
 const links = [

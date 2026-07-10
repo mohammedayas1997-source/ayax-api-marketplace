@@ -5,6 +5,7 @@ import { Send, Smartphone, RefreshCcw, MessageSquare, Radio } from "lucide-react
 
 import SuperAdminLayout from "@/components/layouts/SuperAdminLayout";
 import api from "@/lib/api";
+import useGatewaySocket from "@/hooks/useGatewaySocket";
 
 export default function GatewayCommandCenterPage() {
   const [devices, setDevices] = useState([]);
@@ -44,6 +45,19 @@ export default function GatewayCommandCenterPage() {
   const res = await api.get("/commands");
   setCommands(res.data.commands || []);
 };
+useGatewaySocket({
+
+    "wallet-updated": loadData,
+
+    "gsm-command-updated": loadData,
+
+    "transaction-updated": loadData,
+
+    "gateway-device-online": loadData,
+
+    "gateway-device-offline": loadData,
+
+});
 
   const sendCommand = async () => {
     try {

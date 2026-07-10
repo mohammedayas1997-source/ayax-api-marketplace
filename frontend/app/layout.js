@@ -1,6 +1,8 @@
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Footer from "@/components/Footer";
+import { SocketProvider } from "@/context/SocketContext";
+import GatewayNotification from "@/components/GatewayNotification";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -66,9 +68,12 @@ export default function RootLayout({ children }) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body>
-  {children}
-  <Footer />
-</body>
+        <SocketProvider>
+          <GatewayNotification />
+          {children}
+          <Footer />
+        </SocketProvider>
+      </body>
     </html>
   );
 }

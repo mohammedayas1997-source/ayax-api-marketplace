@@ -9,6 +9,8 @@ import UsersTable from "./components/UsersTable";
 import UserStats from "./components/UserStats";
 import UserProfileModal from "./components/UserProfileModal";
 import api from "@/lib/api";
+import useGatewaySocket from "@/hooks/useGatewaySocket";
+
 
 export default function UsersPage() {
   const [users, setUsers] = useState([]);
@@ -39,6 +41,20 @@ export default function UsersPage() {
   useEffect(() => {
     loadUsers();
   }, [role, status]);
+
+  useGatewaySocket({
+
+    "wallet-updated": loadData,
+
+    "gsm-command-updated": loadData,
+
+    "transaction-updated": loadData,
+
+    "gateway-device-online": loadData,
+
+    "gateway-device-offline": loadData,
+
+});
 
   const stats = {
     totalUsers: users.length,

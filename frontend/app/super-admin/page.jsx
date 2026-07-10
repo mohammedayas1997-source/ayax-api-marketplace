@@ -15,7 +15,7 @@ import {
   Activity,
   AlertTriangle,
 } from "lucide-react";
-
+import useGatewaySocket from "@/hooks/useGatewaySocket";
 import SuperAdminLayout from "@/components/layouts/SuperAdminLayout";
 import api from "@/lib/api";
 
@@ -47,6 +47,20 @@ export default function SuperAdminDashboard() {
   useEffect(() => {
     loadDashboard();
   }, []);
+
+  useGatewaySocket({
+
+    "wallet-updated": loadData,
+
+    "gsm-command-updated": loadData,
+
+    "transaction-updated": loadData,
+
+    "gateway-device-online": loadData,
+
+    "gateway-device-offline": loadData,
+
+});
 
   const statCards = [
     { title: "Total Users", value: stats?.totalUsers || 0, icon: Users },

@@ -11,11 +11,14 @@ import {
   Copy,
   Battery,
   Signal,
+  Bell,
+  BellOff,
   Clock,
 } from "lucide-react";
 
 import SuperAdminLayout from "@/components/layouts/SuperAdminLayout";
 import api from "@/lib/api";
+import { Lock } from "lucide-react";
 
 export default function GatewayDevicesPage() {
   const [devices, setDevices] = useState([]);
@@ -83,6 +86,44 @@ export default function GatewayDevicesPage() {
   useEffect(() => {
     loadDevices();
   }, []);
+  const startAlarm = async (device) => {
+  try {
+    await api.post("/gateway/alarm/start", {
+      deviceId: device.id,
+    });
+
+    setMessage("Alarm start command sent.");
+  } catch (error) {
+    setMessage(error.response?.data?.message || "Failed to start alarm.");
+  }
+};
+
+const stopAlarm = async (device) => {
+  try {
+    await api.post("/gateway/alarm/stop", {
+      deviceId: device.id,
+    });
+
+    setMessage("Alarm stop command sent.");
+  } catch (error) {
+    setMessage(error.response?.data?.message || "Failed to stop alarm.");
+  }
+};
+
+const lockGateway = async (device) => {
+  try {
+    await api.post("/gateway/lock-device", {
+      deviceId: device.id,
+    });
+
+    setMessage("Lock command sent.");
+  } catch (error) {
+    setMessage(
+      error.response?.data?.message ||
+      "Failed to lock device."
+    );
+  }
+};
 
   return (
     <SuperAdminLayout
@@ -226,6 +267,30 @@ export default function GatewayDevicesPage() {
                   className="bg-red-500/10 text-red-400 hover:bg-red-500/20 p-3 rounded-xl"
                 >
                   <Trash2 size={16} />
+                </button>
+
+                <button
+                onClick={() => startAlarm(device)}
+                className="bg-red-500/10 text-red-400 hover:bg-red-500/20 p-3 rounded-xl"
+                title="Ring Alarm"
+                >
+                <Bell size={16} />
+                </button>
+
+                <button
+                onClick={() => stopAlarm(device)}
+                className="bg-slate-800 text-slate-300 hover:bg-slate-700 p-3 rounded-xl"
+                title="Stop Alarm"
+                >
+                <BellOff size={16} />
+                </button>
+
+                <button
+                onClick={() => lockGateway(device)}
+                className="rounded-xl bg-orange-500/10 p-3 text-orange-400 hover:bg-orange-500/20"
+                title="Lock Device"
+                >
+                <Lock size={18} />
                 </button>
               </div>
             </div>

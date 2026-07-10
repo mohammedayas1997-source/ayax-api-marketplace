@@ -32,7 +32,9 @@ const links = [
   { name: "Admins", href: "/super-admin/admins", icon: ShieldCheck },
   { name: "Staff", href: "/super-admin/staff", icon: Users },
   { name: "Customer Service", href: "/super-admin/customer-service", icon: Headphones },
-
+  { name: "Security Alerts", href: "/super-admin/gsm/security-alerts", icon: ShieldAlert },
+  { name: "Live Location", href: "/super-admin/gsm/live-location", icon: MapPin },
+  
   { section: "MARKETPLACE" },
   { name: "Gateway Devices", href: "/super-admin/gateway-devices", icon: Smartphone },
   { name: "API Marketplace", href: "/super-admin/api-marketplace", icon: Database },

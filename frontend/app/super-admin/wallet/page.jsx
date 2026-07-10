@@ -14,6 +14,7 @@ import KpiGrid from "../components/KpiGrid";
 import ActionButton from "../components/ActionButton";
 import LoadingSkeleton from "../components/LoadingSkeleton";
 import api from "@/lib/api";
+import useGatewaySocket from "@/hooks/useGatewaySocket";
 
 export default function WalletDashboardPage() {
   const [stats, setStats] = useState(null);
@@ -44,6 +45,19 @@ export default function WalletDashboardPage() {
       </DashboardLayout>
     );
   }
+  useGatewaySocket({
+
+    "wallet-updated": loadData,
+
+    "gsm-command-updated": loadData,
+
+    "transaction-updated": loadData,
+
+    "gateway-device-online": loadData,
+
+    "gateway-device-offline": loadData,
+
+});
 
   return (
     <DashboardLayout

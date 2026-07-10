@@ -13,6 +13,7 @@ import {
   MapPin,
   Clock,
 } from "lucide-react";
+import useGatewaySocket from "@/hooks/useGatewaySocket";
 
 import api from "@/lib/api";
 import DashboardLayout from "../../components/DashboardLayout";
@@ -38,6 +39,20 @@ export default function GSMDevicesPage() {
   useEffect(() => {
     loadDevices();
   }, []);
+
+  useGatewaySocket({
+
+    "wallet-updated": loadData,
+
+    "gsm-command-updated": loadData,
+
+    "transaction-updated": loadData,
+
+    "gateway-device-online": loadData,
+
+    "gateway-device-offline": loadData,
+
+});
 
   const filteredDevices = useMemo(() => {
     const q = query.toLowerCase();

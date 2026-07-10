@@ -9,6 +9,7 @@ import {
   Trash2,
   CheckCircle,
   XCircle,
+  ShieldAlert,
 } from "lucide-react";
 
 import SuperAdminLayout from "@/components/layouts/SuperAdminLayout";

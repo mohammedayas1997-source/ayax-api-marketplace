@@ -477,7 +477,6 @@ exports.getGatewayDevices = async (req, res) => {
 
     return res.json({
       success: true,
-      count: devices.length,
       devices,
     });
   } catch (error) {

@@ -848,9 +848,17 @@ model GsmDevice {
   signal    Int?
   internet  Boolean?
   lastSeen  DateTime?
+  latitude       Float?
+  longitude      Float?
+  accuracy       Float?
+  speed          Float?
+  bearing        Float?
+  locationAt     DateTime?
 
   commands  GsmCommand[]
   smsInbox SmsInbox[]
+  sims GsmSim[]
+  securityAlerts GatewaySecurityAlert[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -861,7 +869,7 @@ model GsmCommand {
   reference   String           @unique
   deviceId    String?
   type        GsmCommandType
-  payload     String?
+  payload     Json?
   status      GsmCommandStatus @default(PENDING)
   response    String?
 
@@ -968,4 +976,56 @@ model NetworkProfile {
 
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+}
+model GsmSim {
+  id             String   @id @default(cuid())
+  deviceId       String
+  slotIndex      Int
+  carrierName    String?
+  displayName    String?
+  phoneNumber    String?
+  countryIso     String?
+  mcc            Int?
+  mnc            Int?
+  airtimeBalance Float    @default(0)
+  dataBalance    String?
+  status         String   @default("ACTIVE")
+  lastSyncAt     DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  device GsmDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, slotIndex])
+}
+model NetworkProfile {
+  id               String   @id @default(cuid())
+
+  network          String   @unique
+  displayName      String
+  country          String   @default("NG")
+  enabled          Boolean  @default(true)
+
+  defaultSimSlot   Int      @default(0)
+
+  balanceUssd      String?
+  dataBalanceUssd  String?
+  airtimeTemplate  String?
+  dataTemplate     String?
+  rechargeTemplate String?
+
+  notes            String?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+model GatewaySecurityAlert {
+  id        String   @id @default(cuid())
+  deviceId  String
+  type      String
+  message   String
+  resolved  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  device    GsmDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 }

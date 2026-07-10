@@ -1,6 +1,17 @@
 const prisma = require("../config/prisma");
 const crypto = require("crypto");
 const { emitEvent } = require("../config/socket");
+const {
+  markCommandProcessing,
+  markCommandSuccessful,
+  markCommandFailed,
+} = require("../services/gatewayTransaction.service");
+const {
+  parseAirtimeBalance,
+  parseDataBalance,
+  parseExpiryDate,
+} = require("../services/ussdParser.service");
+const { sendBalanceCheckCommand } = require("../services/balanceCheck.service");
 
 exports.pairDevice = async (req, res) => {
   try {
@@ -146,16 +157,43 @@ exports.receiveCommandResult = async (req, res) => {
       });
     }
 
-    const command = await prisma.gsmCommand.update({
-      where: { reference },
+    let command;
+
+    if (status === "PROCESSING" || status === "SENT") {
+      command = await markCommandProcessing({
+        reference,
+        message: message || status,
+      });
+    } else if (status === "SUCCESSFUL" || status === "DELIVERED") {
+      command = await markCommandSuccessful({
+        reference,
+        message: message || status,
+      });
+        const airtimeBalance = parseAirtimeBalance(message);
+  const dataBalance = parseDataBalance(message);
+  const expiryDate = parseExpiryDate(message);
+
+  if (command?.payload?.simId) {
+    await prisma.gsmSim.update({
+      where: { id: command.payload.simId },
       data: {
-        status,
-        response: message,
-        completedAt: new Date(),
+        airtimeBalance:
+          airtimeBalance !== null ? airtimeBalance : undefined,
+        dataBalance:
+          dataBalance !== null ? dataBalance : undefined,
+        expiryDate:
+          expiryDate ? new Date(expiryDate) : undefined,
+        lastBalanceCheck: new Date(),
       },
     });
-
-    emitEvent("gsm-command-result", { command });
+  }
+      
+    } else {
+      command = await markCommandFailed({
+        reference,
+        message: message || status || "Failed",
+      });
+    }
 
     return res.json({
       success: true,
@@ -163,7 +201,10 @@ exports.receiveCommandResult = async (req, res) => {
       command,
     });
   } catch (error) {
-    return res.status(400).json({ success: false, message: error.message });
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
   }
 };
 
@@ -296,5 +337,470 @@ exports.getIncomingSms = async (req, res) => {
     return res.json({ success: true, sms });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
+  }
+};
+exports.syncSims = async (req, res) => {
+  try {
+    const { deviceId, secretKey, sims } = req.body;
+
+    const device = await prisma.gsmDevice.findFirst({
+      where: { id: deviceId, secretKey },
+    });
+
+    if (!device) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid device credentials",
+      });
+    }
+
+    const saved = [];
+
+    for (const sim of sims || []) {
+      const item = await prisma.gsmSim.upsert({
+        where: {
+          deviceId_slotIndex: {
+            deviceId,
+            slotIndex: Number(sim.slotIndex),
+          },
+        },
+        update: {
+          carrierName: sim.carrierName,
+          displayName: sim.displayName,
+          phoneNumber: sim.number || null,
+          countryIso: sim.countryIso,
+          mcc: sim.mcc,
+          mnc: sim.mnc,
+          airtimeBalance: Number(sim.airtimeBalance || 0),
+          dataBalance: sim.dataBalance || null,
+          status: "ACTIVE",
+          lastSyncAt: new Date(),
+        },
+        create: {
+          deviceId,
+          slotIndex: Number(sim.slotIndex),
+          carrierName: sim.carrierName,
+          displayName: sim.displayName,
+          phoneNumber: sim.number || null,
+          countryIso: sim.countryIso,
+          mcc: sim.mcc,
+          mnc: sim.mnc,
+          airtimeBalance: Number(sim.airtimeBalance || 0),
+          dataBalance: sim.dataBalance || null,
+          status: "ACTIVE",
+        },
+      });
+
+      saved.push(item);
+    }
+
+    emitEvent("gsm-sims-synced", { deviceId, sims: saved });
+
+    return res.json({
+      success: true,
+      sims: saved,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.getDeviceSims = async (req, res) => {
+  try {
+    const sims = await prisma.gsmSim.findMany({
+      where: { deviceId: req.params.deviceId },
+      orderBy: { slotIndex: "asc" },
+    });
+
+    return res.json({
+      success: true,
+      sims,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+exports.refreshSimBalance = async (req, res) => {
+  try {
+    const { simId, type = "AIRTIME" } = req.body;
+
+    const sim = await prisma.gsmSim.findUnique({
+      where: { id: simId },
+      include: { device: true },
+    });
+
+    if (!sim) {
+      return res.status(404).json({
+        success: false,
+        message: "SIM not found",
+      });
+    }
+
+    const command = await sendBalanceCheckCommand({
+      device: sim.device,
+      sim,
+      type,
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Balance check command sent",
+      command,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+exports.getGatewayDevices = async (req, res) => {
+  try {
+    const devices = await prisma.gsmDevice.findMany({
+      include: {
+        sims: {
+          orderBy: {
+            slotIndex: "asc",
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    return res.json({
+      success: true,
+      count: devices.length,
+      devices,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+exports.updateLocation = async (req, res) => {
+  try {
+    const {
+      deviceId,
+      secretKey,
+      latitude,
+      longitude,
+      accuracy,
+      speed,
+      bearing,
+    } = req.body;
+
+    const device = await prisma.gsmDevice.findFirst({
+      where: {
+        id: deviceId,
+        secretKey,
+      },
+    });
+
+    if (!device) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid device credentials",
+      });
+    }
+
+    const updated = await prisma.gsmDevice.update({
+      where: {
+        id: deviceId,
+      },
+      data: {
+        latitude,
+        longitude,
+        accuracy,
+        speed,
+        bearing,
+        locationAt: new Date(),
+      },
+    });
+
+    emitEvent("gateway-location", {
+      deviceId,
+      latitude,
+      longitude,
+      accuracy,
+      speed,
+      bearing,
+      locationAt: updated.locationAt,
+    });
+
+    return res.json({
+      success: true,
+      message: "Location updated",
+    });
+
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.receiveSecurityAlert = async (req, res) => {
+  try {
+    const { deviceId, secretKey, type, message } = req.body;
+
+    const device = await prisma.gsmDevice.findFirst({
+      where: { id: deviceId, secretKey },
+    });
+
+    if (!device) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid device credentials",
+      });
+    }
+
+    const alert = await prisma.gatewaySecurityAlert.create({
+      data: {
+        deviceId,
+        type,
+        message,
+      },
+      include: {
+        device: true,
+      },
+    });
+
+    emitEvent("gateway-security-alert", { alert });
+
+    return res.status(201).json({
+      success: true,
+      message: "Security alert received",
+      alert,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.getSecurityAlerts = async (req, res) => {
+  try {
+    const alerts = await prisma.gatewaySecurityAlert.findMany({
+      include: {
+        device: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: 200,
+    });
+
+    return res.json({
+      success: true,
+      alerts,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+exports.resolveSecurityAlert = async (req, res) => {
+  try {
+    const alert = await prisma.gatewaySecurityAlert.update({
+      where: {
+        id: req.params.id,
+      },
+      data: {
+        resolved: true,
+      },
+    });
+
+    emitEvent("gateway-security-alert-resolved", { alert });
+
+    return res.json({
+      success: true,
+      message: "Alert resolved",
+      alert,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+exports.startDeviceAlarm = async (req, res) => {
+  try {
+
+    const { deviceId } = req.body;
+
+    const reference =
+      "ALARM-" +
+      crypto.randomBytes(6).toString("hex").toUpperCase();
+
+    await prisma.gsmCommand.create({
+
+      data: {
+
+        reference,
+
+        deviceId,
+
+        type: "START_ALARM",
+
+        status: "PENDING",
+
+        payload: {}
+
+      }
+
+    });
+
+    emitEvent(
+
+      "gateway-command",
+
+      {
+
+        reference,
+
+        type: "START_ALARM"
+
+      },
+
+      deviceId
+
+    );
+
+    return res.json({
+
+      success: true
+
+    });
+
+  } catch (e) {
+
+    return res.status(400).json({
+
+      success: false,
+
+      message: e.message
+
+    });
+
+  }
+
+};
+exports.stopDeviceAlarm = async (req, res) => {
+
+  try {
+
+    const { deviceId } = req.body;
+
+    const reference =
+      "STOPALARM-" +
+      crypto.randomBytes(6).toString("hex").toUpperCase();
+
+    await prisma.gsmCommand.create({
+
+      data: {
+
+        reference,
+
+        deviceId,
+
+        type: "STOP_ALARM",
+
+        status: "PENDING",
+
+        payload: {}
+
+      }
+
+    });
+
+    emitEvent(
+
+      "gateway-command",
+
+      {
+
+        reference,
+
+        type: "STOP_ALARM"
+
+      },
+
+      deviceId
+
+    );
+
+    return res.json({
+
+      success: true
+
+    });
+
+  } catch (e) {
+
+    return res.status(400).json({
+
+      success: false,
+
+      message: e.message
+
+    });
+
+  }
+
+};
+exports.lockGatewayDevice = async (req, res) => {
+  try {
+    const { deviceId } = req.body;
+
+    const reference =
+      "LOCK-" +
+      crypto.randomBytes(6).toString("hex").toUpperCase();
+
+    await prisma.gsmCommand.create({
+      data: {
+        reference,
+        deviceId,
+        type: "LOCK_DEVICE",
+        status: "PENDING",
+        payload: {},
+      },
+    });
+
+    emitEvent(
+      "gateway-command",
+      {
+        reference,
+        type: "LOCK_DEVICE",
+      },
+      deviceId
+    );
+
+    return res.json({
+      success: true,
+      message: "Lock command sent successfully",
+    });
+
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
   }
 };

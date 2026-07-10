@@ -1,7 +1,11 @@
 const prisma = require("../config/prisma");
 const crypto = require("crypto");
 const { emitEvent } = require("../config/socket");
-const { findBestDevice } = require("../services/gsmRouting.service");
+const { findBestDevice } = require("../services/deviceRouter.service");
+const {
+  getNetworkProfile,
+  buildTemplate,
+} = require("../services/networkProfile.service");
 
 exports.buyAirtime = async (req, res) => {
   try {
@@ -17,17 +21,29 @@ exports.buyAirtime = async (req, res) => {
 
     const value = Number(amount);
 
-    if (value < 50) {
+    if (isNaN(value) || value < 50) {
       return res.status(400).json({
         success: false,
         message: "Minimum airtime amount is ₦50",
       });
     }
 
+    const profile = await getNetworkProfile(network);
+
+    const ussdCode = buildTemplate(profile.airtimeTemplate, {
+      phone,
+      amount: value,
+    });
+
+    const { device, sim } = await findBestDevice({
+      network,
+      service: "AIRTIME",
+    });
+
+    const simSlot = sim.slotIndex;
+
     const reference =
       "AIRTIME-" + crypto.randomBytes(8).toString("hex").toUpperCase();
-
-    const device = await findBestDevice();
 
     const result = await prisma.$transaction(async (tx) => {
       const wallet = await tx.wallet.findUnique({
@@ -80,22 +96,32 @@ exports.buyAirtime = async (req, res) => {
             network,
             phone,
             amount: value,
-            ussdCode: `*000*${phone}*${value}#`,
+            simSlot,
+            ussdCode,
+            simId: sim.id,
           },
         },
       });
 
-      return { wallet: updatedWallet, transaction, command };
+      return {
+        wallet: updatedWallet,
+        transaction,
+        command,
+      };
     });
 
-    emitEvent("wallet-updated", { userId, wallet: result.wallet });
+    emitEvent("wallet-updated", {
+      userId,
+      wallet: result.wallet,
+    });
 
     emitEvent(
       "gateway-command",
       {
         reference,
         type: "USSD",
-        ussdCode: result.command.payload.ussdCode,
+        simSlot,
+        ussdCode,
       },
       device.id
     );

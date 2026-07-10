@@ -291,22 +291,22 @@ model FundingRequest {
 }
 
 model WalletFunding {
-  id         String        @id @default(cuid())
-  userId     String
-  amount     Float
-  reference  String        @unique
+  id        String @id @default(cuid())
+  userId    String
+  amount    Float
+  reference String @unique
 
-  channel    String?
+  channel          String?
   paymentReference String?
 
-  proofUrl   String?
+  proofUrl String?
 
-  status     FundingStatus @default(PENDING)
+  status FundingStatus @default(PENDING)
 
   approvedBy String?
   rejectedBy String?
 
-  note       String?
+  note String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -437,37 +437,6 @@ model ApiPlan {
   description  String?
 
   service ApiService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model GsmSim {
-  id String @id @default(cuid())
-
-  slot Int @unique
-
-  number String @unique
-
-  network String
-
-  provider String?
-
-  imei String?
-
-  serial String?
-
-  balance Float @default(0)
-
-  signal Int?
-
-  status GsmSimStatus @default(ACTIVE)
-
-  lastSeen DateTime?
-
-  transactions GsmTransaction[]
-  recharges    GsmRecharge[]
-  healthLogs   GsmHealthLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -811,6 +780,7 @@ model SystemConfig {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
 enum GsmDeviceStatus {
   ONLINE
   OFFLINE
@@ -836,28 +806,28 @@ enum GsmCommandType {
 }
 
 model GsmDevice {
-  id        String          @id @default(cuid())
+  id        String  @id @default(cuid())
   name      String
-  code      String          @unique
+  code      String  @unique
   secretKey String
   location  String?
 
-  status    GsmDeviceStatus @default(OFFLINE)
-  battery   Int?
-  charging  Boolean?
-  signal    Int?
-  internet  Boolean?
-  lastSeen  DateTime?
-  latitude       Float?
-  longitude      Float?
-  accuracy       Float?
-  speed          Float?
-  bearing        Float?
-  locationAt     DateTime?
+  status     GsmDeviceStatus @default(OFFLINE)
+  battery    Int?
+  charging   Boolean?
+  signal     Int?
+  internet   Boolean?
+  lastSeen   DateTime?
+  latitude   Float?
+  longitude  Float?
+  accuracy   Float?
+  speed      Float?
+  bearing    Float?
+  locationAt DateTime?
 
-  commands  GsmCommand[]
-  smsInbox SmsInbox[]
-  sims GsmSim[]
+  commands       GsmCommand[]
+  smsInbox       SmsInbox[]
+  sims           GsmSim[]
   securityAlerts GatewaySecurityAlert[]
 
   createdAt DateTime @default(now())
@@ -865,68 +835,70 @@ model GsmDevice {
 }
 
 model GsmCommand {
-  id          String           @id @default(cuid())
-  reference   String           @unique
-  deviceId    String?
-  type        GsmCommandType
-  payload     Json?
-  status      GsmCommandStatus @default(PENDING)
-  response    String?
+  id        String           @id @default(cuid())
+  reference String           @unique
+  deviceId  String?
+  type      GsmCommandType
+  payload   Json?
+  status    GsmCommandStatus @default(PENDING)
+  response  String?
 
-  device      GsmDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  device GsmDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   completedAt DateTime?
 }
+
 model GatewayDevice {
-  id            String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  pairCode      String   @unique
-  token         String   @unique
+  pairCode String @unique
+  token    String @unique
 
-  deviceName    String
-  brand         String
-  model         String
+  deviceName String
+  brand      String
+  model      String
 
-  uniqueId      String   @unique
+  uniqueId String @unique
 
   androidVersion String?
 
-  manufacturer  String?
+  manufacturer String?
 
-  batteryLevel  Int       @default(0)
+  batteryLevel Int @default(0)
 
-  signalLevel   Int       @default(0)
+  signalLevel Int @default(0)
 
-  simCount      Int       @default(0)
+  simCount Int @default(0)
 
-  ipAddress     String?
+  ipAddress String?
 
-  appVersion    String?
+  appVersion String?
 
-  socketId      String?
+  socketId String?
 
-  status        String    @default("OFFLINE")
+  status String @default("OFFLINE")
 
-  lastSeen      DateTime?
+  lastSeen DateTime?
 
-  createdAt     DateTime  @default(now())
+  createdAt DateTime @default(now())
 
-  updatedAt     DateTime  @updatedAt
+  updatedAt DateTime @updatedAt
 }
+
 model GsmPairCode {
-  id          String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  code        String   @unique
+  code String @unique
 
-  status      PairStatus @default(PENDING)
+  status PairStatus @default(PENDING)
 
-  expiresAt   DateTime
+  expiresAt DateTime
 
-  usedAt      DateTime?
+  usedAt DateTime?
 
-  createdAt   DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 enum PairStatus {
@@ -934,6 +906,7 @@ enum PairStatus {
   USED
   EXPIRED
 }
+
 model SmsInbox {
   id          String   @id @default(cuid())
   deviceId    String
@@ -941,42 +914,23 @@ model SmsInbox {
   message     String
   createdAt   DateTime @default(now())
 
-  device      GsmDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  device GsmDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 }
-model SimRoutingRule {
-  id          String   @id @default(cuid())
 
-  network     String
-  service     String
+model SimRoutingRule {
+  id String @id @default(cuid())
+
+  network String
+  service String
 
   preferredSim Int
 
-  enabled     Boolean @default(true)
+  enabled Boolean @default(true)
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
-model NetworkProfile {
-  id                String   @id @default(cuid())
 
-  network           String   @unique
-
-  displayName       String
-
-  enabled           Boolean  @default(true)
-
-  airtimeTemplate   String?
-  dataTemplate      String?
-  balanceTemplate   String?
-  rechargeTemplate  String?
-
-  defaultSimSlot    Int      @default(0)
-
-  priority          Int      @default(1)
-
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-}
 model GsmSim {
   id             String   @id @default(cuid())
   deviceId       String
@@ -994,19 +948,23 @@ model GsmSim {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  device GsmDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  device         GsmDevice        @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  GsmTransaction GsmTransaction[]
+  GsmRecharge    GsmRecharge[]
+  GsmHealthLog   GsmHealthLog[]
 
   @@unique([deviceId, slotIndex])
 }
+
 model NetworkProfile {
-  id               String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  network          String   @unique
-  displayName      String
-  country          String   @default("NG")
-  enabled          Boolean  @default(true)
+  network     String  @unique
+  displayName String
+  country     String  @default("NG")
+  enabled     Boolean @default(true)
 
-  defaultSimSlot   Int      @default(0)
+  defaultSimSlot Int @default(0)
 
   balanceUssd      String?
   dataBalanceUssd  String?
@@ -1014,11 +972,12 @@ model NetworkProfile {
   dataTemplate     String?
   rechargeTemplate String?
 
-  notes            String?
+  notes String?
 
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
+
 model GatewaySecurityAlert {
   id        String   @id @default(cuid())
   deviceId  String
@@ -1027,5 +986,5 @@ model GatewaySecurityAlert {
   resolved  Boolean  @default(false)
   createdAt DateTime @default(now())
 
-  device    GsmDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  device GsmDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 }

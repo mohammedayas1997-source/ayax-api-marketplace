@@ -957,6 +957,8 @@ model GsmSim {
   countryIso     String?
   mcc            Int?
   mnc            Int?
+  expiryDate       DateTime?
+  lastBalanceCheck DateTime?
   airtimeBalance Float    @default(0)
   dataBalance    String?
   status         String   @default("ACTIVE")

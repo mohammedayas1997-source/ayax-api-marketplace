@@ -178,12 +178,15 @@ exports.receiveCommandResult = async (req, res) => {
       where: { id: command.payload.simId },
       data: {
         airtimeBalance:
-          airtimeBalance !== null ? airtimeBalance : undefined,
+         sim.airtimeBalance != null
+    ? Number(sim.airtimeBalance)
+    : null,
         dataBalance:
-          dataBalance !== null ? dataBalance : undefined,
+          sim.dataBalance || null,
         expiryDate:
           expiryDate ? new Date(expiryDate) : undefined,
         lastBalanceCheck: new Date(),
+        
       },
     });
   }
@@ -367,7 +370,10 @@ exports.syncSims = async (req, res) => {
         update: {
           carrierName: sim.carrierName,
           displayName: sim.displayName,
-          phoneNumber: sim.number || null,
+          phoneNumber:
+          sim.phoneNumber ||
+          sim.number ||
+          null,
           countryIso: sim.countryIso,
           mcc: sim.mcc,
           mnc: sim.mnc,
@@ -381,7 +387,7 @@ exports.syncSims = async (req, res) => {
           slotIndex: Number(sim.slotIndex),
           carrierName: sim.carrierName,
           displayName: sim.displayName,
-          phoneNumber: sim.number || null,
+          phoneNumber: sim.phoneNumber || sim.number || null,
           countryIso: sim.countryIso,
           mcc: sim.mcc,
           mnc: sim.mnc,
@@ -447,6 +453,12 @@ exports.refreshSimBalance = async (req, res) => {
       sim,
       type,
     });
+
+    emitEvent("gsm-sim-refresh", {
+    simId: sim.id,
+    deviceId: sim.deviceId,
+    type,
+});
 
     return res.status(201).json({
       success: true,

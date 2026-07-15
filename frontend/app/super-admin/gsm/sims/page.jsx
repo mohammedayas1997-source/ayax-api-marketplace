@@ -39,7 +39,7 @@ export default function SimManagerPage() {
   "gateway-device-offline": loadDevices,
   "gateway-location": loadDevices,
   "gateway-security-alert": loadDevices,
-  "gateway-sims-updated": loadDevices,
+  "gsm-sims-synced": loadDevices,
 });
 
   const refreshBalance = async (simId, type) => {

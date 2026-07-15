@@ -142,74 +142,35 @@ exports.heartbeat = async (req, res) => {
   }
 };
 
-exports.receiveCommandResult = async (req, res) => {
-  try {
-    const { deviceId, secretKey, reference, status, message } = req.body;
+if (command.type === "USSD") {
+  const result = await sendUssd({
+    ussdCode: command.ussdCode,
+    reference: command.reference,
+    simSlot: command.simSlot,
+  });
 
-    const device = await prisma.gsmDevice.findFirst({
-      where: { id: deviceId, secretKey },
-    });
+  const ussdResponse =
+    result?.response ||
+    result?.message ||
+    "USSD completed successfully";
 
-    if (!device) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid device credentials",
-      });
-    }
+  await sendCommandResult({
+    reference: command.reference,
+    status: "SUCCESSFUL",
+    message: ussdResponse,
+    response: ussdResponse,
+    simSlot: Number(command.simSlot ?? 0),
+  });
 
-    let command;
+  addLog({
+    type: "USSD",
+    reference: command.reference,
+    status: "SUCCESSFUL",
+    message: ussdResponse,
+  });
 
-    if (status === "PROCESSING" || status === "SENT") {
-      command = await markCommandProcessing({
-        reference,
-        message: message || status,
-      });
-    } else if (status === "SUCCESSFUL" || status === "DELIVERED") {
-      command = await markCommandSuccessful({
-        reference,
-        message: message || status,
-      });
-        const airtimeBalance = parseAirtimeBalance(message);
-  const dataBalance = parseDataBalance(message);
-  const expiryDate = parseExpiryDate(message);
-
-  if (command?.payload?.simId) {
-    await prisma.gsmSim.update({
-      where: { id: command.payload.simId },
-      data: {
-        airtimeBalance:
-         sim.airtimeBalance != null
-    ? Number(sim.airtimeBalance)
-    : null,
-        dataBalance:
-          sim.dataBalance || null,
-        expiryDate:
-          expiryDate ? new Date(expiryDate) : undefined,
-        lastBalanceCheck: new Date(),
-        
-      },
-    });
-  }
-      
-    } else {
-      command = await markCommandFailed({
-        reference,
-        message: message || status || "Failed",
-      });
-    }
-
-    return res.json({
-      success: true,
-      message: "Command result received",
-      command,
-    });
-  } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
+  return;
+}
 
 exports.generatePairCode = async (req, res) => {
   try {

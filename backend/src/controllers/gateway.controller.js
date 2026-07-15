@@ -142,35 +142,6 @@ exports.heartbeat = async (req, res) => {
   }
 };
 
-if (command.type === "USSD") {
-  const result = await sendUssd({
-    ussdCode: command.ussdCode,
-    reference: command.reference,
-    simSlot: command.simSlot,
-  });
-
-  const ussdResponse =
-    result?.response ||
-    result?.message ||
-    "USSD completed successfully";
-
-  await sendCommandResult({
-    reference: command.reference,
-    status: "SUCCESSFUL",
-    message: ussdResponse,
-    response: ussdResponse,
-    simSlot: Number(command.simSlot ?? 0),
-  });
-
-  addLog({
-    type: "USSD",
-    reference: command.reference,
-    status: "SUCCESSFUL",
-    message: ussdResponse,
-  });
-
-  return;
-}
 
 exports.generatePairCode = async (req, res) => {
   try {

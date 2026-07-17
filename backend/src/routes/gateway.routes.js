@@ -8,6 +8,7 @@ const {
   generatePairCode,
   getDevices,
   disconnectDevice,
+  getPairCodes,
   deleteDevice,
   renameDevice,
   receiveIncomingSms,

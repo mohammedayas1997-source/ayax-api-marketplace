@@ -871,3 +871,23 @@ exports.receiveCommandResult = async (req, res) => {
     });
   }
 };
+exports.getPairCodes = async (req, res) => {
+  try {
+    const pairCodes = await prisma.gsmPairCode.findMany({
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: 100,
+    });
+
+    return res.json({
+      success: true,
+      pairCodes,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};

@@ -1,4 +1,5 @@
-const router = require("express").Router();
+const express = require("express");
+const router = express.Router();
 
 const {
   pairDevice,
@@ -23,11 +24,6 @@ const {
   stopDeviceAlarm,
   lockGatewayDevice,
 } = require("../controllers/gateway.controller");
-
-const {
-  generatePairCode,
-  getPairCodes,
-} = require("../controllers/pairCode.controller");
 
 // =========================
 // Gateway Device

@@ -2,30 +2,58 @@ const prisma = require("../config/prisma");
 const { emitEvent } = require("../config/socket");
 
 async function updateCommand(reference, status, response = null) {
+  const isCompleted =
+    status === "SUCCESSFUL" ||
+    status === "FAILED" ||
+    status === "CANCELLED";
+
   const command = await prisma.gsmCommand.update({
-    where: { reference },
+    where: {
+      reference,
+    },
     data: {
       status,
       response,
-      completedAt:
-        status === "SUCCESSFUL" || status === "FAILED" ? new Date() : undefined,
+      completedAt: isCompleted ? new Date() : null,
     },
   });
 
-  emitEvent("gsm-command-updated", { command });
+  emitEvent("gsm-command-updated", {
+    command,
+    reference: command.reference,
+    deviceId: command.deviceId,
+    type: command.type,
+    status: command.status,
+    response: command.response,
+    payload: command.payload,
+    completedAt: command.completedAt,
+  });
+
   return command;
 }
 
 async function markCommandProcessing({ reference, message }) {
-  return updateCommand(reference, "PROCESSING", message || "Processing");
+  return updateCommand(
+    reference,
+    "PROCESSING",
+    message || "Processing"
+  );
 }
 
 async function markCommandSuccessful({ reference, message }) {
-  return updateCommand(reference, "SUCCESSFUL", message || "Successful");
+  return updateCommand(
+    reference,
+    "SUCCESSFUL",
+    message || "Successful"
+  );
 }
 
 async function markCommandFailed({ reference, message }) {
-  return updateCommand(reference, "FAILED", message || "Failed");
+  return updateCommand(
+    reference,
+    "FAILED",
+    message || "Failed"
+  );
 }
 
 module.exports = {

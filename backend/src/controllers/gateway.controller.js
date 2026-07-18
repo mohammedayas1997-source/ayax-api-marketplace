@@ -758,10 +758,19 @@ exports.receiveCommandResult = async (req, res) => {
       response,
     } = req.body;
 
+    console.log("GATEWAY RESULT RECEIVED:", {
+      deviceId,
+      reference,
+      status,
+      message,
+      response,
+    });
+
     if (!deviceId || !secretKey || !reference || !status) {
       return res.status(400).json({
         success: false,
-        message: "deviceId, secretKey, reference and status are required",
+        message:
+          "deviceId, secretKey, reference and status are required",
       });
     }
 
@@ -779,83 +788,174 @@ exports.receiveCommandResult = async (req, res) => {
       });
     }
 
-    const finalMessage =
-      String(message || response || status || "").trim();
+    const normalizedStatus = String(status).toUpperCase();
+
+    const finalMessage = String(
+      message || response || normalizedStatus || ""
+    ).trim();
 
     let command;
 
-    if (status === "PROCESSING" || status === "SENT") {
+    if (
+      normalizedStatus === "PROCESSING" ||
+      normalizedStatus === "SENT"
+    ) {
       command = await markCommandProcessing({
         reference,
         message: finalMessage,
       });
     } else if (
-      status === "SUCCESSFUL" ||
-      status === "DELIVERED"
+      normalizedStatus === "SUCCESSFUL" ||
+      normalizedStatus === "DELIVERED"
     ) {
       command = await markCommandSuccessful({
         reference,
         message: finalMessage,
       });
 
-      const simId = command?.payload?.simId;
-      const service = command?.payload?.service;
+      const simId = command?.payload?.simId || null;
+      const service = command?.payload?.service || null;
+
+      console.log("BALANCE COMMAND PAYLOAD:", {
+        reference,
+        simId,
+        service,
+        payload: command?.payload,
+        finalMessage,
+      });
 
       if (simId) {
+        const airtimeBalance =
+          parseAirtimeBalance(finalMessage);
+
+        const dataBalance =
+          parseDataBalance(finalMessage);
+
+        const expiryValue =
+          parseExpiryDate(finalMessage);
+
+        console.log("PARSED BALANCE RESULT:", {
+          airtimeBalance,
+          dataBalance,
+          expiryValue,
+        });
+
         const updateData = {
           lastBalanceCheck: new Date(),
         };
 
-        if (service === "AIRTIME_BALANCE") {
-          const airtimeBalance =
-            parseAirtimeBalance(finalMessage);
+        if (
+          service === "AIRTIME_BALANCE" &&
+          airtimeBalance !== null
+        ) {
+          updateData.airtimeBalance =
+            Number(airtimeBalance);
+        }
 
-          if (airtimeBalance !== null) {
-            updateData.airtimeBalance =
-              Number(airtimeBalance);
+        if (
+          service === "DATA_BALANCE" &&
+          dataBalance
+        ) {
+          updateData.dataBalance = dataBalance;
+        }
+
+        if (expiryValue) {
+          let expiryDate = null;
+
+          if (expiryValue instanceof Date) {
+            expiryDate = expiryValue;
+          } else {
+            const rawExpiry =
+              String(expiryValue).trim();
+
+            const dayFirstMatch =
+              rawExpiry.match(
+                /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/
+              );
+
+            if (dayFirstMatch) {
+              const day =
+                Number(dayFirstMatch[1]);
+
+              const month =
+                Number(dayFirstMatch[2]);
+
+              let year =
+                Number(dayFirstMatch[3]);
+
+              if (year < 100) {
+                year += 2000;
+              }
+
+              expiryDate = new Date(
+                Date.UTC(
+                  year,
+                  month - 1,
+                  day
+                )
+              );
+            } else {
+              const parsedDate =
+                new Date(rawExpiry);
+
+              if (
+                !Number.isNaN(
+                  parsedDate.getTime()
+                )
+              ) {
+                expiryDate = parsedDate;
+              }
+            }
+          }
+
+          if (
+            expiryDate &&
+            !Number.isNaN(
+              expiryDate.getTime()
+            )
+          ) {
+            updateData.expiryDate =
+              expiryDate;
           }
         }
 
-        if (service === "DATA_BALANCE") {
-          const dataBalance =
-            parseDataBalance(finalMessage);
+        const updatedSim =
+          await prisma.gsmSim.update({
+            where: {
+              id: simId,
+            },
+            data: updateData,
+          });
 
-          if (dataBalance) {
-            updateData.dataBalance = dataBalance;
+        emitEvent(
+          "gsm-sim-balance-updated",
+          {
+            deviceId,
+            service,
+            command,
+            sim: updatedSim,
           }
-        }
-
-        const expiryDate =
-          parseExpiryDate(finalMessage);
-
-        if (expiryDate) {
-          const parsedExpiry =
-            new Date(expiryDate);
-
-          if (!Number.isNaN(parsedExpiry.getTime())) {
-            updateData.expiryDate = parsedExpiry;
-          }
-        }
-
-        const updatedSim = await prisma.gsmSim.update({
-          where: {
-            id: simId,
-          },
-          data: updateData,
-        });
-
-        emitEvent("gsm-sim-balance-updated", {
-          deviceId,
-          service,
-          sim: updatedSim,
-        });
+        );
       }
     } else {
       command = await markCommandFailed({
         reference,
-        message: finalMessage || "Command failed",
+        message:
+          finalMessage ||
+          normalizedStatus ||
+          "Command failed",
       });
     }
+
+    await prisma.gsmDevice.update({
+      where: {
+        id: deviceId,
+      },
+      data: {
+        status: "ONLINE",
+        lastSeen: new Date(),
+      },
+    });
 
     return res.json({
       success: true,
@@ -863,14 +963,20 @@ exports.receiveCommandResult = async (req, res) => {
       command,
     });
   } catch (error) {
-    console.error("receiveCommandResult error:", error);
+    console.error(
+      "receiveCommandResult error:",
+      error
+    );
 
     return res.status(400).json({
       success: false,
-      message: error.message,
+      message:
+        error.message ||
+        "Unable to process command result",
     });
   }
 };
+
 exports.getPairCodes = async (req, res) => {
   try {
     const pairCodes = await prisma.gsmPairCode.findMany({

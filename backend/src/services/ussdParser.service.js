@@ -1,33 +1,71 @@
+const normalize = (message = "") =>
+  String(message)
+    .replace(/\r/g, " ")
+    .replace(/\n/g, " ")
+    .replace(/,/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
 exports.parseAirtimeBalance = (message = "") => {
-  const text = String(message).replace(/,/g, "");
+  const text = normalize(message);
 
-  const nairaMatch =
-    text.match(/(?:₦|N|NGN)\s?(\d+(\.\d+)?)/i) ||
-    text.match(/balance.*?(\d+(\.\d+)?)/i);
+  const patterns = [
+    /(?:₦|NGN|N)\s*([0-9]+(?:\.[0-9]+)?)/i,
+    /balance(?:\sis|\s*:)?\s*(?:₦|NGN|N)?\s*([0-9]+(?:\.[0-9]+)?)/i,
+    /main balance(?:\sis|\s*:)?\s*(?:₦|NGN|N)?\s*([0-9]+(?:\.[0-9]+)?)/i,
+    /account balance(?:\sis|\s*:)?\s*(?:₦|NGN|N)?\s*([0-9]+(?:\.[0-9]+)?)/i,
+    /remaining(?:\sbalance)?(?:\sis|\s*:)?\s*(?:₦|NGN|N)?\s*([0-9]+(?:\.[0-9]+)?)/i,
+  ];
 
-  if (!nairaMatch) return null;
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
 
-  return Number(nairaMatch[1]);
+    if (match) {
+      return Number(match[1]);
+    }
+  }
+
+  return null;
 };
 
 exports.parseDataBalance = (message = "") => {
-  const text = String(message);
+  const text = normalize(message);
 
-  const dataMatch = text.match(/(\d+(\.\d+)?)\s?(GB|MB|KB)/i);
+  const patterns = [
+    /([0-9]+(?:\.[0-9]+)?)\s*(GB|MB|KB)/i,
+    /balance(?:\sis|\s*:)?\s*([0-9]+(?:\.[0-9]+)?)\s*(GB|MB|KB)/i,
+    /remaining(?:\sis|\s*:)?\s*([0-9]+(?:\.[0-9]+)?)\s*(GB|MB|KB)/i,
+  ];
 
-  if (!dataMatch) return null;
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
 
-  return `${dataMatch[1]}${dataMatch[3].toUpperCase()}`;
+    if (match) {
+      return `${match[1]} ${match[2].toUpperCase()}`;
+    }
+  }
+
+  return null;
 };
 
 exports.parseExpiryDate = (message = "") => {
-  const text = String(message);
+  const text = normalize(message);
 
-  const dateMatch =
-    text.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/) ||
-    text.match(/valid till\s+([A-Za-z]+\s+\d{1,2},?\s+\d{4})/i);
+  const patterns = [
+    /\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/,
+    /\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}/,
+    /valid till\s+[A-Za-z]+\s+\d{1,2},?\s+\d{4}/i,
+    /expires?\s+on\s+[A-Za-z]+\s+\d{1,2},?\s+\d{4}/i,
+    /expiry\s*:?\s*[A-Za-z]+\s+\d{1,2},?\s+\d{4}/i,
+  ];
 
-  if (!dateMatch) return null;
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
 
-  return dateMatch[0];
+    if (match) {
+      return match[0];
+    }
+  }
+
+  return null;
 };

@@ -168,8 +168,17 @@ exports.generatePairCode = async (req, res) => {
 exports.getDevices = async (req, res) => {
   try {
     const devices = await prisma.gsmDevice.findMany({
-      orderBy: { createdAt: "desc" },
-    });
+    include:{
+        sims:{
+            orderBy:{
+                slotIndex:"asc"
+            }
+        }
+    },
+    orderBy:{
+        createdAt:"desc"
+    }
+});
 
     return res.json({ success: true, devices });
   } catch (error) {
@@ -889,7 +898,10 @@ exports.receiveCommandResult = async (req, res) => {
       });
 
       const simId = command?.payload?.simId || null;
-      const service = command?.payload?.service || null;
+      const service =
+    command?.payload?.service ||
+    command?.payload?.balanceType ||
+    null;
 
       console.log("BALANCE COMMAND PAYLOAD:", {
         reference,
@@ -920,19 +932,24 @@ exports.receiveCommandResult = async (req, res) => {
         };
 
         if (
-          service === "AIRTIME_BALANCE" &&
-          airtimeBalance !== null
-        ) {
-          updateData.airtimeBalance =
-            Number(airtimeBalance);
-        }
+  service === "AIRTIME" ||
+  service === "AIRTIME_BALANCE"
+) {
+  if (airtimeBalance !== null) {
+    updateData.airtimeBalance =
+      Number(airtimeBalance);
+  }
+}
 
-        if (
-          service === "DATA_BALANCE" &&
-          dataBalance
-        ) {
-          updateData.dataBalance = dataBalance;
-        }
+      if (
+  service === "DATA" ||
+  service === "DATA_BALANCE"
+) {
+  if (dataBalance) {
+    updateData.dataBalance =
+      dataBalance;
+  }
+}
 
         if (expiryValue) {
           let expiryDate = null;
@@ -1002,8 +1019,8 @@ exports.receiveCommandResult = async (req, res) => {
             data: updateData,
           });
 
-        emitEvent(
-          "gsm-sim-balance-updated",
+          emitEvent(
+      "gateway-sims-updated",
           {
             deviceId,
             service,
@@ -1084,10 +1101,11 @@ exports.updateSimNumber = async (req, res) => {
       },
     });
 
-    emitEvent("gateway-sims-updated", {
-      deviceId: sim.deviceId,
-      sims: [sim],
-    });
+   emitEvent("gsm-sim-balance-updated", {
+  deviceId,
+  service,
+  sim: updatedSim,
+});
 
     return res.json({
       success: true,

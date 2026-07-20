@@ -22,44 +22,80 @@ const NETWORK_CODES = {
 };
 
 function normalizeNetwork(value = "") {
-  const name = value.toUpperCase();
+  const name = String(value).toUpperCase();
 
   if (name.includes("MTN")) return "MTN";
   if (name.includes("AIRTEL")) return "AIRTEL";
   if (name.includes("GLO")) return "GLO";
-  if (name.includes("9MOBILE") || name.includes("ETISALAT")) {
+
+  if (
+    name.includes("9MOBILE") ||
+    name.includes("ETISALAT")
+  ) {
     return "9MOBILE";
   }
 
   return "MTN";
 }
 
-async function sendBalanceCheckCommand({ device, sim, type }) {
+async function sendBalanceCheckCommand({
+  device,
+  sim,
+  type = "AIRTIME",
+}) {
+  if (!device?.id) {
+    throw new Error("Gateway device is required");
+  }
+
+  if (!sim?.id) {
+    throw new Error("SIM is required");
+  }
+
   const network = normalizeNetwork(
-    sim.carrierName || sim.displayName || ""
+    sim.carrierName ||
+      sim.displayName ||
+      ""
   );
 
-  const commandType = type === "DATA" ? "DATA" : "AIRTIME";
+  const normalizedType =
+    String(type).toUpperCase() === "DATA"
+      ? "DATA"
+      : "AIRTIME";
+
+  const service =
+    normalizedType === "DATA"
+      ? "DATA_BALANCE"
+      : "AIRTIME_BALANCE";
+
   const ussdCode =
-    NETWORK_CODES[network]?.[commandType] || "*310#";
+    NETWORK_CODES[network]?.[normalizedType] ||
+    (normalizedType === "DATA"
+      ? "*323#"
+      : "*310#");
 
   const reference =
-    `USSD-${crypto.randomBytes(6).toString("hex").toUpperCase()}`;
+    `USSD-${crypto
+      .randomBytes(6)
+      .toString("hex")
+      .toUpperCase()}`;
 
-  const command = await prisma.gsmCommand.create({
-    data: {
-      reference,
-      deviceId: device.id,
-      type: "USSD",
-      status: "PENDING",
-      payload: {
-        simId: sim.id,
-        simSlot: sim.slotIndex,
-        ussdCode,
-        balanceType: commandType,
+  const command =
+    await prisma.gsmCommand.create({
+      data: {
+        reference,
+        deviceId: device.id,
+        type: "USSD",
+        status: "PENDING",
+        payload: {
+          simId: sim.id,
+          simSlot: Number(sim.slotIndex),
+          ussdCode,
+          network,
+          service,
+          balanceType: normalizedType,
+        },
       },
-    },
-  });
+    });
 
   emitEvent(
     "gateway-command",
@@ -67,7 +103,10 @@ async function sendBalanceCheckCommand({ device, sim, type }) {
       reference,
       type: "USSD",
       ussdCode,
-      simSlot: sim.slotIndex,
+      simSlot: Number(sim.slotIndex),
+      simId: sim.id,
+      service,
+      balanceType: normalizedType,
     },
     device.id
   );

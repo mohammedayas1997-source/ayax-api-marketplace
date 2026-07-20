@@ -13,6 +13,83 @@ const {
 } = require("../services/ussdParser.service");
 const { sendBalanceCheckCommand } = require("../services/balanceCheck.service");
 
+const parseDataBalanceSms = (message = "") => {
+  const text = String(message).replace(/\s+/g, " ").trim();
+
+  const bundleRegex =
+    /([A-Za-z][A-Za-z0-9\s_-]{1,40}?)\s*:\s*([\d,.]+)\s*(KB|MB|GB|TB)/gi;
+
+  const bundles = [];
+  let match;
+
+  while ((match = bundleRegex.exec(text)) !== null) {
+    const name = match[1].trim();
+    const amount = Number(match[2].replace(/,/g, ""));
+    const unit = match[3].toUpperCase();
+
+    if (!Number.isNaN(amount)) {
+      bundles.push({
+        name,
+        amount,
+        unit,
+      });
+    }
+  }
+
+  // Fallback idan sakon bai ƙunshi bundle name ba.
+  if (bundles.length === 0) {
+    const simpleRegex = /([\d,.]+)\s*(KB|MB|GB|TB)/gi;
+
+    while ((match = simpleRegex.exec(text)) !== null) {
+      const amount = Number(match[1].replace(/,/g, ""));
+      const unit = match[2].toUpperCase();
+
+      if (!Number.isNaN(amount)) {
+        bundles.push({
+          name: "Data Balance",
+          amount,
+          unit,
+        });
+      }
+    }
+  }
+
+  if (bundles.length === 0) {
+    return null;
+  }
+
+  const toMb = ({ amount, unit }) => {
+    if (unit === "KB") return amount / 1024;
+    if (unit === "GB") return amount * 1024;
+    if (unit === "TB") return amount * 1024 * 1024;
+
+    return amount;
+  };
+
+  const totalMb = bundles.reduce(
+    (sum, bundle) => sum + toMb(bundle),
+    0
+  );
+
+  const total =
+    totalMb >= 1024
+      ? `${(totalMb / 1024).toFixed(2)}GB`
+      : `${totalMb.toFixed(2)}MB`;
+
+  const breakdown = bundles
+    .map(
+      (bundle) =>
+        `${bundle.name}: ${bundle.amount}${bundle.unit}`
+    )
+    .join(" | ");
+
+  return {
+    total,
+    breakdown,
+    displayValue: `${total} (${breakdown})`,
+  };
+};
+
 exports.pairDevice = async (req, res) => {
   try {
     const { deviceName, deviceCode, location } = req.body;
@@ -242,20 +319,6 @@ exports.renameDevice = async (req, res) => {
     return res.status(400).json({ success: false, message: error.message });
   }
 };
-
-exports.receiveIncomingSms = async (req, res) => {
-  try {
-    const { deviceId, secretKey, phoneNumber, message } = req.body;
-
-    const device = await prisma.gsmDevice.findFirst({
-      where: { id: deviceId, secretKey },
-    });
-
-    if (!device) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid device credentials",
-      });
 exports.receiveIncomingSms = async (req, res) => {
   try {
     const {
@@ -265,6 +328,7 @@ exports.receiveIncomingSms = async (req, res) => {
       message,
       slotIndex,
       subscriptionId,
+      receivedAt,
     } = req.body;
 
     if (!deviceId || !secretKey || !message) {
@@ -297,130 +361,76 @@ exports.receiveIncomingSms = async (req, res) => {
       },
     });
 
-    const normalizedSlot = Number.isFinite(
-      Number(slotIndex)
-    )
-      ? Number(slotIndex)
-      : 0;
-
-    const sim = await prisma.gsmSim.findUnique({
-      where: {
-        deviceId_slotIndex: {
-          deviceId,
-          slotIndex: normalizedSlot,
-        },
-      },
-    });
+    const parsedData = parseDataBalanceSms(message);
 
     let updatedSim = null;
 
-    if (sim) {
-      const parsedDataBalance =
-        parseDataBalance(message);
+    if (
+      parsedData &&
+      slotIndex !== undefined &&
+      slotIndex !== null
+    ) {
+      const normalizedSlot = Number(slotIndex);
 
-      const parsedAirtimeBalance =
-        parseAirtimeBalance(message);
+      if (!Number.isNaN(normalizedSlot)) {
+        const sim = await prisma.gsmSim.findUnique({
+          where: {
+            deviceId_slotIndex: {
+              deviceId,
+              slotIndex: normalizedSlot,
+            },
+          },
+        });
 
-      const parsedExpiryDate =
-        parseExpiryDate(message);
+        if (sim) {
+          updatedSim = await prisma.gsmSim.update({
+            where: {
+              id: sim.id,
+            },
+            data: {
+              dataBalance: parsedData.displayValue,
+              lastSyncAt: new Date(),
+            },
+          });
 
-      const appearsToBeDataBalance =
-        parsedDataBalance !== null ||
-        /\b(data|bundle|mb|gb|kb|balances?)\b/i.test(
-          message
-        );
+          emitEvent("gsm-sims-synced", {
+            deviceId,
+            sims: [updatedSim],
+          });
 
-      const appearsToBeAirtimeBalance =
-        parsedAirtimeBalance !== null &&
-        /\b(airtime|main balance|account balance|credit)\b/i.test(
-          message
-        );
-
-      const updateData = {
-        lastSyncAt: new Date(),
-      };
-
-      if (
-        appearsToBeDataBalance &&
-        parsedDataBalance !== null
-      ) {
-        updateData.dataBalance =
-          parsedDataBalance;
-        updateData.lastBalanceCheck =
-          new Date();
+          emitEvent("gsm-sim-balance-updated", {
+            deviceId,
+            simId: updatedSim.id,
+            slotIndex: normalizedSlot,
+            dataBalance: parsedData.displayValue,
+          });
+        }
       }
-
-      if (
-        appearsToBeAirtimeBalance &&
-        parsedAirtimeBalance !== null
-      ) {
-        updateData.airtimeBalance =
-          parsedAirtimeBalance;
-        updateData.lastBalanceCheck =
-          new Date();
-      }
-
-      if (parsedExpiryDate) {
-        updateData.expiryDate =
-          new Date(parsedExpiryDate);
-      }
-
-      updatedSim = await prisma.gsmSim.update({
-        where: {
-          id: sim.id,
-        },
-        data: updateData,
-      });
-
-      emitEvent("gsm-sims-synced", {
-        deviceId,
-        sims: [updatedSim],
-      });
-
-      emitEvent("gateway-sims-updated", {
-        deviceId,
-        sim: updatedSim,
-      });
     }
 
     emitEvent("gsm-sms-received", {
       sms,
-      slotIndex: normalizedSlot,
-      subscriptionId:
-        subscriptionId ?? null,
-      updatedSim,
+      slotIndex,
+      subscriptionId,
+      receivedAt,
     });
 
     return res.status(201).json({
       success: true,
       message: updatedSim
-        ? "SMS received and SIM balance updated"
+        ? "SMS received and data balance updated"
         : "SMS received successfully",
       sms,
+      dataBalance: parsedData,
       sim: updatedSim,
     });
   } catch (error) {
-    console.error(
-      "receiveIncomingSms error:",
-      error
-    );
+    console.error("Incoming SMS error:", error);
 
     return res.status(400).json({
       success: false,
       message: error.message,
     });
-  }
-};    }
-
-    const sms = await prisma.smsInbox.create({
-      data: { deviceId, phoneNumber, message },
-    });
-
-    emitEvent("gsm-sms-received", { sms });
-
-    return res.status(201).json({ success: true, sms });
-  } catch (error) {
-    return res.status(400).json({ success: false, message: error.message });
   }
 };
 

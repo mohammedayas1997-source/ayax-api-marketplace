@@ -83,12 +83,16 @@ export default function SimManagerPage() {
   }, []);
 
   useGatewaySocket({
-    "gateway-device-online": () => loadDevices({ silent: true }),
-    "gateway-device-offline": () => loadDevices({ silent: true }),
-    "gsm-sims-synced": () => loadDevices({ silent: true }),
-    "gsm-sim-balance-updated": () => loadDevices({ silent: true }),
-    "gsm-command-updated": () => loadDevices({ silent: true }),
-  });
+  "wallet-updated": loadDevices,
+  "gsm-command-updated": loadDevices,
+  "transaction-updated": loadDevices,
+  "gateway-device-online": loadDevices,
+  "gateway-device-offline": loadDevices,
+  "gateway-location": loadDevices,
+  "gateway-security-alert": loadDevices,
+  "gsm-sims-synced": loadDevices,
+  "gsm-sim-balance-updated": loadDevices,
+});
 
   const refreshBalance = async (simId, type) => {
     const key = `${simId}-${type}`;

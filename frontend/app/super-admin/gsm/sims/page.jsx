@@ -41,6 +41,8 @@ export default function SimManagerPage() {
   const [refreshingKey, setRefreshingKey] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
+  const [phoneInputs, setPhoneInputs] = useState({});
+  const [savingNumber, setSavingNumber] = useState("");
 
   const loadDevices = async ({ silent = false } = {}) => {
     try {
@@ -122,6 +124,32 @@ export default function SimManagerPage() {
       ),
     [devices]
   );
+  const savePhoneNumber = async (simId) => {
+  const phoneNumber = String(phoneInputs[simId] || "").trim();
+
+  if (!phoneNumber) {
+    setMessage("Enter SIM phone number first.");
+    return;
+  }
+
+  try {
+    setSavingNumber(simId);
+
+    const res = await api.patch(`/gateway/sims/${simId}/number`, {
+      phoneNumber,
+    });
+
+    setMessage(res.data?.message || "SIM number saved.");
+    await loadDevices({ silent: true });
+  } catch (error) {
+    setMessage(
+      error.response?.data?.message ||
+        "Failed to save SIM number."
+    );
+  } finally {
+    setSavingNumber("");
+  }
+};
 
   return (
     <SuperAdminLayout
@@ -287,14 +315,55 @@ export default function SimManagerPage() {
                           </div>
 
                           <div className="space-y-3">
-                            <Info
-                              icon={<Wifi size={16} />}
-                              label="Phone Number"
-                              value={
-                                sim.phoneNumber ||
-                                "Not provided by Android"
-                              }
-                            />
+                            <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-4">
+  <div className="mb-3 flex items-center justify-between gap-4">
+    <div className="flex items-center gap-2 text-slate-400">
+      <span className="text-blue-400">
+        <Wifi size={16} />
+      </span>
+
+      <span>Phone Number</span>
+    </div>
+
+    <span className="max-w-[55%] break-words text-right font-semibold text-slate-200">
+      {sim.phoneNumber || "Not provided by Android"}
+    </span>
+  </div>
+
+  <div className="flex flex-col gap-3 sm:flex-row">
+    <input
+      type="tel"
+      inputMode="tel"
+      value={
+        phoneInputs[sim.id] ??
+        sim.phoneNumber ??
+        ""
+      }
+      onChange={(event) =>
+        setPhoneInputs((current) => ({
+          ...current,
+          [sim.id]: event.target.value,
+        }))
+      }
+      placeholder="Enter SIM phone number"
+      className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-blue-500"
+    />
+
+    <button
+      type="button"
+      onClick={() => savePhoneNumber(sim.id)}
+      disabled={savingNumber === sim.id}
+      className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+    >
+      {savingNumber === sim.id
+        ? "Saving..."
+        : sim.phoneNumber
+        ? "Update Number"
+        : "Save Number"}
+    </button>
+  </div>
+</div>
+
 
                             <Info
                               icon={<CreditCard size={16} />}

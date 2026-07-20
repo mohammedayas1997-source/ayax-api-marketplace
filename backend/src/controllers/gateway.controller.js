@@ -921,6 +921,10 @@ exports.receiveCommandResult = async (req, res) => {
         const expiryValue =
           parseExpiryDate(finalMessage);
 
+        console.log("USSD RAW MESSAGE");
+        console.log(finalMessage);
+        console.log("--------------------");
+
         console.log("PARSED BALANCE RESULT:", {
           airtimeBalance,
           dataBalance,
@@ -1102,9 +1106,8 @@ exports.updateSimNumber = async (req, res) => {
     });
 
    emitEvent("gsm-sim-balance-updated", {
-  deviceId,
-  service,
-  sim: updatedSim,
+  deviceId: sim.deviceId,
+  sim,
 });
 
     return res.json({

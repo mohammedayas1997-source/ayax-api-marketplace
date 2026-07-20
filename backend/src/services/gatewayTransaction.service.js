@@ -41,13 +41,19 @@ async function markCommandProcessing({ reference, message }) {
 }
 
 async function markCommandSuccessful({ reference, message }) {
-  return updateCommand(
-    reference,
-    "SUCCESSFUL",
-    message || "Successful"
-  );
-}
+  const command = await prisma.gsmCommand.update({
+    where: { reference },
+    data: {
+      status: "SUCCESSFUL",
+      response: message,
+      completedAt: new Date(),
+    },
+  });
 
+  emitEvent("gsm-command-updated", command);
+
+  return command;
+}
 async function markCommandFailed({ reference, message }) {
   return updateCommand(
     reference,

@@ -1,22 +1,50 @@
-const crypto = require("crypto");
 const prisma = require("../config/prisma");
+const crypto = require("crypto");
 const { emitEvent } = require("../config/socket");
-const { getNetworkProfile } = require("./networkProfile.service");
 
-exports.sendBalanceCheckCommand = async ({ device, sim, type = "AIRTIME" }) => {
-  const network = String(sim.carrierName || "").toUpperCase();
+const NETWORK_CODES = {
+  MTN: {
+    AIRTIME: "*310#",
+    DATA: "*323#",
+  },
+  AIRTEL: {
+    AIRTIME: "*310#",
+    DATA: "*323#",
+  },
+  GLO: {
+    AIRTIME: "*310#",
+    DATA: "*323#",
+  },
+  "9MOBILE": {
+    AIRTIME: "*310#",
+    DATA: "*323#",
+  },
+};
 
-  const profile = await getNetworkProfile(network.includes("MTN") ? "MTN" : network);
+function normalizeNetwork(value = "") {
+  const name = value.toUpperCase();
 
-  const ussdCode =
-    type === "DATA" ? profile.dataBalanceUssd : profile.balanceUssd;
-
-  if (!ussdCode) {
-    throw new Error(`${type} balance USSD not configured for ${network}`);
+  if (name.includes("MTN")) return "MTN";
+  if (name.includes("AIRTEL")) return "AIRTEL";
+  if (name.includes("GLO")) return "GLO";
+  if (name.includes("9MOBILE") || name.includes("ETISALAT")) {
+    return "9MOBILE";
   }
 
+  return "MTN";
+}
+
+async function sendBalanceCheckCommand({ device, sim, type }) {
+  const network = normalizeNetwork(
+    sim.carrierName || sim.displayName || ""
+  );
+
+  const commandType = type === "DATA" ? "DATA" : "AIRTIME";
+  const ussdCode =
+    NETWORK_CODES[network]?.[commandType] || "*310#";
+
   const reference =
-    `${type}-BAL-` + crypto.randomBytes(6).toString("hex").toUpperCase();
+    `USSD-${crypto.randomBytes(6).toString("hex").toUpperCase()}`;
 
   const command = await prisma.gsmCommand.create({
     data: {
@@ -27,9 +55,8 @@ exports.sendBalanceCheckCommand = async ({ device, sim, type = "AIRTIME" }) => {
       payload: {
         simId: sim.id,
         simSlot: sim.slotIndex,
-        network,
-        service: `${type}_BALANCE`,
         ussdCode,
+        balanceType: commandType,
       },
     },
   });
@@ -39,11 +66,15 @@ exports.sendBalanceCheckCommand = async ({ device, sim, type = "AIRTIME" }) => {
     {
       reference,
       type: "USSD",
-      simSlot: sim.slotIndex,
       ussdCode,
+      simSlot: sim.slotIndex,
     },
     device.id
   );
 
   return command;
+}
+
+module.exports = {
+  sendBalanceCheckCommand,
 };

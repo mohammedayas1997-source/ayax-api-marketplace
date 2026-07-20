@@ -322,47 +322,78 @@ exports.syncSims = async (req, res) => {
             slotIndex,
           },
         },
-
         update: {
-          carrierName: sim.carrierName || "Unknown",
-          displayName: sim.displayName || sim.carrierName || "Unknown",
+          carrierName:
+            sim.carrierName ||
+            sim.displayName ||
+            "Unknown",
+
+          displayName:
+            sim.displayName ||
+            sim.carrierName ||
+            "Unknown",
+
           phoneNumber:
             sim.phoneNumber ||
             sim.number ||
             null,
-          countryIso: sim.countryIso || null,
+
+          countryIso:
+            sim.countryIso || null,
+
           mcc:
-            sim.mcc === undefined || sim.mcc === null
+            sim.mcc === null ||
+            sim.mcc === undefined ||
+            sim.mcc === ""
               ? null
               : Number(sim.mcc),
+
           mnc:
-            sim.mnc === undefined || sim.mnc === null
+            sim.mnc === null ||
+            sim.mnc === undefined ||
+            sim.mnc === ""
               ? null
               : Number(sim.mnc),
+
           status: "ACTIVE",
           lastSyncAt: new Date(),
         },
-
         create: {
           deviceId,
           slotIndex,
-          carrierName: sim.carrierName || "Unknown",
-          displayName: sim.displayName || sim.carrierName || "Unknown",
+
+          carrierName:
+            sim.carrierName ||
+            sim.displayName ||
+            "Unknown",
+
+          displayName:
+            sim.displayName ||
+            sim.carrierName ||
+            "Unknown",
+
           phoneNumber:
             sim.phoneNumber ||
             sim.number ||
             null,
-          countryIso: sim.countryIso || null,
+
+          countryIso:
+            sim.countryIso || null,
+
           mcc:
-            sim.mcc === undefined || sim.mcc === null
+            sim.mcc === null ||
+            sim.mcc === undefined ||
+            sim.mcc === ""
               ? null
               : Number(sim.mcc),
+
           mnc:
-            sim.mnc === undefined || sim.mnc === null
+            sim.mnc === null ||
+            sim.mnc === undefined ||
+            sim.mnc === ""
               ? null
               : Number(sim.mnc),
-          airtimeBalance: 0,
-          dataBalance: null,
+
           status: "ACTIVE",
           lastSyncAt: new Date(),
         },
@@ -378,11 +409,11 @@ exports.syncSims = async (req, res) => {
 
     return res.json({
       success: true,
-      message: `${savedSims.length} SIM card(s) synced successfully`,
+      message: "SIM cards synced successfully",
       sims: savedSims,
     });
   } catch (error) {
-    console.error("SIM sync error:", error);
+    console.error("syncSims error:", error);
 
     return res.status(400).json({
       success: false,
@@ -1036,6 +1067,35 @@ exports.getPairCodes = async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+exports.updateSimNumber = async (req, res) => {
+  try {
+    const { simId } = req.params;
+    const { phoneNumber } = req.body;
+
+    const sim = await prisma.gsmSim.update({
+      where: { id: simId },
+      data: {
+        phoneNumber: phoneNumber?.trim() || null,
+      },
+    });
+
+    emitEvent("gateway-sims-updated", {
+      deviceId: sim.deviceId,
+      sims: [sim],
+    });
+
+    return res.json({
+      success: true,
+      message: "SIM number updated",
+      sim,
+    });
+  } catch (error) {
+    return res.status(400).json({
       success: false,
       message: error.message,
     });

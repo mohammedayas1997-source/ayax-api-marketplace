@@ -278,8 +278,25 @@ exports.syncSims = async (req, res) => {
   try {
     const { deviceId, secretKey, sims } = req.body;
 
+    if (!deviceId || !secretKey) {
+      return res.status(400).json({
+        success: false,
+        message: "deviceId and secretKey are required",
+      });
+    }
+
+    if (!Array.isArray(sims)) {
+      return res.status(400).json({
+        success: false,
+        message: "sims must be an array",
+      });
+    }
+
     const device = await prisma.gsmDevice.findFirst({
-      where: { id: deviceId, secretKey },
+      where: {
+        id: deviceId,
+        secretKey,
+      },
     });
 
     if (!device) {
@@ -289,63 +306,90 @@ exports.syncSims = async (req, res) => {
       });
     }
 
-    const saved = [];
+    const savedSims = [];
 
-    for (const sim of sims || []) {
-      const item = await prisma.gsmSim.upsert({
+    for (const sim of sims) {
+      const slotIndex = Number(sim.slotIndex);
+
+      if (!Number.isInteger(slotIndex) || slotIndex < 0) {
+        continue;
+      }
+
+      const savedSim = await prisma.gsmSim.upsert({
         where: {
           deviceId_slotIndex: {
             deviceId,
-            slotIndex: Number(sim.slotIndex),
+            slotIndex,
           },
         },
+
         update: {
-          carrierName: sim.carrierName,
-          displayName: sim.displayName,
+          carrierName: sim.carrierName || "Unknown",
+          displayName: sim.displayName || sim.carrierName || "Unknown",
           phoneNumber:
-          sim.phoneNumber ||
-          sim.number ||
-          null,
-          countryIso: sim.countryIso,
-          mcc: sim.mcc,
-          mnc: sim.mnc,
-          airtimeBalance: Number(sim.airtimeBalance || 0),
-          dataBalance: sim.dataBalance || null,
+            sim.phoneNumber ||
+            sim.number ||
+            null,
+          countryIso: sim.countryIso || null,
+          mcc:
+            sim.mcc === undefined || sim.mcc === null
+              ? null
+              : Number(sim.mcc),
+          mnc:
+            sim.mnc === undefined || sim.mnc === null
+              ? null
+              : Number(sim.mnc),
           status: "ACTIVE",
           lastSyncAt: new Date(),
         },
+
         create: {
           deviceId,
-          slotIndex: Number(sim.slotIndex),
-          carrierName: sim.carrierName,
-          displayName: sim.displayName,
-          phoneNumber: sim.phoneNumber || sim.number || null,
-          countryIso: sim.countryIso,
-          mcc: sim.mcc,
-          mnc: sim.mnc,
-          airtimeBalance: Number(sim.airtimeBalance || 0),
-          dataBalance: sim.dataBalance || null,
+          slotIndex,
+          carrierName: sim.carrierName || "Unknown",
+          displayName: sim.displayName || sim.carrierName || "Unknown",
+          phoneNumber:
+            sim.phoneNumber ||
+            sim.number ||
+            null,
+          countryIso: sim.countryIso || null,
+          mcc:
+            sim.mcc === undefined || sim.mcc === null
+              ? null
+              : Number(sim.mcc),
+          mnc:
+            sim.mnc === undefined || sim.mnc === null
+              ? null
+              : Number(sim.mnc),
+          airtimeBalance: 0,
+          dataBalance: null,
           status: "ACTIVE",
+          lastSyncAt: new Date(),
         },
       });
 
-      saved.push(item);
+      savedSims.push(savedSim);
     }
 
-    emitEvent("gsm-sims-synced", { deviceId, sims: saved });
+    emitEvent("gsm-sims-synced", {
+      deviceId,
+      sims: savedSims,
+    });
 
     return res.json({
       success: true,
-      sims: saved,
+      message: `${savedSims.length} SIM card(s) synced successfully`,
+      sims: savedSims,
     });
   } catch (error) {
+    console.error("SIM sync error:", error);
+
     return res.status(400).json({
       success: false,
       message: error.message,
     });
   }
 };
-
 exports.getDeviceSims = async (req, res) => {
   try {
     const sims = await prisma.gsmSim.findMany({

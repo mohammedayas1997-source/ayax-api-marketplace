@@ -10,10 +10,41 @@ const {
   parseAirtimeBalance,
   parseDataBalance,
   parseExpiryDate,
-  parseDataBalanceSms,
-  parseExpiryValue,
 } = require("../services/ussdParser.service");
 const { sendBalanceCheckCommand } = require("../services/balanceCheck.service");
+
+const parseExpiryToDate = (value) => {
+  if (!value) return null;
+
+  const text = String(value).trim();
+
+  const dayFirst = text.match(
+    /^(\d{1,2})[/-](\d{1,2})[/-](\d{2}|\d{4})$/
+  );
+
+  if (dayFirst) {
+    const [, day, month, rawYear] = dayFirst;
+    const year =
+      rawYear.length === 2
+        ? Number(`20${rawYear}`)
+        : Number(rawYear);
+
+    const date = new Date(
+      year,
+      Number(month) - 1,
+      Number(day),
+      23,
+      59,
+      59
+    );
+
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const parsed = new Date(text);
+
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
 
 
 exports.pairDevice = async (req, res) => {
@@ -287,12 +318,12 @@ exports.receiveIncomingSms = async (req, res) => {
       },
     });
 
-    const parsedData = parseDataBalanceSms(message);
+    const parsedDataBalance = parseDataBalance(message);
 
     let updatedSim = null;
 
     if (
-      parsedData &&
+      parsedDataBalance &&
       slotIndex !== undefined &&
       slotIndex !== null
     ) {
@@ -314,8 +345,9 @@ exports.receiveIncomingSms = async (req, res) => {
               id: sim.id,
             },
             data: {
-              dataBalance: parsedData.displayValue,
+              dataBalance: String(parsedDataBalance),
               lastSyncAt: new Date(),
+              lastBalanceCheck: new Date(),
             },
           });
 
@@ -328,7 +360,7 @@ exports.receiveIncomingSms = async (req, res) => {
             deviceId,
             simId: updatedSim.id,
             slotIndex: normalizedSlot,
-            dataBalance: parsedData.displayValue,
+            dataBalance: String(parsedDataBalance),
           });
         }
       }
@@ -347,7 +379,7 @@ exports.receiveIncomingSms = async (req, res) => {
         ? "SMS received and data balance updated"
         : "SMS received successfully",
       sms,
-      dataBalance: parsedData,
+      dataBalance: parsedDataBalance,
       sim: updatedSim,
     });
   } catch (error) {
@@ -1067,29 +1099,19 @@ exports.receiveCommandResult = async (req, res) => {
         }
 
         if (isDataCommand) {
-          const smsBalance =
-            parseDataBalanceSms(finalMessage);
+          const parsedDataBalance =
+            parseDataBalance(finalMessage);
 
-          if (smsBalance?.displayValue) {
+          if (
+            parsedDataBalance !== null &&
+            parsedDataBalance !== undefined &&
+            String(parsedDataBalance).trim() !== ""
+          ) {
             dataBalance =
-              smsBalance.displayValue;
+              String(parsedDataBalance).trim();
 
             updateData.dataBalance =
-              smsBalance.displayValue;
-          } else {
-            const parsedDataBalance =
-              parseDataBalance(finalMessage);
-
-            if (
-              parsedDataBalance !== null &&
-              parsedDataBalance !== undefined
-            ) {
-              dataBalance =
-                String(parsedDataBalance);
-
-              updateData.dataBalance =
-                String(parsedDataBalance);
-            }
+              dataBalance;
           }
         }
 
@@ -1098,7 +1120,7 @@ exports.receiveCommandResult = async (req, res) => {
 
         if (expiryValue) {
           const parsedExpiry =
-            parseExpiryValue(expiryValue);
+            parseExpiryToDate(expiryValue);
 
           if (parsedExpiry) {
             updateData.expiryDate =

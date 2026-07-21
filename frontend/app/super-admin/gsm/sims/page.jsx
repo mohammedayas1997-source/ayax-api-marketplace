@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Smartphone,
   RefreshCcw,
@@ -27,12 +33,7 @@ const formatDateTime = (value) => {
   if (!value) return "-";
 
   const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return "-";
-  }
-
-  return date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
 };
 
 export default function SimManagerPage() {
@@ -44,14 +45,21 @@ export default function SimManagerPage() {
   const [phoneInputs, setPhoneInputs] = useState({});
   const [savingNumber, setSavingNumber] = useState("");
 
-  const loadDevices = async ({ silent = false } = {}) => {
+  const pollingTimersRef = useRef([]);
+
+  const clearPollingTimers = useCallback(() => {
+    pollingTimersRef.current.forEach((timerId) => clearTimeout(timerId));
+    pollingTimersRef.current = [];
+  }, []);
+
+  const loadDevices = useCallback(async ({ silent = false } = {}) => {
     try {
-      if (!silent) {
-        setLoading(true);
-      }
+      if (!silent) setLoading(true);
 
       const res = await api.get("/gateway/devices");
-      const list = res.data.devices || [];
+      const list = Array.isArray(res.data?.devices)
+        ? res.data.devices
+        : [];
 
       setDevices(list);
 
@@ -59,9 +67,28 @@ export default function SimManagerPage() {
         const next = { ...current };
 
         list.forEach((device) => {
-          if (!next[device.id] && device.sims?.length > 0) {
-            next[device.id] = device.sims[0].id;
+          const sims = Array.isArray(device.sims) ? device.sims : [];
+
+          if (
+            sims.length > 0 &&
+            !sims.some((sim) => sim.id === next[device.id])
+          ) {
+            next[device.id] = sims[0].id;
           }
+        });
+
+        return next;
+      });
+
+      setPhoneInputs((current) => {
+        const next = { ...current };
+
+        list.forEach((device) => {
+          (device.sims || []).forEach((sim) => {
+            if (next[sim.id] === undefined && sim.phoneNumber) {
+              next[sim.id] = sim.phoneNumber;
+            }
+          });
         });
 
         return next;
@@ -72,27 +99,45 @@ export default function SimManagerPage() {
           "Failed to load gateway devices and SIMs."
       );
     } finally {
-      if (!silent) {
-        setLoading(false);
-      }
+      if (!silent) setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadDevices();
-  }, []);
+
+    return () => {
+      clearPollingTimers();
+    };
+  }, [loadDevices, clearPollingTimers]);
+
+  const handleRealtimeUpdate = useCallback(() => {
+    loadDevices({ silent: true });
+  }, [loadDevices]);
 
   useGatewaySocket({
-  "wallet-updated": loadDevices,
-  "gsm-command-updated": loadDevices,
-  "transaction-updated": loadDevices,
-  "gateway-device-online": loadDevices,
-  "gateway-device-offline": loadDevices,
-  "gateway-location": loadDevices,
-  "gateway-security-alert": loadDevices,
-  "gsm-sims-synced": loadDevices,
-  "gsm-sim-balance-updated": loadDevices,
-});
+    "wallet-updated": handleRealtimeUpdate,
+    "gsm-command-updated": handleRealtimeUpdate,
+    "transaction-updated": handleRealtimeUpdate,
+    "gateway-device-online": handleRealtimeUpdate,
+    "gateway-device-offline": handleRealtimeUpdate,
+    "gateway-location": handleRealtimeUpdate,
+    "gateway-security-alert": handleRealtimeUpdate,
+    "gsm-sims-synced": handleRealtimeUpdate,
+    "gsm-sim-balance-updated": handleRealtimeUpdate,
+  });
+
+  const scheduleBalancePolling = useCallback(() => {
+    clearPollingTimers();
+
+    const delays = [3000, 8000, 15000, 25000];
+
+    pollingTimersRef.current = delays.map((delay) =>
+      setTimeout(() => {
+        loadDevices({ silent: true });
+      }, delay)
+    );
+  }, [clearPollingTimers, loadDevices]);
 
   const refreshBalance = async (simId, type) => {
     const key = `${simId}-${type}`;
@@ -108,8 +153,10 @@ export default function SimManagerPage() {
 
       setMessage(
         res.data?.message ||
-          `${type} balance refresh command sent successfully.`
+          `${type} balance command sent. Waiting for network response...`
       );
+
+      scheduleBalancePolling();
     } catch (error) {
       setMessage(
         error.response?.data?.message ||
@@ -117,6 +164,33 @@ export default function SimManagerPage() {
       );
     } finally {
       setRefreshingKey("");
+    }
+  };
+
+  const savePhoneNumber = async (simId) => {
+    const phoneNumber = String(phoneInputs[simId] || "").trim();
+
+    if (!phoneNumber) {
+      setMessage("Enter SIM phone number first.");
+      return;
+    }
+
+    try {
+      setSavingNumber(simId);
+
+      const res = await api.patch(`/gateway/sims/${simId}/number`, {
+        phoneNumber,
+      });
+
+      setMessage(res.data?.message || "SIM number saved.");
+      await loadDevices({ silent: true });
+    } catch (error) {
+      setMessage(
+        error.response?.data?.message ||
+          "Failed to save SIM number."
+      );
+    } finally {
+      setSavingNumber("");
     }
   };
 
@@ -128,32 +202,6 @@ export default function SimManagerPage() {
       ),
     [devices]
   );
-  const savePhoneNumber = async (simId) => {
-  const phoneNumber = String(phoneInputs[simId] || "").trim();
-
-  if (!phoneNumber) {
-    setMessage("Enter SIM phone number first.");
-    return;
-  }
-
-  try {
-    setSavingNumber(simId);
-
-    const res = await api.patch(`/gateway/sims/${simId}/number`, {
-      phoneNumber,
-    });
-
-    setMessage(res.data?.message || "SIM number saved.");
-    await loadDevices({ silent: true });
-  } catch (error) {
-    setMessage(
-      error.response?.data?.message ||
-        "Failed to save SIM number."
-    );
-  } finally {
-    setSavingNumber("");
-  }
-};
 
   return (
     <SuperAdminLayout
@@ -188,6 +236,7 @@ export default function SimManagerPage() {
 
       <div className="mb-6 flex justify-end">
         <button
+          type="button"
           onClick={() => loadDevices()}
           disabled={loading}
           className="flex items-center gap-2 rounded-xl bg-slate-800 px-4 py-3 font-semibold hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
@@ -207,7 +256,7 @@ export default function SimManagerPage() {
       ) : (
         <div className="space-y-8">
           {devices.map((device) => {
-            const sims = device.sims || [];
+            const sims = Array.isArray(device.sims) ? device.sims : [];
             const selectedSimId =
               selectedSims[device.id] || sims[0]?.id || "";
 
@@ -320,54 +369,53 @@ export default function SimManagerPage() {
 
                           <div className="space-y-3">
                             <div className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-4">
-  <div className="mb-3 flex items-center justify-between gap-4">
-    <div className="flex items-center gap-2 text-slate-400">
-      <span className="text-blue-400">
-        <Wifi size={16} />
-      </span>
+                              <div className="mb-3 flex items-center justify-between gap-4">
+                                <div className="flex items-center gap-2 text-slate-400">
+                                  <span className="text-blue-400">
+                                    <Wifi size={16} />
+                                  </span>
+                                  <span>Phone Number</span>
+                                </div>
 
-      <span>Phone Number</span>
-    </div>
+                                <span className="max-w-[55%] break-words text-right font-semibold text-slate-200">
+                                  {sim.phoneNumber ||
+                                    "Not provided by Android"}
+                                </span>
+                              </div>
 
-    <span className="max-w-[55%] break-words text-right font-semibold text-slate-200">
-      {sim.phoneNumber || "Not provided by Android"}
-    </span>
-  </div>
+                              <div className="flex flex-col gap-3 sm:flex-row">
+                                <input
+                                  type="tel"
+                                  inputMode="tel"
+                                  value={
+                                    phoneInputs[sim.id] ??
+                                    sim.phoneNumber ??
+                                    ""
+                                  }
+                                  onChange={(event) =>
+                                    setPhoneInputs((current) => ({
+                                      ...current,
+                                      [sim.id]: event.target.value,
+                                    }))
+                                  }
+                                  placeholder="Enter SIM phone number"
+                                  className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-blue-500"
+                                />
 
-  <div className="flex flex-col gap-3 sm:flex-row">
-    <input
-      type="tel"
-      inputMode="tel"
-      value={
-        phoneInputs[sim.id] ??
-        sim.phoneNumber ??
-        ""
-      }
-      onChange={(event) =>
-        setPhoneInputs((current) => ({
-          ...current,
-          [sim.id]: event.target.value,
-        }))
-      }
-      placeholder="Enter SIM phone number"
-      className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-600 focus:border-blue-500"
-    />
-
-    <button
-      type="button"
-      onClick={() => savePhoneNumber(sim.id)}
-      disabled={savingNumber === sim.id}
-      className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
-    >
-      {savingNumber === sim.id
-        ? "Saving..."
-        : sim.phoneNumber
-        ? "Update Number"
-        : "Save Number"}
-    </button>
-  </div>
-</div>
-
+                                <button
+                                  type="button"
+                                  onClick={() => savePhoneNumber(sim.id)}
+                                  disabled={savingNumber === sim.id}
+                                  className="rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {savingNumber === sim.id
+                                    ? "Saving..."
+                                    : sim.phoneNumber
+                                    ? "Update Number"
+                                    : "Save Number"}
+                                </button>
+                              </div>
+                            </div>
 
                             <Info
                               icon={<CreditCard size={16} />}
@@ -410,6 +458,7 @@ export default function SimManagerPage() {
 
                           <div className="mt-5 flex flex-wrap gap-3">
                             <button
+                              type="button"
                               onClick={() =>
                                 setSelectedSims((current) => ({
                                   ...current,
@@ -422,10 +471,13 @@ export default function SimManagerPage() {
                                   : "bg-slate-800 hover:bg-slate-700"
                               }`}
                             >
-                              {selected ? "Selected SIM" : "Select SIM"}
+                              {selected
+                                ? "Selected SIM"
+                                : "Select SIM"}
                             </button>
 
                             <button
+                              type="button"
                               onClick={() =>
                                 refreshBalance(sim.id, "AIRTIME")
                               }
@@ -438,6 +490,7 @@ export default function SimManagerPage() {
                             </button>
 
                             <button
+                              type="button"
                               onClick={() =>
                                 refreshBalance(sim.id, "DATA")
                               }
@@ -468,7 +521,9 @@ function SummaryCard({ title, value, icon }) {
     <div className="rounded-3xl border border-slate-800 bg-slate-900 p-5">
       <div className="mb-3 text-blue-400">{icon}</div>
       <p className="text-sm text-slate-400">{title}</p>
-      <p className="mt-1 text-3xl font-extrabold text-white">{value}</p>
+      <p className="mt-1 text-3xl font-extrabold text-white">
+        {value}
+      </p>
     </div>
   );
 }

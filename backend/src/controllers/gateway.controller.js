@@ -15,60 +15,6 @@ const {
 } = require("../services/ussdParser.service");
 const { sendBalanceCheckCommand } = require("../services/balanceCheck.service");
 
-const parseExpiryValue = (expiryValue) => {
-  if (!expiryValue) {
-    return null;
-  }
-
-  if (expiryValue instanceof Date) {
-    return Number.isNaN(expiryValue.getTime())
-      ? null
-      : expiryValue;
-  }
-
-  const rawExpiry =
-    String(expiryValue).trim();
-
-  const dayFirstMatch =
-    rawExpiry.match(
-      /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/
-    );
-
-  if (dayFirstMatch) {
-    const day =
-      Number(dayFirstMatch[1]);
-
-    const month =
-      Number(dayFirstMatch[2]);
-
-    let year =
-      Number(dayFirstMatch[3]);
-
-    if (year < 100) {
-      year += 2000;
-    }
-
-    const result = new Date(
-      Date.UTC(
-        year,
-        month - 1,
-        day
-      )
-    );
-
-    return Number.isNaN(result.getTime())
-      ? null
-      : result;
-  }
-
-  const parsedDate =
-    new Date(rawExpiry);
-
-  return Number.isNaN(parsedDate.getTime())
-    ? null
-    : parsedDate;
-};
-
 const parseDataBalanceSms = (message = "") => {
   const text = String(message).replace(/\s+/g, " ").trim();
 

@@ -22,7 +22,7 @@ const NETWORK_CODES = {
 };
 
 function normalizeNetwork(value = "") {
-  const name = String(value).toUpperCase();
+  const name = String(value).trim().toUpperCase();
 
   if (name.includes("MTN")) return "MTN";
   if (name.includes("AIRTEL")) return "AIRTEL";
@@ -38,6 +38,16 @@ function normalizeNetwork(value = "") {
   return "MTN";
 }
 
+function normalizeSimSlot(value) {
+  const slot = Number(value);
+
+  if (!Number.isInteger(slot) || slot < 0) {
+    throw new Error("Invalid SIM slot");
+  }
+
+  return slot;
+}
+
 async function sendBalanceCheckCommand({
   device,
   sim,
@@ -51,6 +61,8 @@ async function sendBalanceCheckCommand({
     throw new Error("SIM is required");
   }
 
+  const simSlot = normalizeSimSlot(sim.slotIndex);
+
   const network = normalizeNetwork(
     sim.carrierName ||
       sim.displayName ||
@@ -58,7 +70,7 @@ async function sendBalanceCheckCommand({
   );
 
   const normalizedType =
-    String(type).toUpperCase() === "DATA"
+    String(type).trim().toUpperCase() === "DATA"
       ? "DATA"
       : "AIRTIME";
 
@@ -79,23 +91,24 @@ async function sendBalanceCheckCommand({
       .toString("hex")
       .toUpperCase()}`;
 
-  const command =
-    await prisma.gsmCommand.create({
-      data: {
-        reference,
-        deviceId: device.id,
-        type: "USSD",
-        status: "PENDING",
-        payload: {
-          simId: sim.id,
-          simSlot: Number(sim.slotIndex),
-          ussdCode,
-          network,
-          service,
-          balanceType: normalizedType,
-        },
-      },
-    });
+  const payload = {
+    simId: sim.id,
+    simSlot,
+    ussdCode,
+    network,
+    service,
+    balanceType: normalizedType,
+  };
+
+  const command = await prisma.gsmCommand.create({
+    data: {
+      reference,
+      deviceId: device.id,
+      type: "USSD",
+      status: "PENDING",
+      payload,
+    },
+  });
 
   emitEvent(
     "gateway-command",
@@ -103,13 +116,24 @@ async function sendBalanceCheckCommand({
       reference,
       type: "USSD",
       ussdCode,
-      simSlot: Number(sim.slotIndex),
+      simSlot,
       simId: sim.id,
+      network,
       service,
       balanceType: normalizedType,
     },
     device.id
   );
+
+  console.log("BALANCE COMMAND SENT:", {
+    reference,
+    deviceId: device.id,
+    simId: sim.id,
+    simSlot,
+    network,
+    service,
+    ussdCode,
+  });
 
   return command;
 }

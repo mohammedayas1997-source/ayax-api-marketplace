@@ -1068,6 +1068,11 @@ exports.receiveCommandResult = async (req, res) => {
       response,
     });
 
+    console.log("==========================");
+    console.log("RAW MESSAGE:");
+    console.log(finalMessage);
+    console.log("==========================");
+
     if (!deviceId || !secretKey || !reference || !status) {
       return res.status(400).json({
         success: false,

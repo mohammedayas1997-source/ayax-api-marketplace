@@ -1162,14 +1162,24 @@ exports.receiveCommandResult = async (req, res) => {
         }
 
         if (isDataCommand) {
-          dataBalance =
-            parseDataBalance(finalMessage);
 
-          if (dataBalance !== null) {
-            updateData.dataBalance =
-              String(dataBalance);
-          }
+    const smsBalance = parseDataBalanceSms(finalMessage);
+
+    if (smsBalance) {
+
+        updateData.dataBalance = smsBalance.displayValue;
+
+    } else {
+
+        dataBalance = parseDataBalance(finalMessage);
+
+        if (dataBalance !== null) {
+            updateData.dataBalance = String(dataBalance);
         }
+
+    }
+
+}
 
         expiryValue =
           parseExpiryDate(finalMessage);

@@ -9,19 +9,11 @@ const normalize = (message = "") =>
 const normalizeUnit = (unit = "") => {
   const value = String(unit).toUpperCase();
 
-  if (
-    value === "G" ||
-    value === "GIG" ||
-    value === "GIGS"
-  ) {
+  if (["G", "GIG", "GIGS"].includes(value)) {
     return "GB";
   }
 
-  if (
-    value === "M" ||
-    value === "MEG" ||
-    value === "MEGS"
-  ) {
+  if (["M", "MEG", "MEGS"].includes(value)) {
     return "MB";
   }
 
@@ -32,37 +24,10 @@ const normalizeUnit = (unit = "") => {
   return value;
 };
 
-const convertToMb = (amount, unit) => {
-  const value = Number(amount);
-  const normalizedUnit = normalizeUnit(unit);
-
-  if (!Number.isFinite(value)) {
-    return 0;
-  }
-
-  if (normalizedUnit === "TB") {
-    return value * 1024 * 1024;
-  }
-
-  if (normalizedUnit === "GB") {
-    return value * 1024;
-  }
-
-  if (normalizedUnit === "KB") {
-    return value / 1024;
-  }
-
-  return value;
-};
-
-const formatDataAmount = (amountMb) => {
-  if (amountMb >= 1024) {
-    return `${(amountMb / 1024).toFixed(2)} GB`;
-  }
-
-  return `${amountMb.toFixed(2)} MB`;
-};
-
+/*
+ * AIRTIME PARSER
+ * An bar salon da yake aiki a baya.
+ */
 exports.parseAirtimeBalance = (message = "") => {
   const text = normalize(message);
 
@@ -72,135 +37,70 @@ exports.parseAirtimeBalance = (message = "") => {
     /(?:₦|NGN|N)\s*([0-9]+(?:\.[0-9]+)?)/i,
 
     /remaining(?:\s+balance)?(?:\s+is|\s*:)?\s*(?:₦|NGN|N)?\s*([0-9]+(?:\.[0-9]+)?)/i,
+
+    /(?:balance|credit)(?:\s+is|\s*:)?\s*([0-9]+(?:\.[0-9]+)?)/i,
   ];
 
   for (const pattern of patterns) {
     const match = text.match(pattern);
 
-    if (match) {
-      return Number(match[1]);
+    if (match?.[1]) {
+      const amount = Number(match[1]);
+
+      if (Number.isFinite(amount)) {
+        return amount;
+      }
     }
   }
 
   return null;
 };
 
+/*
+ * DATA PARSER
+ * Yana karɓar balance guda ɗaya ko bundles masu yawa.
+ *
+ * Misali:
+ * Binge Bundle: 943.57MB
+ * YouTube Night: 4090.77MB
+ */
 exports.parseDataBalance = (message = "") => {
   const text = normalize(message);
 
-  /*
-   * Fara da nemo bundles masu label.
-   *
-   * Misali:
-   * Binge Bundle: 943.57MB
-   * YouTube Night: 4090.77MB
-   */
-  const labelledBundlePattern =
-    /([A-Za-z][A-Za-z0-9\s_-]{1,50}?)\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*(TB|GB|GIGS?|G|MB|MEGS?|M|KB|K)\b/gi;
-
-  const labelledBundles = [];
-  let match;
-
-  while (
-    (match = labelledBundlePattern.exec(text)) !== null
-  ) {
-    const label = match[1].trim();
-    const amount = Number(match[2]);
-    const unit = normalizeUnit(match[3]);
-
-    if (!Number.isFinite(amount)) {
-      continue;
-    }
-
-    labelledBundles.push({
-      label,
-      amount,
-      unit,
-      amountMb: convertToMb(amount, unit),
-    });
-  }
-
-  if (labelledBundles.length > 0) {
-    const totalMb = labelledBundles.reduce(
-      (sum, bundle) => sum + bundle.amountMb,
-      0
-    );
-
-    const breakdown = labelledBundles
-      .map(
-        (bundle) =>
-          `${bundle.label}: ${bundle.amount} ${bundle.unit}`
-      )
-      .join(" | ");
-
-    return `${formatDataAmount(totalMb)} (${breakdown})`;
-  }
-
-  /*
-   * Idan network ta kawo balance guda ɗaya ba tare
-   * da bundle labels masu yawa ba.
-   */
-  const singlePatterns = [
-    /(?:data|bundle|internet|main data|total data|available data|remaining data)\s*(?:balance)?(?:\s+is|\s*:|\s*=)?\s*([0-9]+(?:\.[0-9]+)?)\s*(TB|GB|GIGS?|G|MB|MEGS?|M|KB|K)\b/i,
-
-    /(?:you have|remaining|available|balance is|balance:)\s*([0-9]+(?:\.[0-9]+)?)\s*(TB|GB|GIGS?|G|MB|MEGS?|M|KB|K)\b/i,
-
-    /([0-9]+(?:\.[0-9]+)?)\s*(TB|GB|GIGS?|G|MB|MEGS?|M|KB|K)\s*(?:remaining|left|available)/i,
-  ];
-
-  for (const pattern of singlePatterns) {
-    const singleMatch = text.match(pattern);
-
-    if (singleMatch) {
-      return `${singleMatch[1]} ${normalizeUnit(
-        singleMatch[2]
-      )}`;
-    }
-  }
-
-  /*
-   * Fallback: tattara duk data amounts da ke cikin
-   * sakon, sannan a haɗa su.
-   */
-  const allMatches = [
+  const matches = [
     ...text.matchAll(
       /([0-9]+(?:\.[0-9]+)?)\s*(TB|GB|GIGS?|G|MB|MEGS?|M|KB|K)\b/gi
     ),
   ];
 
-  if (allMatches.length === 0) {
+  if (matches.length === 0) {
     return null;
   }
 
-  const uniqueBalances = [];
+  const balances = [];
   const seen = new Set();
-  let totalMb = 0;
 
-  for (const item of allMatches) {
-    const amount = Number(item[1]);
-    const unit = normalizeUnit(item[2]);
-    const key = `${amount}-${unit}`;
+  for (const match of matches) {
+    const amount = Number(match[1]);
+    const unit = normalizeUnit(match[2]);
 
-    if (!Number.isFinite(amount) || seen.has(key)) {
+    if (!Number.isFinite(amount)) {
       continue;
     }
 
-    seen.add(key);
-    totalMb += convertToMb(amount, unit);
-    uniqueBalances.push(`${amount} ${unit}`);
+    const key = `${amount}-${unit}`;
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      balances.push(`${amount} ${unit}`);
+    }
   }
 
-  if (uniqueBalances.length === 0) {
+  if (balances.length === 0) {
     return null;
   }
 
-  if (uniqueBalances.length === 1) {
-    return uniqueBalances[0];
-  }
-
-  return `${formatDataAmount(totalMb)} (${uniqueBalances.join(
-    " + "
-  )})`;
+  return balances.join(" + ");
 };
 
 exports.parseExpiryDate = (message = "") => {

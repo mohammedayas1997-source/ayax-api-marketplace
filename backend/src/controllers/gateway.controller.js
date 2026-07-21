@@ -13,6 +13,60 @@ const {
 } = require("../services/ussdParser.service");
 const { sendBalanceCheckCommand } = require("../services/balanceCheck.service");
 
+const parseExpiryValue = (expiryValue) => {
+  if (!expiryValue) {
+    return null;
+  }
+
+  if (expiryValue instanceof Date) {
+    return Number.isNaN(expiryValue.getTime())
+      ? null
+      : expiryValue;
+  }
+
+  const rawExpiry =
+    String(expiryValue).trim();
+
+  const dayFirstMatch =
+    rawExpiry.match(
+      /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/
+    );
+
+  if (dayFirstMatch) {
+    const day =
+      Number(dayFirstMatch[1]);
+
+    const month =
+      Number(dayFirstMatch[2]);
+
+    let year =
+      Number(dayFirstMatch[3]);
+
+    if (year < 100) {
+      year += 2000;
+    }
+
+    const result = new Date(
+      Date.UTC(
+        year,
+        month - 1,
+        day
+      )
+    );
+
+    return Number.isNaN(result.getTime())
+      ? null
+      : result;
+  }
+
+  const parsedDate =
+    new Date(rawExpiry);
+
+  return Number.isNaN(parsedDate.getTime())
+    ? null
+    : parsedDate;
+};
+
 const parseDataBalanceSms = (message = "") => {
   const text = String(message).replace(/\s+/g, " ").trim();
 
@@ -1042,7 +1096,8 @@ exports.receiveCommandResult = async (req, res) => {
       message || response || normalizedStatus || ""
     ).trim();
 
-    let command;
+    let command = null;
+    let updatedSim = null;
 
     if (
       normalizedStatus === "PROCESSING" ||
@@ -1061,31 +1116,75 @@ exports.receiveCommandResult = async (req, res) => {
         message: finalMessage,
       });
 
-      const simId = command?.payload?.simId || null;
-      const service =
-    command?.payload?.service ||
-    command?.payload?.balanceType ||
-    null;
+      const payload = command?.payload || {};
+      const simId = payload.simId || null;
+
+      const balanceType = String(
+        payload.balanceType ||
+          payload.service ||
+          ""
+      ).toUpperCase();
+
+      const isAirtimeCommand =
+        balanceType === "AIRTIME" ||
+        balanceType === "AIRTIME_BALANCE";
+
+      const isDataCommand =
+        balanceType === "DATA" ||
+        balanceType === "DATA_BALANCE";
 
       console.log("BALANCE COMMAND PAYLOAD:", {
         reference,
         simId,
-        service,
-        payload: command?.payload,
+        balanceType,
+        payload,
         finalMessage,
       });
 
-      if (simId) {
-        const airtimeBalance =
-          parseAirtimeBalance(finalMessage);
+      if (simId && (isAirtimeCommand || isDataCommand)) {
+        const updateData = {
+          lastBalanceCheck: new Date(),
+          lastSyncAt: new Date(),
+        };
 
-        const dataBalance =
-          parseDataBalance(finalMessage);
+        let airtimeBalance = null;
+        let dataBalance = null;
+        let expiryValue = null;
 
-        const expiryValue =
+        if (isAirtimeCommand) {
+          airtimeBalance =
+            parseAirtimeBalance(finalMessage);
+
+          if (airtimeBalance !== null) {
+            updateData.airtimeBalance =
+              Number(airtimeBalance);
+          }
+        }
+
+        if (isDataCommand) {
+          dataBalance =
+            parseDataBalance(finalMessage);
+
+          if (dataBalance !== null) {
+            updateData.dataBalance =
+              String(dataBalance);
+          }
+        }
+
+        expiryValue =
           parseExpiryDate(finalMessage);
 
-        console.log("USSD RAW MESSAGE");
+        if (expiryValue) {
+          const parsedExpiry =
+            parseExpiryValue(expiryValue);
+
+          if (parsedExpiry) {
+            updateData.expiryDate =
+              parsedExpiry;
+          }
+        }
+
+        console.log("USSD RAW MESSAGE:");
         console.log(finalMessage);
         console.log("--------------------");
 
@@ -1093,109 +1192,45 @@ exports.receiveCommandResult = async (req, res) => {
           airtimeBalance,
           dataBalance,
           expiryValue,
+          updateData,
         });
 
-        const updateData = {
-          lastBalanceCheck: new Date(),
-        };
+        const hasParsedBalance =
+          updateData.airtimeBalance !== undefined ||
+          updateData.dataBalance !== undefined ||
+          updateData.expiryDate !== undefined;
 
-        if (
-  service === "AIRTIME" ||
-  service === "AIRTIME_BALANCE"
-) {
-  if (airtimeBalance !== null) {
-    updateData.airtimeBalance =
-      Number(airtimeBalance);
-  }
-}
-
-      if (
-  service === "DATA" ||
-  service === "DATA_BALANCE"
-) {
-  if (dataBalance) {
-    updateData.dataBalance =
-      dataBalance;
-  }
-}
-
-        if (expiryValue) {
-          let expiryDate = null;
-
-          if (expiryValue instanceof Date) {
-            expiryDate = expiryValue;
-          } else {
-            const rawExpiry =
-              String(expiryValue).trim();
-
-            const dayFirstMatch =
-              rawExpiry.match(
-                /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/
-              );
-
-            if (dayFirstMatch) {
-              const day =
-                Number(dayFirstMatch[1]);
-
-              const month =
-                Number(dayFirstMatch[2]);
-
-              let year =
-                Number(dayFirstMatch[3]);
-
-              if (year < 100) {
-                year += 2000;
-              }
-
-              expiryDate = new Date(
-                Date.UTC(
-                  year,
-                  month - 1,
-                  day
-                )
-              );
-            } else {
-              const parsedDate =
-                new Date(rawExpiry);
-
-              if (
-                !Number.isNaN(
-                  parsedDate.getTime()
-                )
-              ) {
-                expiryDate = parsedDate;
-              }
-            }
-          }
-
-          if (
-            expiryDate &&
-            !Number.isNaN(
-              expiryDate.getTime()
-            )
-          ) {
-            updateData.expiryDate =
-              expiryDate;
-          }
-        }
-
-        const updatedSim =
-          await prisma.gsmSim.update({
+        if (hasParsedBalance) {
+          updatedSim = await prisma.gsmSim.update({
             where: {
               id: simId,
             },
             data: updateData,
           });
 
-          emitEvent(
-      "gateway-sims-updated",
-          {
+          emitEvent("gsm-sim-balance-updated", {
             deviceId,
-            service,
-            command,
+            simId,
+            balanceType,
+            airtimeBalance:
+              updatedSim.airtimeBalance,
+            dataBalance:
+              updatedSim.dataBalance,
+            expiryDate:
+              updatedSim.expiryDate,
             sim: updatedSim,
-          }
-        );
+          });
+
+          emitEvent("gsm-sims-synced", {
+            deviceId,
+            sims: [updatedSim],
+          });
+        } else {
+          console.log(
+            "No balance value parsed from response:",
+            finalMessage
+          );
+        }
       }
     } else {
       command = await markCommandFailed({
@@ -1219,8 +1254,11 @@ exports.receiveCommandResult = async (req, res) => {
 
     return res.json({
       success: true,
-      message: "Command result received",
+      message: updatedSim
+        ? "Command result received and SIM balance updated"
+        : "Command result received",
       command,
+      sim: updatedSim,
     });
   } catch (error) {
     console.error(

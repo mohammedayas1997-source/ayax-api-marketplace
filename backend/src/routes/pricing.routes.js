@@ -1,54 +1,47 @@
-const express = require("express");
+const router = require("express").Router();
 
-const router = express.Router();
+const pricingController = require("../controllers/pricing.controller");
 
-const auth = require("../middlewares/auth.middleware");
-const role = require("../middlewares/role.middleware");
+// Idan kana da auth middleware ka cire comment
+// const auth = require("../middleware/auth.middleware");
+// const authorize = require("../middleware/authorize.middleware");
 
-const {
-  createPlan,
-  getPlans,
-  getActivePlans,
-  updatePlan,
-  deletePlan,
-  togglePlanStatus,
-} = require("../controllers/pricing.controller");
+// router.use(auth);
 
-router.get("/active", getActivePlans);
+router.get("/", pricingController.getPricing);
 
 router.get(
-  "/",
-  auth,
-  role("ADMIN", "SUPER_ADMIN"),
-  getPlans
+  "/service/:serviceCode",
+  pricingController.getServicePricing
+);
+
+router.get(
+  "/:id",
+  pricingController.getPricingById
 );
 
 router.post(
   "/",
-  auth,
-  role("SUPER_ADMIN"),
-  createPlan
+  // authorize("SUPER_ADMIN"),
+  pricingController.createPricing
 );
 
 router.patch(
-  "/:planId",
-  auth,
-  role("SUPER_ADMIN"),
-  updatePlan
+  "/:id",
+  // authorize("SUPER_ADMIN"),
+  pricingController.updatePricing
 );
 
 router.patch(
-  "/:planId/toggle-status",
-  auth,
-  role("SUPER_ADMIN"),
-  togglePlanStatus
+  "/:id/status",
+  // authorize("SUPER_ADMIN"),
+  pricingController.togglePricingStatus
 );
 
 router.delete(
-  "/:planId",
-  auth,
-  role("SUPER_ADMIN"),
-  deletePlan
+  "/:id",
+  // authorize("SUPER_ADMIN"),
+  pricingController.deletePricing
 );
 
 module.exports = router;

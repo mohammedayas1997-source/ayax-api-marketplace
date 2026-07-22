@@ -183,6 +183,30 @@ enum ProviderStatus {
   MAINTENANCE
 }
 
+enum ProviderCategory {
+  GSM
+  IDENTITY
+  UTILITY
+  FINANCE
+  AI
+  EDUCATION
+  OTHER
+}
+
+enum CredentialType {
+  API_KEY
+  SECRET_KEY
+  USERNAME
+  PASSWORD
+  TOKEN
+  CLIENT_ID
+  CLIENT_SECRET
+  MERCHANT_ID
+  PUBLIC_KEY
+  PRIVATE_KEY
+  CUSTOM
+}
+
 enum ServiceStatus {
   ACTIVE
   DISABLED
@@ -392,54 +416,130 @@ model SupportTicket {
 }
 
 model ApiProvider {
-  id          String         @id @default(cuid())
-  name        String
-  slug        String         @unique
-  baseUrl     String?
-  apiKey      String?
-  secretKey   String?
-  status      ProviderStatus @default(ACTIVE)
+  id String @id @default(cuid())
+
+  name String
+  code String @unique
+  slug String @unique
+
+  category ProviderCategory @default(OTHER)
+  status   ProviderStatus   @default(ACTIVE)
+
   description String?
 
-  services ApiService[]
+  baseUrl    String?
+  webhookUrl String?
+
+  apiKey    String?
+  secretKey String?
+  username  String?
+  password  String?
+
+  priority   Int     @default(1)
+  isFallback Boolean @default(false)
+
+  timeoutMs Int @default(30000)
+
+  failureCount      Int       @default(0)
+  successCount      Int       @default(0)
+  lastFailureAt     DateTime?
+  lastSuccessAt     DateTime?
+  lastHealthCheckAt DateTime?
+
+  credentials ApiProviderCredential[]
+  services    ApiService[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([category, status])
+  @@index([priority])
+  @@index([isFallback])
+}
+
+model ApiProviderCredential {
+  id String @id @default(cuid())
+
+  providerId String
+
+  name String
+  type CredentialType @default(CUSTOM)
+
+  encryptedValue       String
+  initializationVector String
+  authenticationTag    String?
+
+  active Boolean @default(true)
+
+  provider ApiProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([providerId, name])
+  @@index([providerId, active])
 }
 
 model ApiService {
-  id          String        @id @default(cuid())
-  providerId  String
-  name        String
-  slug        String        @unique
-  category    String
-  endpoint    String
-  method      String        @default("POST")
-  status      ServiceStatus @default(ACTIVE)
+  id String @id @default(cuid())
+
+  providerId String
+
+  name     String
+  slug     String @unique
+  code     String @unique
+  category String
+
+  endpoint String
+  method   String @default("POST")
+
+  status ServiceStatus @default(ACTIVE)
+
   description String?
 
+  providerServiceCode String?
+  requestMapping      Json?
+  responseMapping     Json?
+  metadata            Json?
+
   provider ApiProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
-  plans    ApiPlan[]
+
+  plans ApiPlan[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([providerId, status])
+  @@index([category, status])
 }
 
 model ApiPlan {
-  id           String     @id @default(cuid())
-  serviceId    String
-  name         String
-  code         String     @unique
-  category     String
+  id String @id @default(cuid())
+
+  serviceId String
+
+  name     String
+  code     String @unique
+  category String
+
+  packageType String @default("REGULAR")
+
   costPrice    Float
   sellingPrice Float
-  status       PlanStatus @default(ACTIVE)
-  description  String?
+
+  status PlanStatus @default(ACTIVE)
+
+  description String?
+  features    Json?
+  metadata    Json?
 
   service ApiService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([serviceId, status])
+  @@index([category, packageType])
 }
 
 model GsmTransaction {
@@ -948,23 +1048,23 @@ model SimRoutingRule {
 }
 
 model GsmSim {
-  id             String   @id @default(cuid())
-  deviceId       String
-  slotIndex      Int
-  carrierName    String?
-  displayName    String?
-  phoneNumber    String?
-  countryIso     String?
-  mcc            Int?
-  mnc            Int?
+  id               String    @id @default(cuid())
+  deviceId         String
+  slotIndex        Int
+  carrierName      String?
+  displayName      String?
+  phoneNumber      String?
+  countryIso       String?
+  mcc              Int?
+  mnc              Int?
   expiryDate       DateTime?
   lastBalanceCheck DateTime?
-  airtimeBalance Float    @default(0)
-  dataBalance    String?
-  status         String   @default("ACTIVE")
-  lastSyncAt     DateTime @default(now())
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  airtimeBalance   Float     @default(0)
+  dataBalance      String?
+  status           String    @default("ACTIVE")
+  lastSyncAt       DateTime  @default(now())
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   device         GsmDevice        @relation(fields: [deviceId], references: [id], onDelete: Cascade)
   GsmTransaction GsmTransaction[]

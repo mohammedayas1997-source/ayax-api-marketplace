@@ -14,6 +14,7 @@ const pricingRoutes = require("./routes/pricing.routes");
 const purchaseRoutes = require("./routes/purchase.routes");
 const gsmRoutes = require("./routes/gsm.routes");
 const auditRoutes = require("./routes/audit.routes");
+const partnerRoutes = require("./routes/partner.routes");
 
 const healthRoutes = require("./routes/health.routes");
 const dataRoutes = require("./routes/data.routes");
@@ -75,6 +76,7 @@ app.use("/api/v1/pricing", pricingRoutes);
 app.use("/api/v1/purchase", purchaseRoutes);
 app.use("/api/v1/gsm", gsmRoutes);
 app.use("/api/v1/audit", auditRoutes);
+app.use("/api/v1/partners", partnerRoutes);
 
 app.use("/api/v1/users", userModuleRoutes);
 app.use("/api/v1/wallet", walletModuleRoutes);

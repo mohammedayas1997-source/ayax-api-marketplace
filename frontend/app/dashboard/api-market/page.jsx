@@ -7,23 +7,178 @@ import {
   useState,
 } from "react";
 
+import Link from "next/link";
+
 import {
-  ShoppingCart,
-  Wifi,
-  Smartphone,
-  Wallet,
-  RefreshCcw,
-  LoaderCircle,
+  Activity,
   AlertCircle,
+  BookOpen,
   CheckCircle2,
-  X,
-  Phone,
+  ChevronRight,
+  CreditCard,
+  FileCheck2,
+  Fingerprint,
+  KeyRound,
+  Lightbulb,
+  LoaderCircle,
+  MessageSquareText,
+  RefreshCcw,
   Search,
+  Server,
+  ShieldCheck,
+  Smartphone,
+  Tv,
+  Wallet,
+  Wifi,
+  Zap,
 } from "lucide-react";
 
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import api from "@/lib/api";
 import { socket } from "@/lib/socket";
+
+const FALLBACK_SERVICES = [
+  {
+    id: "data-api",
+    code: "DATA",
+    name: "Data API",
+    category: "TELECOM",
+    description:
+      "Purchase SME, corporate and other supported data bundles for MTN, Airtel, Glo and 9mobile.",
+    status: "ACTIVE",
+    startingPrice: 0,
+    endpointCount: 2,
+    href: "/dashboard/api-market/data",
+    documentationHref: "/docs#data",
+    icon: "WIFI",
+  },
+  {
+    id: "airtime-api",
+    code: "AIRTIME",
+    name: "Airtime API",
+    category: "TELECOM",
+    description:
+      "Send airtime recharge to MTN, Airtel, Glo and 9mobile phone numbers.",
+    status: "ACTIVE",
+    startingPrice: 50,
+    endpointCount: 2,
+    href: "/dashboard/api-market/airtime",
+    documentationHref: "/docs#airtime",
+    icon: "SMARTPHONE",
+  },
+  {
+    id: "electricity-api",
+    code: "ELECTRICITY",
+    name: "Electricity API",
+    category: "UTILITY",
+    description:
+      "Verify prepaid or postpaid meters and process electricity payments for supported Nigerian Discos.",
+    status: "ACTIVE",
+    startingPrice: 100,
+    endpointCount: 3,
+    href: "/dashboard/api-market/electricity",
+    documentationHref: "/docs#electricity",
+    icon: "LIGHTBULB",
+  },
+  {
+    id: "cable-api",
+    code: "CABLE_TV",
+    name: "Cable TV API",
+    category: "UTILITY",
+    description:
+      "Retrieve packages and process DStv, GOtv and StarTimes subscriptions.",
+    status: "ACTIVE",
+    startingPrice: 0,
+    endpointCount: 4,
+    href: "/dashboard/api-market/cable",
+    documentationHref: "/docs#cable",
+    icon: "TV",
+  },
+  {
+    id: "bvn-api",
+    code: "BVN_VERIFY",
+    name: "BVN Verification API",
+    category: "IDENTITY",
+    description:
+      "Verify BVN information securely for authorized KYC and account verification workflows.",
+    status: "ACTIVE",
+    startingPrice: 0,
+    endpointCount: 2,
+    href: "/dashboard/api-market/bvn",
+    documentationHref: "/docs#bvn",
+    icon: "SHIELD",
+  },
+  {
+    id: "nin-api",
+    code: "NIN_VERIFY",
+    name: "NIN Verification API",
+    category: "IDENTITY",
+    description:
+      "Verify National Identification Number information for approved identity verification purposes.",
+    status: "ACTIVE",
+    startingPrice: 0,
+    endpointCount: 2,
+    href: "/dashboard/api-market/nin",
+    documentationHref: "/docs#nin",
+    icon: "FINGERPRINT",
+  },
+  {
+    id: "bvn-slip-api",
+    code: "BVN_SLIP",
+    name: "BVN Slip API",
+    category: "IDENTITY",
+    description:
+      "Generate supported BVN slip packages through one secure Ayax API integration.",
+    status: "COMING_SOON",
+    startingPrice: 0,
+    endpointCount: 2,
+    href: "/dashboard/api-market/bvn-slip",
+    documentationHref: "/docs#bvn-slip",
+    icon: "FILE",
+  },
+  {
+    id: "nin-slip-api",
+    code: "NIN_SLIP",
+    name: "NIN Slip API",
+    category: "IDENTITY",
+    description:
+      "Access regular, standard and premium NIN slip packages from a unified API.",
+    status: "COMING_SOON",
+    startingPrice: 0,
+    endpointCount: 2,
+    href: "/dashboard/api-market/nin-slip",
+    documentationHref: "/docs#nin-slip",
+    icon: "CREDIT_CARD",
+  },
+  {
+    id: "sms-api",
+    code: "SMS",
+    name: "SMS API",
+    category: "MESSAGING",
+    description:
+      "Send SMS through the Ayax GSM Gateway and monitor delivery status in real time.",
+    status: "COMING_SOON",
+    startingPrice: 0,
+    endpointCount: 3,
+    href: "/dashboard/api-market/sms",
+    documentationHref: "/docs#sms",
+    icon: "MESSAGE",
+  },
+  {
+    id: "gsm-gateway-api",
+    code: "GSM_GATEWAY",
+    name: "GSM Gateway API",
+    category: "GATEWAY",
+    description:
+      "Connect Android GSM gateway devices for SMS, USSD, balance checks and device management.",
+    status: "COMING_SOON",
+    startingPrice: 0,
+    endpointCount: 8,
+    href: "/dashboard/api-market/gsm-gateway",
+    documentationHref: "/docs#gsm-gateway",
+    icon: "SERVER",
+  },
+];
 
 const formatNaira = (amount) =>
   `₦${Number(amount || 0).toLocaleString("en-NG", {
@@ -33,124 +188,273 @@ const formatNaira = (amount) =>
 
 const getErrorMessage = (error, fallback) =>
   error?.response?.data?.message ||
+  error?.response?.data?.error ||
   error?.message ||
   fallback;
 
-const normalizeCategory = (value) =>
-  String(value || "DATA")
+const normalizeStatus = (value) =>
+  String(value || "ACTIVE")
     .trim()
     .toUpperCase();
 
-const getPlanPrice = (plan) =>
-  Number(
-    plan?.sellingPrice ??
-      plan?.price ??
-      plan?.amount ??
-      0
+const normalizeCode = (value) =>
+  String(value || "")
+    .trim()
+    .toUpperCase();
+
+const createServiceHref = (service = {}) => {
+  if (service.href) {
+    return service.href;
+  }
+
+  const code = normalizeCode(
+    service.code ||
+      service.serviceCode ||
+      service.slug
   );
 
-export default function CustomerApiMarketPage() {
-  const [plans, setPlans] = useState([]);
+  const paths = {
+    DATA: "/dashboard/api-market/data",
+    AIRTIME: "/dashboard/api-market/airtime",
+    ELECTRICITY:
+      "/dashboard/api-market/electricity",
+    CABLE: "/dashboard/api-market/cable",
+    CABLE_TV: "/dashboard/api-market/cable",
+    BVN: "/dashboard/api-market/bvn",
+    BVN_VERIFY: "/dashboard/api-market/bvn",
+    NIN: "/dashboard/api-market/nin",
+    NIN_VERIFY: "/dashboard/api-market/nin",
+    BVN_SLIP: "/dashboard/api-market/bvn-slip",
+    NIN_SLIP: "/dashboard/api-market/nin-slip",
+    SMS: "/dashboard/api-market/sms",
+    GSM_GATEWAY:
+      "/dashboard/api-market/gsm-gateway",
+  };
+
+  if (paths[code]) {
+    return paths[code];
+  }
+
+  const slug = String(
+    service.slug ||
+      code
+        .toLowerCase()
+        .replace(/_/g, "-")
+  );
+
+  return `/dashboard/api-market/${slug}`;
+};
+
+const normalizeService = (service = {}) => ({
+  id:
+    service.id ||
+    service.code ||
+    service.serviceCode ||
+    service.slug,
+
+  code: normalizeCode(
+    service.code ||
+      service.serviceCode ||
+      service.slug
+  ),
+
+  name:
+    service.name ||
+    service.serviceName ||
+    service.title ||
+    "API Service",
+
+  description:
+    service.description ||
+    service.summary ||
+    "Integrate this service through the Ayax APIs platform.",
+
+  category: normalizeCode(
+    service.category || "OTHER"
+  ),
+
+  status: normalizeStatus(
+    service.status ||
+      (service.enabled === false
+        ? "DISABLED"
+        : "ACTIVE")
+  ),
+
+  startingPrice: Number(
+    service.startingPrice ??
+      service.basePrice ??
+      service.minimumPrice ??
+      service.sellingPrice ??
+      0
+  ),
+
+  endpointCount: Number(
+    service.endpointCount ??
+      service.endpoints?.length ??
+      1
+  ),
+
+  href: createServiceHref(service),
+
+  documentationHref:
+    service.documentationHref ||
+    service.documentationUrl ||
+    `/docs#${String(
+      service.code ||
+        service.serviceCode ||
+        service.slug ||
+        ""
+    )
+      .toLowerCase()
+      .replace(/_/g, "-")}`,
+
+  icon:
+    service.icon ||
+    service.iconName ||
+    service.category ||
+    service.code ||
+    "SERVER",
+
+  metadata: service.metadata || null,
+});
+
+const normalizeApiKey = (item = {}) => ({
+  id: item.id,
+  status: normalizeStatus(
+    item.status || "ACTIVE"
+  ),
+});
+
+export default function ApiMarketplacePage() {
+  const [services, setServices] = useState([]);
   const [wallet, setWallet] = useState(null);
-  const [transactions, setTransactions] = useState([]);
+  const [apiKeys, setApiKeys] = useState([]);
 
-  const [search, setSearch] = useState("");
-  const [category, setCategory] = useState("ALL");
-  const [provider, setProvider] = useState("ALL");
+  const [query, setQuery] = useState("");
+  const [category, setCategory] =
+    useState("ALL");
+  const [statusFilter, setStatusFilter] =
+    useState("ALL");
 
-  const [selectedPlan, setSelectedPlan] = useState(null);
-  const [phoneNumber, setPhoneNumber] = useState("");
+  const [loading, setLoading] =
+    useState(true);
+  const [refreshing, setRefreshing] =
+    useState(false);
 
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [purchasing, setPurchasing] = useState(false);
+  const [message, setMessage] =
+    useState("");
+  const [messageType, setMessageType] =
+    useState("info");
 
-  const [message, setMessage] = useState("");
-  const [messageType, setMessageType] = useState("info");
-
-  const fetchPlans = useCallback(async () => {
-    const possibleRoutes = [
-      "/marketplace/plans",
-      "/api-marketplace/plans",
-      "/plans",
-      "/data-plans",
+  const fetchServices = useCallback(async () => {
+    const routes = [
+      "/services",
+      "/api-services",
+      "/marketplace/services",
+      "/api-marketplace/services",
     ];
 
-    let lastError = null;
-
-    for (const route of possibleRoutes) {
+    for (const route of routes) {
       try {
         const response = await api.get(route);
 
         const list =
-          response.data?.plans ||
-          response.data?.dataPlans ||
-          response.data?.products ||
           response.data?.services ||
-          response.data?.data?.plans ||
+          response.data?.apiServices ||
+          response.data?.products ||
+          response.data?.data?.services ||
           response.data?.data ||
           [];
 
-        const activePlans = Array.isArray(list)
-          ? list.filter((plan) => {
-              const status = String(
-                plan?.status || "ACTIVE"
-              ).toUpperCase();
-
-              return status === "ACTIVE";
-            })
+        const normalized = Array.isArray(list)
+          ? list
+              .map(normalizeService)
+              .filter((item) => item.id)
           : [];
 
-        setPlans(activePlans);
-
-        return activePlans;
+        if (normalized.length > 0) {
+          setServices(normalized);
+          return normalized;
+        }
       } catch (error) {
-        lastError = error;
-
-        if (error?.response?.status !== 404) {
+        if (
+          error?.response?.status !== 404
+        ) {
           throw error;
         }
       }
     }
 
-    throw (
-      lastError ||
-      new Error("Plans endpoint was not found.")
-    );
+    const fallback =
+      FALLBACK_SERVICES.map(
+        normalizeService
+      );
+
+    setServices(fallback);
+
+    return fallback;
   }, []);
 
   const fetchWallet = useCallback(async () => {
-    const response = await api.get("/wallet");
+    try {
+      const response =
+        await api.get("/wallet");
 
-    const walletData =
-      response.data?.wallet ||
-      response.data?.data?.wallet ||
-      response.data?.data ||
-      null;
+      const walletData =
+        response.data?.wallet ||
+        response.data?.data?.wallet ||
+        response.data?.data ||
+        null;
 
-    setWallet(walletData);
+      setWallet(walletData);
 
-    return walletData;
+      return walletData;
+    } catch (error) {
+      if (
+        error?.response?.status === 404
+      ) {
+        setWallet(null);
+        return null;
+      }
+
+      throw error;
+    }
   }, []);
 
-  const fetchTransactions = useCallback(async () => {
-    const response = await api.get(
-      "/wallet/transactions"
-    );
+  const fetchApiKeys = useCallback(async () => {
+    try {
+      const response =
+        await api.get("/api-keys");
 
-    const list =
-      response.data?.transactions ||
-      response.data?.data?.transactions ||
-      response.data?.data ||
-      [];
+      const list =
+        response.data?.keys ||
+        response.data?.apiKeys ||
+        response.data?.data?.keys ||
+        response.data?.data ||
+        [];
 
-    const normalizedList = Array.isArray(list)
-      ? list
-      : [];
+      const keys = Array.isArray(list)
+        ? list
+            .map(normalizeApiKey)
+            .filter(
+              (item) =>
+                item.status === "ACTIVE"
+            )
+        : [];
 
-    setTransactions(normalizedList);
+      setApiKeys(keys);
 
-    return normalizedList;
+      return keys;
+    } catch (error) {
+      if (
+        error?.response?.status === 404
+      ) {
+        setApiKeys([]);
+        return [];
+      }
+
+      throw error;
+    }
   }, []);
 
   const loadMarketplace = useCallback(
@@ -164,18 +468,21 @@ export default function CustomerApiMarketPage() {
 
         setMessage("");
 
-        const results = await Promise.allSettled([
-          fetchPlans(),
-          fetchWallet(),
-          fetchTransactions(),
-        ]);
+        const results =
+          await Promise.allSettled([
+            fetchServices(),
+            fetchWallet(),
+            fetchApiKeys(),
+          ]);
 
         const failed = results.find(
-          (result) => result.status === "rejected"
+          (result) =>
+            result.status === "rejected"
         );
 
         if (failed) {
           setMessageType("error");
+
           setMessage(
             getErrorMessage(
               failed.reason,
@@ -189,16 +496,17 @@ export default function CustomerApiMarketPage() {
       }
     },
     [
-      fetchPlans,
+      fetchServices,
       fetchWallet,
-      fetchTransactions,
+      fetchApiKeys,
     ]
   );
 
   useEffect(() => {
     loadMarketplace();
 
-    const token = localStorage.getItem("token");
+    const token =
+      localStorage.getItem("token");
 
     if (token) {
       socket.auth = { token };
@@ -208,292 +516,259 @@ export default function CustomerApiMarketPage() {
       socket.connect();
     }
 
-    const refreshWalletAndHistory = () => {
+    const refreshWallet = () => {
       fetchWallet().catch(console.error);
-      fetchTransactions().catch(console.error);
     };
 
-    const refreshPlans = () => {
-      fetchPlans().catch(console.error);
+    const refreshServices = () => {
+      fetchServices().catch(console.error);
+    };
+
+    const refreshApiKeys = () => {
+      fetchApiKeys().catch(console.error);
     };
 
     socket.on(
       "wallet-updated",
-      refreshWalletAndHistory
+      refreshWallet
     );
 
     socket.on(
-      "transaction-updated",
-      refreshWalletAndHistory
+      "api-service-created",
+      refreshServices
     );
 
     socket.on(
-      "purchase-successful",
-      refreshWalletAndHistory
+      "api-service-updated",
+      refreshServices
     );
 
     socket.on(
-      "purchase-failed",
-      refreshWalletAndHistory
+      "api-service-deleted",
+      refreshServices
     );
 
-    socket.on("data-plan-created", refreshPlans);
-    socket.on("data-plan-updated", refreshPlans);
-    socket.on("data-plan-deleted", refreshPlans);
-    socket.on("marketplace-updated", refreshPlans);
+    socket.on(
+      "service-created",
+      refreshServices
+    );
+
+    socket.on(
+      "service-updated",
+      refreshServices
+    );
+
+    socket.on(
+      "service-deleted",
+      refreshServices
+    );
+
+    socket.on(
+      "marketplace-updated",
+      refreshServices
+    );
+
+    socket.on(
+      "pricing-created",
+      refreshServices
+    );
+
+    socket.on(
+      "pricing-updated",
+      refreshServices
+    );
+
+    socket.on(
+      "pricing-status-updated",
+      refreshServices
+    );
+
+    socket.on(
+      "api-key-created",
+      refreshApiKeys
+    );
+
+    socket.on(
+      "api-key-revoked",
+      refreshApiKeys
+    );
 
     return () => {
       socket.off(
         "wallet-updated",
-        refreshWalletAndHistory
+        refreshWallet
       );
 
       socket.off(
-        "transaction-updated",
-        refreshWalletAndHistory
+        "api-service-created",
+        refreshServices
       );
 
       socket.off(
-        "purchase-successful",
-        refreshWalletAndHistory
+        "api-service-updated",
+        refreshServices
       );
 
       socket.off(
-        "purchase-failed",
-        refreshWalletAndHistory
+        "api-service-deleted",
+        refreshServices
       );
 
       socket.off(
-        "data-plan-created",
-        refreshPlans
+        "service-created",
+        refreshServices
       );
 
       socket.off(
-        "data-plan-updated",
-        refreshPlans
+        "service-updated",
+        refreshServices
       );
 
       socket.off(
-        "data-plan-deleted",
-        refreshPlans
+        "service-deleted",
+        refreshServices
       );
 
       socket.off(
         "marketplace-updated",
-        refreshPlans
+        refreshServices
+      );
+
+      socket.off(
+        "pricing-created",
+        refreshServices
+      );
+
+      socket.off(
+        "pricing-updated",
+        refreshServices
+      );
+
+      socket.off(
+        "pricing-status-updated",
+        refreshServices
+      );
+
+      socket.off(
+        "api-key-created",
+        refreshApiKeys
+      );
+
+      socket.off(
+        "api-key-revoked",
+        refreshApiKeys
       );
     };
   }, [
     loadMarketplace,
-    fetchPlans,
+    fetchServices,
     fetchWallet,
-    fetchTransactions,
+    fetchApiKeys,
   ]);
 
-  const providers = useMemo(() => {
-    const values = plans
-      .map((plan) =>
-        String(
-          plan?.provider?.name ||
-            plan?.provider ||
-            plan?.network ||
-            ""
-        )
-          .trim()
-          .toUpperCase()
-      )
-      .filter(Boolean);
+  const categories = useMemo(() => {
+    return [
+      ...new Set(
+        services
+          .map(
+            (service) =>
+              service.category
+          )
+          .filter(Boolean)
+      ),
+    ].sort();
+  }, [services]);
 
-    return [...new Set(values)];
-  }, [plans]);
+  const filteredServices = useMemo(() => {
+    const searchValue =
+      query.trim().toLowerCase();
 
-  const filteredPlans = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    return plans.filter((plan) => {
-      const planCategory = normalizeCategory(
-        plan?.category ||
-          plan?.serviceType ||
-          plan?.type
-      );
-
-      const planProvider = String(
-        plan?.provider?.name ||
-          plan?.provider ||
-          plan?.network ||
-          ""
-      )
-        .trim()
-        .toUpperCase();
-
-      const name = String(
-        plan?.name ||
-          plan?.title ||
-          plan?.planName ||
-          ""
-      ).toLowerCase();
-
-      const code = String(
-        plan?.code ||
-          plan?.planCode ||
-          ""
-      ).toLowerCase();
-
+    return services.filter((service) => {
       const matchesSearch =
-        !query ||
-        name.includes(query) ||
-        code.includes(query) ||
-        planProvider
+        !searchValue ||
+        service.name
           .toLowerCase()
-          .includes(query);
+          .includes(searchValue) ||
+        service.code
+          .toLowerCase()
+          .includes(searchValue) ||
+        service.description
+          .toLowerCase()
+          .includes(searchValue) ||
+        service.category
+          .toLowerCase()
+          .includes(searchValue);
 
       const matchesCategory =
         category === "ALL" ||
-        planCategory === category;
+        service.category === category;
 
-      const matchesProvider =
-        provider === "ALL" ||
-        planProvider === provider;
+      const matchesStatus =
+        statusFilter === "ALL" ||
+        service.status === statusFilter;
 
       return (
         matchesSearch &&
         matchesCategory &&
-        matchesProvider
+        matchesStatus
       );
     });
-  }, [plans, search, category, provider]);
+  }, [
+    services,
+    query,
+    category,
+    statusFilter,
+  ]);
 
-  const purchaseHistory = useMemo(() => {
-    return transactions.filter((transaction) => {
-      const service = String(
-        transaction?.service ||
-          transaction?.description ||
-          transaction?.category ||
-          ""
-      ).toUpperCase();
+  const marketplaceStats = useMemo(() => {
+    return {
+      total: services.length,
 
-      return (
-        service.includes("DATA") ||
-        service.includes("AIRTIME")
-      );
-    });
-  }, [transactions]);
+      live: services.filter(
+        (item) =>
+          item.status === "ACTIVE"
+      ).length,
 
-  const openPurchaseModal = (plan) => {
-    setSelectedPlan(plan);
-    setPhoneNumber("");
-    setMessage("");
-  };
+      comingSoon: services.filter(
+        (item) =>
+          item.status === "COMING_SOON"
+      ).length,
 
-  const closePurchaseModal = () => {
-    if (purchasing) return;
+      endpointCount: services.reduce(
+        (sum, item) =>
+          sum +
+          Number(
+            item.endpointCount || 0
+          ),
+        0
+      ),
+    };
+  }, [services]);
 
-    setSelectedPlan(null);
-    setPhoneNumber("");
-  };
+  if (loading) {
+    return (
+      <DashboardLayout
+        title="API Marketplace"
+        description="Explore and integrate Ayax APIs."
+      >
+        <div className="rounded-3xl border border-slate-800 bg-slate-900 p-8 text-slate-400">
+          <div className="flex items-center gap-3">
+            <LoaderCircle
+              size={22}
+              className="animate-spin"
+            />
 
-  const submitPurchase = async (event) => {
-    event.preventDefault();
-
-    if (!selectedPlan) return;
-
-    const cleanedPhone = phoneNumber
-      .replace(/\s+/g, "")
-      .trim();
-
-    if (!/^(\+234|0)[789][01]\d{8}$/.test(cleanedPhone)) {
-      setMessageType("error");
-      setMessage(
-        "Enter a valid Nigerian phone number."
-      );
-      return;
-    }
-
-    const price = getPlanPrice(selectedPlan);
-
-    if (Number(wallet?.balance || 0) < price) {
-      setMessageType("error");
-      setMessage("Insufficient wallet balance.");
-      return;
-    }
-
-    const planCategory = normalizeCategory(
-      selectedPlan?.category ||
-        selectedPlan?.serviceType ||
-        selectedPlan?.type
+            Loading API Marketplace...
+          </div>
+        </div>
+      </DashboardLayout>
     );
-
-    try {
-      setPurchasing(true);
-      setMessage("");
-
-      let response;
-
-      if (planCategory === "AIRTIME") {
-        response = await api.post(
-          "/airtime/buy",
-          {
-            phoneNumber: cleanedPhone,
-            amount:
-              selectedPlan?.amount ||
-              selectedPlan?.value ||
-              price,
-            network:
-              selectedPlan?.provider?.name ||
-              selectedPlan?.provider ||
-              selectedPlan?.network,
-            planId: selectedPlan.id,
-          }
-        );
-      } else {
-        response = await api.post(
-          "/data/buy",
-          {
-            phoneNumber: cleanedPhone,
-            planId:
-              selectedPlan.id ||
-              selectedPlan.planId,
-            planCode:
-              selectedPlan.code ||
-              selectedPlan.planCode,
-            network:
-              selectedPlan?.provider?.name ||
-              selectedPlan?.provider ||
-              selectedPlan?.network,
-          }
-        );
-      }
-
-      setMessageType("success");
-      setMessage(
-        response.data?.message ||
-          `${selectedPlan.name || "Plan"} purchase submitted successfully.`
-      );
-
-      setSelectedPlan(null);
-      setPhoneNumber("");
-
-      await Promise.allSettled([
-        fetchWallet(),
-        fetchTransactions(),
-      ]);
-    } catch (error) {
-      setMessageType("error");
-      setMessage(
-        getErrorMessage(
-          error,
-          "Unable to process purchase."
-        )
-      );
-    } finally {
-      setPurchasing(false);
-    }
-  };
+  }
 
   return (
     <DashboardLayout
       title="API Marketplace"
-      description="Purchase live data and airtime services using your wallet."
+      description="Explore Ayax APIs, review pricing, test endpoints and copy integration examples."
     >
       {message && (
         <div
@@ -521,387 +796,489 @@ export default function CustomerApiMarketPage() {
         </div>
       )}
 
-      <div className="mb-8 flex justify-end">
-        <button
-          type="button"
-          onClick={() =>
-            loadMarketplace({ silent: true })
+      <section className="mb-8 overflow-hidden rounded-3xl border border-blue-500/20 bg-gradient-to-br from-blue-600/20 via-slate-900 to-slate-900 p-6 sm:p-8">
+        <div className="grid gap-8 xl:grid-cols-[1fr_auto] xl:items-center">
+          <div>
+            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-blue-500/20 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-300">
+              <Zap size={16} />
+              All-in-One Developer Platform
+            </div>
+
+            <h1 className="max-w-3xl text-3xl font-extrabold leading-tight sm:text-4xl">
+              Build faster with one API
+              integration
+            </h1>
+
+            <p className="mt-4 max-w-3xl leading-7 text-slate-300">
+              Access telecom, utility,
+              identity verification and GSM
+              gateway services through Ayax
+              APIs. Upstream partners and
+              credentials remain securely
+              managed by the Ayax backend.
+            </p>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 xl:w-80 xl:grid-cols-1">
+            <Link
+              href="/dashboard/api-keys"
+              className="flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 py-4 font-semibold hover:bg-blue-700"
+            >
+              <KeyRound size={18} />
+              Manage API Keys
+            </Link>
+
+            <Link
+              href="/docs"
+              className="flex items-center justify-center gap-2 rounded-2xl border border-slate-700 bg-slate-900 px-5 py-4 font-semibold hover:bg-slate-800"
+            >
+              <BookOpen size={18} />
+              Read Documentation
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      <section className="mb-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard
+          title="Wallet Balance"
+          value={formatNaira(
+            wallet?.balance
+          )}
+          icon={<Wallet size={22} />}
+        />
+
+        <StatCard
+          title="Live APIs"
+          value={marketplaceStats.live}
+          icon={<Activity size={22} />}
+          status
+        />
+
+        <StatCard
+          title="Active API Keys"
+          value={apiKeys.length}
+          icon={<KeyRound size={22} />}
+        />
+
+        <StatCard
+          title="Available Endpoints"
+          value={
+            marketplaceStats.endpointCount
           }
-          disabled={refreshing}
-          className="flex items-center gap-2 rounded-xl bg-slate-800 px-5 py-3 font-semibold hover:bg-slate-700 disabled:opacity-60"
-        >
-          <RefreshCcw
-            size={18}
-            className={
-              refreshing ? "animate-spin" : ""
+          icon={<Server size={22} />}
+        />
+      </section>
+
+      <section className="mb-8 rounded-3xl border border-slate-800 bg-slate-900 p-5">
+        <div className="grid gap-4 xl:grid-cols-[1fr_220px_220px_auto]">
+          <div className="flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950 px-4 focus-within:border-blue-500">
+            <Search
+              size={18}
+              className="text-slate-500"
+            />
+
+            <input
+              value={query}
+              onChange={(event) =>
+                setQuery(event.target.value)
+              }
+              placeholder="Search APIs, categories or service codes..."
+              className="w-full bg-transparent py-4 outline-none"
+            />
+          </div>
+
+          <select
+            value={category}
+            onChange={(event) =>
+              setCategory(
+                event.target.value
+              )
             }
+            className="rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 outline-none"
+          >
+            <option value="ALL">
+              All Categories
+            </option>
+
+            {categories.map((item) => (
+              <option
+                key={item}
+                value={item}
+              >
+                {formatCategory(item)}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={statusFilter}
+            onChange={(event) =>
+              setStatusFilter(
+                event.target.value
+              )
+            }
+            className="rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 outline-none"
+          >
+            <option value="ALL">
+              All Statuses
+            </option>
+
+            <option value="ACTIVE">
+              Live
+            </option>
+
+            <option value="COMING_SOON">
+              Coming Soon
+            </option>
+
+            <option value="DISABLED">
+              Disabled
+            </option>
+          </select>
+
+          <button
+            type="button"
+            onClick={() =>
+              loadMarketplace({
+                silent: true,
+              })
+            }
+            disabled={refreshing}
+            className="flex items-center justify-center gap-2 rounded-2xl bg-slate-800 px-5 py-4 font-semibold hover:bg-slate-700 disabled:opacity-50"
+          >
+            <RefreshCcw
+              size={18}
+              className={
+                refreshing
+                  ? "animate-spin"
+                  : ""
+              }
+            />
+
+            {refreshing
+              ? "Refreshing..."
+              : "Refresh"}
+          </button>
+        </div>
+      </section>
+
+      {filteredServices.length === 0 ? (
+        <section className="rounded-3xl border border-dashed border-slate-700 bg-slate-900 p-12 text-center">
+          <Server
+            size={48}
+            className="mx-auto text-slate-600"
           />
 
-          {refreshing
-            ? "Refreshing..."
-            : "Refresh"}
-        </button>
-      </div>
+          <h2 className="mt-5 text-xl font-bold">
+            No API service found
+          </h2>
 
-      {loading ? (
-        <div className="rounded-3xl border border-slate-800 bg-slate-900 p-8 text-slate-400">
-          <div className="flex items-center gap-3">
-            <LoaderCircle
-              size={22}
-              className="animate-spin"
-            />
-            Loading marketplace...
-          </div>
-        </div>
+          <p className="mt-2 text-slate-400">
+            No service matches your current
+            search and filters.
+          </p>
+        </section>
       ) : (
-        <>
-          <section className="mb-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-            <Stat
-              title="Wallet Balance"
-              value={formatNaira(wallet?.balance)}
-            />
-
-            <Stat
-              title="Available Plans"
-              value={plans.length}
-            />
-
-            <Stat
-              title="Purchases"
-              value={purchaseHistory.length}
-            />
-
-            <Stat
-              title="Status"
-              value="Live"
-            />
-          </section>
-
-          <section className="mb-8 rounded-3xl border border-slate-800 bg-slate-900 p-6">
-            <div className="grid gap-4 lg:grid-cols-[1fr_180px_180px]">
-              <div className="flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950 px-4">
-                <Search
-                  size={18}
-                  className="text-slate-500"
-                />
-
-                <input
-                  value={search}
-                  onChange={(event) =>
-                    setSearch(event.target.value)
-                  }
-                  placeholder="Search plans or providers..."
-                  className="w-full bg-transparent py-4 outline-none"
-                />
-              </div>
-
-              <select
-                value={category}
-                onChange={(event) =>
-                  setCategory(event.target.value)
-                }
-                className="rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 outline-none"
-              >
-                <option value="ALL">
-                  All Categories
-                </option>
-                <option value="DATA">
-                  Data
-                </option>
-                <option value="AIRTIME">
-                  Airtime
-                </option>
-              </select>
-
-              <select
-                value={provider}
-                onChange={(event) =>
-                  setProvider(event.target.value)
-                }
-                className="rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 outline-none"
-              >
-                <option value="ALL">
-                  All Providers
-                </option>
-
-                {providers.map((item) => (
-                  <option
-                    key={item}
-                    value={item}
-                  >
-                    {item}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </section>
-
-          {filteredPlans.length === 0 ? (
-            <div className="rounded-3xl border border-dashed border-slate-700 bg-slate-900 p-10 text-center">
-              <ShoppingCart
-                size={42}
-                className="mx-auto text-slate-600"
+        <section className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+          {filteredServices.map(
+            (service) => (
+              <ServiceCard
+                key={service.id}
+                service={service}
               />
-
-              <h2 className="mt-5 text-xl font-bold">
-                No plans found
-              </h2>
-
-              <p className="mt-2 text-slate-400">
-                There are currently no active plans
-                matching your filters.
-              </p>
-            </div>
-          ) : (
-            <section className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-              {filteredPlans.map((plan) => {
-                const planCategory =
-                  normalizeCategory(
-                    plan?.category ||
-                      plan?.serviceType ||
-                      plan?.type
-                  );
-
-                const planProvider =
-                  plan?.provider?.name ||
-                  plan?.provider ||
-                  plan?.network ||
-                  "Unknown";
-
-                return (
-                  <div
-                    key={
-                      plan.id ||
-                      plan.code ||
-                      plan.name
-                    }
-                    className="rounded-3xl border border-slate-800 bg-slate-900 p-6"
-                  >
-                    <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-600">
-                      {planCategory === "DATA" ? (
-                        <Wifi />
-                      ) : (
-                        <Smartphone />
-                      )}
-                    </div>
-
-                    <h2 className="text-xl font-bold">
-                      {plan.name ||
-                        plan.title ||
-                        "API Plan"}
-                    </h2>
-
-                    <p className="mt-2 text-slate-500">
-                      {planProvider} •{" "}
-                      {planCategory}
-                    </p>
-
-                    {plan.description && (
-                      <p className="mt-3 line-clamp-2 text-sm text-slate-400">
-                        {plan.description}
-                      </p>
-                    )}
-
-                    <h3 className="mt-5 text-3xl font-extrabold">
-                      {formatNaira(
-                        getPlanPrice(plan)
-                      )}
-                    </h3>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        openPurchaseModal(plan)
-                      }
-                      className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 font-semibold hover:bg-blue-700"
-                    >
-                      <ShoppingCart size={18} />
-                      Buy Now
-                    </button>
-                  </div>
-                );
-              })}
-            </section>
+            )
           )}
-
-          <section className="mt-8 rounded-3xl border border-slate-800 bg-slate-900 p-6">
-            <div className="mb-5 flex items-center gap-3">
-              <Wallet className="text-blue-400" />
-
-              <h2 className="text-xl font-bold">
-                Purchase History
-              </h2>
-            </div>
-
-            {purchaseHistory.length === 0 ? (
-              <p className="text-slate-500">
-                No purchases yet.
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {purchaseHistory
-                  .slice(0, 10)
-                  .map((item) => (
-                    <div
-                      key={
-                        item.id ||
-                        item.reference
-                      }
-                      className="flex flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-950 p-4 md:flex-row md:items-center md:justify-between"
-                    >
-                      <div>
-                        <h3 className="font-bold">
-                          {item.service ||
-                            item.description ||
-                            "Purchase"}
-                        </h3>
-
-                        <p className="text-sm text-slate-500">
-                          {item.reference || "-"} •{" "}
-                          {item.createdAt
-                            ? new Date(
-                                item.createdAt
-                              ).toLocaleString()
-                            : "-"}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-4">
-                        <span className="font-bold">
-                          {formatNaira(item.amount)}
-                        </span>
-
-                        <span
-                          className={`rounded-full px-3 py-1 text-xs ${
-                            String(
-                              item.status
-                            ).toUpperCase() ===
-                            "SUCCESSFUL"
-                              ? "bg-green-500/10 text-green-400"
-                              : String(
-                                  item.status
-                                ).toUpperCase() ===
-                                "FAILED"
-                              ? "bg-red-500/10 text-red-400"
-                              : "bg-yellow-500/10 text-yellow-400"
-                          }`}
-                        >
-                          {String(
-                            item.status || "PENDING"
-                          ).toUpperCase()}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            )}
-          </section>
-        </>
+        </section>
       )}
 
-      {selectedPlan && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-3xl border border-slate-800 bg-slate-900 p-6">
-            <div className="mb-6 flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-2xl font-bold">
-                  Confirm Purchase
-                </h2>
+      <section className="mt-10 rounded-3xl border border-slate-800 bg-slate-900 p-6 sm:p-8">
+        <div className="grid gap-8 lg:grid-cols-[1fr_auto] lg:items-center">
+          <div>
+            <h2 className="text-2xl font-bold">
+              One API key for all supported
+              services
+            </h2>
 
-                <p className="mt-2 text-sm text-slate-400">
-                  {selectedPlan.name ||
-                    selectedPlan.title}
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={closePurchaseModal}
-                disabled={purchasing}
-                className="rounded-xl bg-slate-800 p-2 hover:bg-slate-700"
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <form
-              onSubmit={submitPurchase}
-              className="space-y-5"
-            >
-              <div className="rounded-2xl border border-slate-800 bg-slate-950 p-5">
-                <p className="text-sm text-slate-400">
-                  Purchase Amount
-                </p>
-
-                <p className="mt-2 text-3xl font-extrabold">
-                  {formatNaira(
-                    getPlanPrice(selectedPlan)
-                  )}
-                </p>
-              </div>
-
-              <div>
-                <label className="text-sm text-slate-400">
-                  Recipient Phone Number
-                </label>
-
-                <div className="mt-2 flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950 px-4">
-                  <Phone
-                    size={18}
-                    className="text-slate-500"
-                  />
-
-                  <input
-                    type="tel"
-                    value={phoneNumber}
-                    onChange={(event) =>
-                      setPhoneNumber(
-                        event.target.value
-                      )
-                    }
-                    placeholder="08012345678"
-                    required
-                    className="w-full bg-transparent py-4 outline-none"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={purchasing}
-                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 py-4 font-semibold hover:bg-blue-700 disabled:opacity-60"
-              >
-                {purchasing ? (
-                  <>
-                    <LoaderCircle
-                      size={18}
-                      className="animate-spin"
-                    />
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <ShoppingCart size={18} />
-                    Confirm Purchase
-                  </>
-                )}
-              </button>
-            </form>
+            <p className="mt-3 max-w-3xl leading-7 text-slate-400">
+              Fund your wallet, generate an API
+              key and call any active Ayax
+              endpoint. Your balance,
+              transactions and service usage
+              are managed from one developer
+              account.
+            </p>
           </div>
+
+          <Link
+            href="/dashboard/api-keys"
+            className="flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-6 py-4 font-semibold hover:bg-blue-700"
+          >
+            Get API Key
+            <ChevronRight size={18} />
+          </Link>
         </div>
-      )}
+      </section>
     </DashboardLayout>
   );
 }
 
-function Stat({ title, value }) {
+function ServiceCard({ service }) {
+  const isLive =
+    service.status === "ACTIVE";
+
+  const canOpen =
+    service.status !== "DISABLED" &&
+    service.status !== "COMING_SOON";
+
+  const Icon =
+    getServiceIcon(service.icon);
+
+  return (
+    <article className="group flex h-full flex-col rounded-3xl border border-slate-800 bg-slate-900 p-6 transition hover:-translate-y-1 hover:border-blue-500/60 hover:shadow-xl hover:shadow-blue-950/20">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-400 transition group-hover:bg-blue-600 group-hover:text-white">
+          <Icon size={26} />
+        </div>
+
+        <StatusBadge
+          status={service.status}
+        />
+      </div>
+
+      <div className="mt-6 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-xl font-bold">
+            {service.name}
+          </h2>
+
+          <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-400">
+            {service.code}
+          </span>
+        </div>
+
+        <p className="mt-4 min-h-20 leading-7 text-slate-400">
+          {service.description}
+        </p>
+
+        <div className="mt-6 grid grid-cols-2 gap-3">
+          <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
+            <p className="text-xs uppercase tracking-wide text-slate-500">
+              Starting Price
+            </p>
+
+            <p className="mt-2 font-bold">
+              {service.startingPrice > 0
+                ? formatNaira(
+                    service.startingPrice
+                  )
+                : "View pricing"}
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
+            <p className="text-xs uppercase tracking-wide text-slate-500">
+              Endpoints
+            </p>
+
+            <p className="mt-2 font-bold">
+              {service.endpointCount}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5 flex items-center gap-2 text-sm text-slate-500">
+          {isLive ? (
+            <>
+              <CheckCircle2
+                size={16}
+                className="text-green-400"
+              />
+              Production service available
+            </>
+          ) : (
+            <>
+              <Activity
+                size={16}
+                className="text-yellow-400"
+              />
+              Service availability pending
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-6 grid grid-cols-2 gap-3">
+        <Link
+          href={service.documentationHref}
+          className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-4 py-3 text-sm font-semibold hover:bg-slate-700"
+        >
+          <BookOpen size={17} />
+          Docs
+        </Link>
+
+        {canOpen ? (
+          <Link
+            href={service.href}
+            className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold hover:bg-blue-700"
+          >
+            Open API
+            <ChevronRight size={17} />
+          </Link>
+        ) : (
+          <button
+            type="button"
+            disabled
+            className="flex cursor-not-allowed items-center justify-center gap-2 rounded-xl bg-slate-800 px-4 py-3 text-sm font-semibold text-slate-500"
+          >
+            Coming Soon
+          </button>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function StatCard({
+  title,
+  value,
+  icon,
+  status = false,
+}) {
   return (
     <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
-      <p className="text-slate-400">{title}</p>
+      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-400">
+        {icon}
+      </div>
 
-      <h2 className="mt-2 break-all text-3xl font-extrabold">
-        {value}
-      </h2>
+      <p className="mt-5 text-sm text-slate-400">
+        {title}
+      </p>
+
+      <div className="mt-2 flex items-center gap-2">
+        {status && (
+          <span className="h-2.5 w-2.5 rounded-full bg-green-400" />
+        )}
+
+        <h2 className="break-all text-3xl font-extrabold">
+          {value}
+        </h2>
+      </div>
     </div>
   );
+}
+
+function StatusBadge({ status }) {
+  const normalized =
+    normalizeStatus(status);
+
+  const styles = {
+    ACTIVE:
+      "bg-green-500/10 text-green-400",
+    COMING_SOON:
+      "bg-yellow-500/10 text-yellow-400",
+    DISABLED:
+      "bg-red-500/10 text-red-400",
+    MAINTENANCE:
+      "bg-orange-500/10 text-orange-400",
+  };
+
+  const labels = {
+    ACTIVE: "LIVE",
+    COMING_SOON: "COMING SOON",
+    DISABLED: "DISABLED",
+    MAINTENANCE: "MAINTENANCE",
+  };
+
+  return (
+    <span
+      className={`rounded-full px-3 py-1 text-xs font-semibold ${
+        styles[normalized] ||
+        "bg-slate-500/10 text-slate-400"
+      }`}
+    >
+      {labels[normalized] || normalized}
+    </span>
+  );
+}
+
+function formatCategory(value) {
+  return String(value || "OTHER")
+    .toLowerCase()
+    .split("_")
+    .map(
+      (word) =>
+        word.charAt(0).toUpperCase() +
+        word.slice(1)
+    )
+    .join(" ");
+}
+
+function getServiceIcon(value) {
+  const iconName = normalizeCode(value);
+
+  if (
+    iconName.includes("DATA") ||
+    iconName.includes("WIFI")
+  ) {
+    return Wifi;
+  }
+
+  if (
+    iconName.includes("AIRTIME") ||
+    iconName.includes("SMARTPHONE")
+  ) {
+    return Smartphone;
+  }
+
+  if (
+    iconName.includes("ELECTRIC") ||
+    iconName.includes("LIGHT") ||
+    iconName.includes("UTILITY")
+  ) {
+    return Lightbulb;
+  }
+
+  if (
+    iconName.includes("CABLE") ||
+    iconName.includes("TV")
+  ) {
+    return Tv;
+  }
+
+  if (
+    iconName.includes("NIN") ||
+    iconName.includes("FINGER")
+  ) {
+    return Fingerprint;
+  }
+
+  if (
+    iconName.includes("BVN") ||
+    iconName.includes("SHIELD")
+  ) {
+    return ShieldCheck;
+  }
+
+  if (
+    iconName.includes("SLIP") ||
+    iconName.includes("FILE")
+  ) {
+    return FileCheck2;
+  }
+
+  if (
+    iconName.includes("CREDIT")
+  ) {
+    return CreditCard;
+  }
+
+  if (
+    iconName.includes("SMS") ||
+    iconName.includes("MESSAGE")
+  ) {
+    return MessageSquareText;
+  }
+
+  return Server;
 }

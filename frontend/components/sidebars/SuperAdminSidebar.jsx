@@ -26,6 +26,7 @@ import {
   ShieldAlert,
   MapPin,
 } from "lucide-react";
+import { Handshake } from "lucide-react";
 
 const links = [
   { section: "MAIN" },
@@ -34,6 +35,11 @@ const links = [
   { name: "Admins", href: "/super-admin/admins", icon: ShieldCheck },
   { name: "Staff", href: "/super-admin/staff", icon: Users },
   { name: "Customer Service", href: "/super-admin/customer-service", icon: Headphones },
+  {
+  name: "Partners",
+  href: "/super-admin/partners",
+  icon: Handshake,
+},
   { name: "Security Alerts", href: "/super-admin/gsm/security-alerts", icon: ShieldAlert },
   { name: "Live Location", href: "/super-admin/gsm/live-location", icon: MapPin },
   

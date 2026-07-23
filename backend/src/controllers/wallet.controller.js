@@ -1,4 +1,4 @@
-const prisma = require("../../config/prisma");
+const prisma = require("../config/prisma");
 
 const getStartOfToday = () => {
   const date = new Date();

@@ -195,3 +195,108 @@ exports.getProfile = async (req, res) => {
     });
   }
 };
+
+
+exports.getCurrentUser = async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: {
+        id: req.user.id,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        role: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
+
+        wallet: {
+          select: {
+            id: true,
+            balance: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
+
+        apiKeys: {
+          where: {
+            status: "ACTIVE",
+          },
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            environment: true,
+            scopes: true,
+            keyPrefix: true,
+            lastUsedAt: true,
+            expiresAt: true,
+            createdAt: true,
+          },
+          orderBy: {
+            createdAt: "desc",
+          },
+        },
+
+        _count: {
+          select: {
+            apiKeys: true,
+            transactions: true,
+            notifications: true,
+            apiUsages: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User account not found.",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "User profile retrieved successfully.",
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        status: user.status,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+
+        wallet: {
+          id: user.wallet?.id || null,
+          balance: Number(user.wallet?.balance || 0),
+          createdAt: user.wallet?.createdAt || null,
+          updatedAt: user.wallet?.updatedAt || null,
+        },
+
+        activeApiKeys: user.apiKeys.length,
+        apiKeys: user.apiKeys,
+
+        statistics: {
+          totalApiKeys: user._count.apiKeys,
+          totalTransactions: user._count.transactions,
+          totalNotifications: user._count.notifications,
+          totalApiCalls: user._count.apiUsages,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Get current user error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve user profile.",
+    });
+  }
+};

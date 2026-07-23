@@ -10,11 +10,12 @@ const {
 } = require("../controllers/partner.controller");
 
 const authMiddleware = require(
-  "../middleware/auth.middleware"
+  "../middlewares/auth.middleware"
 );
 
-const authorize =
-  require("../middleware/authorize.middleware");
+const authorize = require(
+  "../middlewares/authorize.middleware"
+);
 
 router.use(authMiddleware);
 

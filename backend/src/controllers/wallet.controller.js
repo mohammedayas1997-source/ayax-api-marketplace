@@ -1,162 +1,477 @@
-const prisma = require("../config/prisma");
-const crypto = require("crypto");
-const { emitEvent } = require("../config/socket");
-const walletService = require("../services/wallet.service");
+const prisma = require("../../config/prisma");
+
+const getStartOfToday = () => {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const getStartOfMonth = () => {
+  const now = new Date();
+
+  return new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    1
+  );
+};
+
+const serializeLedger = (item) => ({
+  id: item.id,
+  reference: item.reference,
+  type: item.type,
+  amount: Number(item.amount || 0),
+  balanceBefore: Number(
+    item.balanceBefore || 0
+  ),
+  balanceAfter: Number(
+    item.balanceAfter || 0
+  ),
+  description: item.description,
+  module: item.module,
+  createdAt: item.createdAt,
+});
 
 exports.getWallet = async (req, res) => {
   try {
-    const wallet = await prisma.wallet.findUnique({
-      where: { userId: req.user.id },
-    });
+    const userId = req.user.id;
 
-    return res.json({
-      success: true,
-      wallet,
-    });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
+    let wallet =
+      await prisma.wallet.findUnique({
+        where: {
+          userId,
+        },
+      });
 
-exports.createFundingRequest = async (req, res) => {
-  try {
-    const { amount } = req.body;
-
-    if (!amount || Number(amount) <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Valid amount is required",
+    if (!wallet) {
+      wallet = await prisma.wallet.create({
+        data: {
+          userId,
+          balance: 0,
+        },
       });
     }
 
-    const funding = await prisma.fundingRequest.create({
-      data: {
-        amount: Number(amount),
-        userId: req.user.id,
-        reference: "FUND-" + crypto.randomBytes(6).toString("hex").toUpperCase(),
+    const [
+      totalCredit,
+      totalDebit,
+      todayCredit,
+      todayDebit,
+      monthlyCredit,
+      monthlyDebit,
+      recentHistory,
+    ] = await Promise.all([
+      prisma.walletLedger.aggregate({
+        where: {
+          userId,
+          type: {
+            in: [
+              "CREDIT",
+              "REFUND",
+              "REVERSAL",
+            ],
+          },
+        },
+        _sum: {
+          amount: true,
+        },
+      }),
+
+      prisma.walletLedger.aggregate({
+        where: {
+          userId,
+          type: {
+            in: [
+              "DEBIT",
+              "ADJUSTMENT",
+            ],
+          },
+        },
+        _sum: {
+          amount: true,
+        },
+      }),
+
+      prisma.walletLedger.aggregate({
+        where: {
+          userId,
+          type: {
+            in: [
+              "CREDIT",
+              "REFUND",
+              "REVERSAL",
+            ],
+          },
+          createdAt: {
+            gte: getStartOfToday(),
+          },
+        },
+        _sum: {
+          amount: true,
+        },
+      }),
+
+      prisma.walletLedger.aggregate({
+        where: {
+          userId,
+          type: {
+            in: [
+              "DEBIT",
+              "ADJUSTMENT",
+            ],
+          },
+          createdAt: {
+            gte: getStartOfToday(),
+          },
+        },
+        _sum: {
+          amount: true,
+        },
+      }),
+
+      prisma.walletLedger.aggregate({
+        where: {
+          userId,
+          type: {
+            in: [
+              "CREDIT",
+              "REFUND",
+              "REVERSAL",
+            ],
+          },
+          createdAt: {
+            gte: getStartOfMonth(),
+          },
+        },
+        _sum: {
+          amount: true,
+        },
+      }),
+
+      prisma.walletLedger.aggregate({
+        where: {
+          userId,
+          type: {
+            in: [
+              "DEBIT",
+              "ADJUSTMENT",
+            ],
+          },
+          createdAt: {
+            gte: getStartOfMonth(),
+          },
+        },
+        _sum: {
+          amount: true,
+        },
+      }),
+
+      prisma.walletLedger.findMany({
+        where: {
+          userId,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+        take: 10,
+      }),
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "Wallet retrieved successfully.",
+      wallet: {
+        id: wallet.id,
+        balance: Number(
+          wallet.balance || 0
+        ),
+        currency: "NGN",
+        createdAt: wallet.createdAt,
+        updatedAt: wallet.updatedAt,
+      },
+      summary: {
+        totalCredit: Number(
+          totalCredit._sum.amount || 0
+        ),
+        totalDebit: Number(
+          totalDebit._sum.amount || 0
+        ),
+        todayCredit: Number(
+          todayCredit._sum.amount || 0
+        ),
+        todayDebit: Number(
+          todayDebit._sum.amount || 0
+        ),
+        monthlyCredit: Number(
+          monthlyCredit._sum.amount || 0
+        ),
+        monthlyDebit: Number(
+          monthlyDebit._sum.amount || 0
+        ),
+      },
+      history: recentHistory.map(
+        serializeLedger
+      ),
+    });
+  } catch (error) {
+    console.error(
+      "Get wallet error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Unable to retrieve wallet.",
+    });
+  }
+};
+
+exports.getWalletTransactions = async (
+  req,
+  res
+) => {
+  try {
+    const userId = req.user.id;
+
+    const page = Math.max(
+      Number(req.query.page) || 1,
+      1
+    );
+
+    const limit = Math.min(
+      Math.max(
+        Number(req.query.limit) || 20,
+        1
+      ),
+      100
+    );
+
+    const skip = (page - 1) * limit;
+
+    const {
+      type,
+      module,
+      search,
+      startDate,
+      endDate,
+    } = req.query;
+
+    const where = {
+      userId,
+    };
+
+    if (type) {
+      const normalizedType =
+        String(type)
+          .trim()
+          .toUpperCase();
+
+      const allowedTypes = [
+        "CREDIT",
+        "DEBIT",
+        "REFUND",
+        "REVERSAL",
+        "ADJUSTMENT",
+      ];
+
+      if (
+        !allowedTypes.includes(
+          normalizedType
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Invalid wallet transaction type.",
+        });
+      }
+
+      where.type = normalizedType;
+    }
+
+    if (module) {
+      where.module = {
+        contains: String(module).trim(),
+        mode: "insensitive",
+      };
+    }
+
+    if (search) {
+      const searchValue =
+        String(search).trim();
+
+      where.OR = [
+        {
+          reference: {
+            contains: searchValue,
+            mode: "insensitive",
+          },
+        },
+        {
+          description: {
+            contains: searchValue,
+            mode: "insensitive",
+          },
+        },
+        {
+          module: {
+            contains: searchValue,
+            mode: "insensitive",
+          },
+        },
+      ];
+    }
+
+    if (startDate || endDate) {
+      where.createdAt = {};
+
+      if (startDate) {
+        const parsedStart =
+          new Date(startDate);
+
+        if (
+          Number.isNaN(
+            parsedStart.getTime()
+          )
+        ) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "Invalid startDate.",
+          });
+        }
+
+        where.createdAt.gte =
+          parsedStart;
+      }
+
+      if (endDate) {
+        const parsedEnd =
+          new Date(endDate);
+
+        if (
+          Number.isNaN(
+            parsedEnd.getTime()
+          )
+        ) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "Invalid endDate.",
+          });
+        }
+
+        parsedEnd.setHours(
+          23,
+          59,
+          59,
+          999
+        );
+
+        where.createdAt.lte =
+          parsedEnd;
+      }
+    }
+
+    const [
+      transactions,
+      total,
+      creditAggregate,
+      debitAggregate,
+    ] = await Promise.all([
+      prisma.walletLedger.findMany({
+        where,
+        orderBy: {
+          createdAt: "desc",
+        },
+        skip,
+        take: limit,
+      }),
+
+      prisma.walletLedger.count({
+        where,
+      }),
+
+      prisma.walletLedger.aggregate({
+        where: {
+          ...where,
+          type: {
+            in: [
+              "CREDIT",
+              "REFUND",
+              "REVERSAL",
+            ],
+          },
+        },
+        _sum: {
+          amount: true,
+        },
+      }),
+
+      prisma.walletLedger.aggregate({
+        where: {
+          ...where,
+          type: {
+            in: [
+              "DEBIT",
+              "ADJUSTMENT",
+            ],
+          },
+        },
+        _sum: {
+          amount: true,
+        },
+      }),
+    ]);
+
+    const totalPages =
+      Math.max(
+        Math.ceil(total / limit),
+        1
+      );
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "Wallet transactions retrieved successfully.",
+      transactions:
+        transactions.map(
+          serializeLedger
+        ),
+      summary: {
+        totalTransactions: total,
+        totalCredit: Number(
+          creditAggregate._sum
+            .amount || 0
+        ),
+        totalDebit: Number(
+          debitAggregate._sum
+            .amount || 0
+        ),
+      },
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasNextPage:
+          page < totalPages,
+        hasPreviousPage:
+          page > 1,
       },
     });
-    emitEvent("funding-request-created", {
-  message: "New funding request",
-  funding,
-});
-
-    return res.status(201).json({
-      success: true,
-      message: "Funding request created successfully",
-      funding,
-    });
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
+    console.error(
+      "Get wallet transactions error:",
+      error
+    );
 
-exports.getMyFundingRequests = async (req, res) => {
-  try {
-    const requests = await prisma.fundingRequest.findMany({
-      where: { userId: req.user.id },
-      orderBy: { createdAt: "desc" },
-    });
-
-    return res.json({
-      success: true,
-      requests,
-    });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-exports.getMyTransactions = async (req, res) => {
-  try {
-    const transactions = await prisma.transaction.findMany({
-      where: { userId: req.user.id },
-      orderBy: { createdAt: "desc" },
-    });
-
-    return res.json({
-      success: true,
-      transactions,
-    });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
-exports.initializePaystackFunding = async (req, res) => {
-  try {
-    const result = await walletService.initializePaystackFunding({
-      userId: req.user.id,
-      email: req.user.email,
-      amount: req.body.amount,
-    });
-
-    return res.json({
-      success: true,
-      message: "Paystack payment initialized",
-      ...result,
-    });
-  } catch (error) {
-    return res.status(400).json({
+    return res.status(500).json({
       success: false,
-      message: error.message,
+      message:
+        "Unable to retrieve wallet transactions.",
     });
-  }
-};
-
-exports.verifyPaystackFunding = async (req, res) => {
-  try {
-    const result = await walletService.verifyPaystackFunding({
-      userId: req.user.id,
-      reference: req.params.reference,
-    });
-
-    return res.json({
-      success: true,
-      message: "Payment verified successfully",
-      ...result,
-    });
-  } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
-exports.paystackWebhook = async (req, res) => {
-  try {
-    const secret = process.env.PAYSTACK_SECRET_KEY;
-
-    const hash = crypto
-      .createHmac("sha512", secret)
-      .update(req.body)
-      .digest("hex");
-
-    const signature = req.headers["x-paystack-signature"];
-
-    if (hash !== signature) {
-      return res.status(401).json({
-        success: false,
-        message: "Invalid webhook signature",
-      });
-    }
-
-    const event = JSON.parse(req.body.toString("utf8"));
-
-    if (event.event === "charge.success") {
-      const reference = event.data.reference;
-      const amount = event.data.amount;
-      const paymentReference = String(event.data.id || reference);
-
-      await walletService.creditWalletFromPaystack({
-        reference,
-        amount,
-        paymentReference,
-      });
-    }
-
-    return res.sendStatus(200);
-  } catch (error) {
-    console.error("Paystack webhook error:", error.message);
-    return res.sendStatus(200);
   }
 };

@@ -1,22 +1,47 @@
 const express = require("express");
+
 const router = express.Router();
 
-const auth = require("../middlewares/auth.middleware");
+const auth = require(
+  "../middlewares/auth.middleware"
+);
 
 const {
   getWallet,
   createFundingRequest,
   getMyFundingRequests,
-  getMyTransactions,
+  getWalletTransactions,
   initializePaystackFunding,
   verifyPaystackFunding,
   paystackWebhook,
-} = require("../controllers/wallet.controller");
+} = require(
+  "../controllers/wallet.controller"
+);
 
-router.get("/", auth, getWallet);
-router.post("/fund", auth, createFundingRequest);
-router.get("/funding-requests", auth, getMyFundingRequests);
-router.get("/transactions", auth, getMyTransactions);
+router.get(
+  "/",
+  auth,
+  getWallet
+);
+
+router.get(
+  "/transactions",
+  auth,
+  getWalletTransactions
+);
+
+router.post(
+  "/fund",
+  auth,
+  createFundingRequest
+);
+
+router.get(
+  "/funding-requests",
+  auth,
+  getMyFundingRequests
+);
+
 router.post(
   "/paystack/initialize",
   auth,
@@ -28,6 +53,7 @@ router.get(
   auth,
   verifyPaystackFunding
 );
+
 router.post(
   "/paystack/webhook",
   paystackWebhook

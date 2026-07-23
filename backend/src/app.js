@@ -26,6 +26,7 @@ const dataRoutes = require("./routes/data.routes");
 const airtimeRoutes = require("./routes/airtime.routes");
 const walletRoutes = require("./routes/wallet.routes");
 const apiPlanRoutes = require("./routes/apiPlan.routes");
+const notificationRoutes = require("./routes/notification.routes");
 const marketplaceRoutes = require(
   "./routes/marketplace.routes"
 );
@@ -427,6 +428,10 @@ app.use(
   pairCodeRoutes
 );
 
+app.use(
+  "/api/v1/notifications",
+  notificationRoutes
+);
 /* ======================================================
    404 AND GLOBAL ERROR HANDLER
 

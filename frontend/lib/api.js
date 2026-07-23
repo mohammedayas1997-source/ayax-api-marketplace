@@ -1,16 +1,30 @@
 import axios from "axios";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ||
+const FALLBACK_API_URL =
   "https://ayax-api-marketplace.onrender.com/api/v1";
+
+const rawApiUrl =
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  FALLBACK_API_URL;
+
+const API_BASE_URL = rawApiUrl.replace(/\/+$/, "");
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000,
+
+  /*
+   * Render free instance na iya ɗaukar lokaci
+   * kafin ya farka daga sleep.
+   */
+  timeout: 90000,
+
   headers: {
-    "Content-Type": "application/json",
     Accept: "application/json",
+    "Content-Type": "application/json",
   },
+
+  withCredentials: false,
 });
 
 api.interceptors.request.use(
@@ -19,9 +33,29 @@ api.interceptors.request.use(
       const token = localStorage.getItem("token");
 
       if (token) {
-        config.headers = config.headers || {};
-        config.headers.Authorization = `Bearer ${token}`;
+        config.headers =
+          config.headers || {};
+
+        config.headers.Authorization =
+          `Bearer ${token}`;
       }
+    }
+
+    /*
+     * Yana hana URL kamar:
+     * /api/v1/api/v1/wallet
+     *
+     * Tunda baseURL ya riga yana dauke da /api/v1,
+     * request paths su zama /wallet, /auth/me, da sauransu.
+     */
+    if (
+      typeof config.url === "string" &&
+      config.url.startsWith("/api/v1/")
+    ) {
+      config.url = config.url.replace(
+        /^\/api\/v1/,
+        ""
+      );
     }
 
     return config;
@@ -31,27 +65,70 @@ api.interceptors.request.use(
 
 api.interceptors.response.use(
   (response) => response,
+
   (error) => {
-    if (typeof window !== "undefined") {
-      const status = error.response?.status;
+    const status = error.response?.status;
 
-      if (status === 401) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
+    if (!error.response) {
+      console.error("API Network Error", {
+        message: error.message,
+        code: error.code,
+        baseURL: error.config?.baseURL,
+        requestURL: error.config?.url,
+        method: error.config?.method,
+      });
 
-        const currentPath = window.location.pathname;
+      error.userMessage =
+        error.code === "ECONNABORTED"
+          ? "Server response is taking too long. Please try again."
+          : "Unable to connect to the server. Check the backend and CORS configuration.";
+    } else {
+      console.error("API Response Error", {
+        status,
+        message:
+          error.response?.data?.message,
+        response:
+          error.response?.data,
+        url: error.config?.url,
+      });
 
-        if (
-          currentPath !== "/login" &&
-          currentPath !== "/register"
-        ) {
-          window.location.href = "/login";
-        }
+      error.userMessage =
+        error.response?.data?.message ||
+        "The request could not be completed.";
+    }
+
+    if (
+      typeof window !== "undefined" &&
+      status === 401
+    ) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+
+      const currentPath =
+        window.location.pathname;
+
+      const publicPaths = [
+        "/login",
+        "/register",
+        "/forgot-password",
+        "/reset-password",
+      ];
+
+      if (
+        !publicPaths.includes(currentPath)
+      ) {
+        window.location.replace(
+          "/login"
+        );
       }
     }
 
     return Promise.reject(error);
   }
 );
+
+export {
+  API_BASE_URL,
+};
 
 export default api;

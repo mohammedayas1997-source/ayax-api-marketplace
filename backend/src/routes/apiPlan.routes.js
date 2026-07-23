@@ -1,23 +1,54 @@
-const router = require("express").Router();
+const express = require("express");
 
-const auth = require("../middlewares/auth.middleware");
+const router = express.Router();
+
+const auth = require(
+  "../middlewares/auth.middleware"
+);
 
 const {
   getPlans,
+  getPlanById,
   createPlan,
   updatePlan,
-  deletePlan,
   changeStatus,
-} = require("../controllers/apiPlan.controller");
+  deletePlan,
+} = require(
+  "../controllers/apiPlan.controller"
+);
 
-router.get("/", auth, getPlans);
+router.get(
+  "/",
+  getPlans
+);
 
-router.post("/", auth, createPlan);
+router.get(
+  "/:id",
+  getPlanById
+);
 
-router.patch("/:id", auth, updatePlan);
+router.post(
+  "/",
+  auth,
+  createPlan
+);
 
-router.patch("/:id/status", auth, changeStatus);
+router.patch(
+  "/:id",
+  auth,
+  updatePlan
+);
 
-router.delete("/:id", auth, deletePlan);
+router.patch(
+  "/:id/status",
+  auth,
+  changeStatus
+);
+
+router.delete(
+  "/:id",
+  auth,
+  deletePlan
+);
 
 module.exports = router;

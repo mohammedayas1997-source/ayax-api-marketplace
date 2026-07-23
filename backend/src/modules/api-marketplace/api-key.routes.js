@@ -2,76 +2,54 @@ const express = require("express");
 
 const router = express.Router();
 
-const auth = require("../../middlewares/auth.middleware");
-const role = require("../../middlewares/role.middleware");
+const auth = require(
+  "../../middlewares/auth.middleware"
+);
 
 const {
-  validate,
-  createKeySchema,
-  regenerateKeySchema,
-  statusSchema,
-} = require("./api-key.validator");
-
-const {
-  getKeys,
-  getKey,
-  createKey,
-  regenerateKey,
-  changeStatus,
-  deleteKey,
-  statistics,
-} = require("./api-key.controller");
-
-router.get(
-  "/statistics",
-  auth,
-  role("SUPER_ADMIN", "ADMIN"),
-  statistics
+  getApiKeys,
+  generateApiKey,
+  regenerateApiKey,
+  revokeApiKey,
+  deleteApiKey,
+} = require(
+  "../../controllers/apiKey.controller"
 );
 
 router.get(
   "/",
   auth,
-  role("SUPER_ADMIN", "ADMIN"),
-  getKeys
-);
-
-router.get(
-  "/:id",
-  auth,
-  role("SUPER_ADMIN", "ADMIN"),
-  getKey
+  getApiKeys
 );
 
 router.post(
   "/",
   auth,
-  role("SUPER_ADMIN"),
-  validate(createKeySchema),
-  createKey
+  generateApiKey
+);
+
+router.post(
+  "/generate",
+  auth,
+  generateApiKey
 );
 
 router.patch(
   "/:id/regenerate",
   auth,
-  role("SUPER_ADMIN"),
-  validate(regenerateKeySchema),
-  regenerateKey
+  regenerateApiKey
 );
 
 router.patch(
-  "/:id/status",
+  "/:id/revoke",
   auth,
-  role("SUPER_ADMIN"),
-  validate(statusSchema),
-  changeStatus
+  revokeApiKey
 );
 
 router.delete(
   "/:id",
   auth,
-  role("SUPER_ADMIN"),
-  deleteKey
+  deleteApiKey
 );
 
 module.exports = router;

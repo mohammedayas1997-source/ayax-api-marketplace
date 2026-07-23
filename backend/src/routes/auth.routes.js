@@ -6,40 +6,44 @@ const auth = require(
   "../middlewares/auth.middleware"
 );
 
-const {
-  register,
-  login,
-  forgotPassword,
-  resetPassword,
-  getCurrentUser,
-} = require(
+const authController = require(
   "../controllers/auth.controller"
 );
 
 router.post(
   "/register",
-  register
+  authController.register
 );
 
 router.post(
   "/login",
-  login
+  authController.login
 );
 
-router.post(
-  "/forgot-password",
-  forgotPassword
-);
+if (
+  typeof authController.forgotPassword ===
+  "function"
+) {
+  router.post(
+    "/forgot-password",
+    authController.forgotPassword
+  );
+}
 
-router.post(
-  "/reset-password",
-  resetPassword
-);
+if (
+  typeof authController.resetPassword ===
+  "function"
+) {
+  router.post(
+    "/reset-password",
+    authController.resetPassword
+  );
+}
 
 router.get(
   "/me",
   auth,
-  getCurrentUser
+  authController.getCurrentUser
 );
 
 module.exports = router;

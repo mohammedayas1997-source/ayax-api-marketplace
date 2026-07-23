@@ -14,7 +14,7 @@ const authMiddleware = require(
 );
 
 const authorize = require(
-  "../middlewares/authorize.middleware"
+  "../middlewares/role.middleware"
 );
 
 router.use(authMiddleware);

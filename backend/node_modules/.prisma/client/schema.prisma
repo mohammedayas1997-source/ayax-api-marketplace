@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum PackageTier {
@@ -38,6 +39,10 @@ model User {
   walletLedgers     WalletLedger[]
   walletWithdrawals WalletWithdrawal[]
   webhooks          Webhook[]
+
+  createdNotifications   Notification[]          @relation("NotificationCreator")
+  targetedNotifications  Notification[]          @relation("NotificationTargetUser")
+  notificationRecipients NotificationRecipient[] @relation("UserNotificationRecipients")
 }
 
 model Wallet {
@@ -357,16 +362,94 @@ model AuditLog {
 }
 
 model Notification {
-  id        String             @id @default(cuid())
-  userId    String
-  title     String
-  message   String
-  type      NotificationType   @default(INFO)
-  status    NotificationStatus @default(UNREAD)
-  actionUrl String?
-  createdAt DateTime           @default(now())
-  readAt    DateTime?
-  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id       String               @id @default(cuid())
+  title    String
+  message  String
+  type     NotificationType     @default(INFO)
+  priority NotificationPriority @default(NORMAL)
+
+  audience     NotificationAudience @default(ALL)
+  targetRole   UserRole?
+  targetUserId String?
+
+  channels NotificationChannel[] @default([IN_APP])
+
+  actionText String?
+  actionUrl  String?
+  imageUrl   String?
+
+  status NotificationStatus @default(DRAFT)
+
+  isPinned    Boolean   @default(false)
+  scheduledAt DateTime?
+  expiresAt   DateTime?
+  sentAt      DateTime?
+  cancelledAt DateTime?
+
+  createdById    String?
+  createdByName  String?
+  createdByEmail String?
+
+  totalRecipients Int @default(0)
+  deliveredCount  Int @default(0)
+  readCount       Int @default(0)
+  clickedCount    Int @default(0)
+  failedCount     Int @default(0)
+
+  failureReason String?
+  metadata      Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  createdBy User? @relation("NotificationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  targetUser User? @relation("NotificationTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  recipients NotificationRecipient[]
+  User       User?                   @relation(fields: [userId], references: [id])
+  userId     String?
+
+  @@index([status, createdAt])
+  @@index([audience, createdAt])
+  @@index([targetRole])
+  @@index([targetUserId])
+  @@index([scheduledAt])
+  @@index([expiresAt])
+  @@index([createdById])
+}
+
+model NotificationRecipient {
+  id             String @id @default(cuid())
+  notificationId String
+  userId         String
+
+  status NotificationRecipientStatus @default(PENDING)
+
+  inAppDelivered Boolean @default(false)
+  emailDelivered Boolean @default(false)
+  pushDelivered  Boolean @default(false)
+  smsDelivered   Boolean @default(false)
+
+  deliveredAt DateTime?
+  readAt      DateTime?
+  clickedAt   DateTime?
+  failedAt    DateTime?
+
+  failureReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  user User @relation("UserNotificationRecipients", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, userId])
+  @@index([userId, status, createdAt])
+  @@index([notificationId, status])
+  @@index([readAt])
+  @@index([clickedAt])
 }
 
 model LoginHistory {
@@ -794,18 +877,6 @@ enum LedgerType {
   ADJUSTMENT
 }
 
-enum NotificationType {
-  INFO
-  SUCCESS
-  WARNING
-  ERROR
-}
-
-enum NotificationStatus {
-  UNREAD
-  READ
-}
-
 enum TicketStatus {
   OPEN
   IN_PROGRESS
@@ -1010,4 +1081,53 @@ enum ApiScope {
   TRANSACTIONS
   WALLET
   WEBHOOKS
+}
+
+enum NotificationType {
+  INFO
+  SUCCESS
+  WARNING
+  ERROR
+  UPDATE
+  PROMOTION
+  SYSTEM
+}
+
+enum NotificationStatus {
+  DRAFT
+  SCHEDULED
+  PROCESSING
+  SENT
+  PARTIALLY_SENT
+  FAILED
+  CANCELLED
+}
+
+enum NotificationRecipientStatus {
+  PENDING
+  DELIVERED
+  READ
+  CLICKED
+  FAILED
+}
+
+enum NotificationAudience {
+  ALL
+  ROLE
+  USER
+  MULTIPLE_USERS
+}
+
+enum NotificationPriority {
+  LOW
+  NORMAL
+  HIGH
+  CRITICAL
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  PUSH
+  SMS
 }

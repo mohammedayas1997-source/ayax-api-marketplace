@@ -30,6 +30,11 @@ const notificationRoutes =
   require(
     "./routes/notification.routes"
   );
+
+  const servicePricingRoutes = require(
+  "./routes/servicePricing.routes"
+);
+
 const marketplaceRoutes = require(
   "./routes/marketplace.routes"
 );
@@ -90,6 +95,7 @@ const {
   notFound,
   errorHandler,
 } = require("./middlewares/error.middleware");
+const adminNotificationRoutes = require("./routes/adminNotification.routes");
 
 /* ======================================================
    APP
@@ -319,6 +325,16 @@ app.use(
 app.use(
   "/api/v1/purchase",
   purchaseRoutes
+);
+
+app.use(
+  "/api/v1/service-pricing",
+  servicePricingRoutes
+);
+
+app.use(
+  "/api/v1/admin/notifications",
+  adminNotificationRoutes
 );
 
 /* ======================================================

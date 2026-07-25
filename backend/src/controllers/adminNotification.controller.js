@@ -1,3 +1,5 @@
+const crypto = require("crypto");
+
 const prisma = require("../config/prisma");
 const createAuditLog = require("../utils/audit");
 const { emitEvent } = require("../config/socket");
@@ -30,21 +32,12 @@ const NOTIFICATION_AUDIENCES = [
   "MULTIPLE_USERS",
 ];
 
-const NOTIFICATION_CHANNELS = [
-  "IN_APP",
-  "EMAIL",
-  "PUSH",
-  "SMS",
-];
-
-const HISTORY_STATUSES = [
-  "DRAFT",
-  "SCHEDULED",
-  "PROCESSING",
-  "SENT",
-  "PARTIALLY_SENT",
-  "FAILED",
-  "CANCELLED",
+const USER_ROLES = [
+  "SUPER_ADMIN",
+  "ADMIN",
+  "STAFF_ADMIN",
+  "CUSTOMER_SERVICE",
+  "CUSTOMER",
 ];
 
 /* ======================================================
@@ -56,6 +49,22 @@ const normalizeText = (value) =>
 
 const normalizeUppercase = (value) =>
   normalizeText(value).toUpperCase();
+
+const uniqueStrings = (values) => {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  return [
+    ...new Set(
+      values
+        .map((value) =>
+          normalizeText(value)
+        )
+        .filter(Boolean)
+    ),
+  ];
+};
 
 const parsePositiveInteger = (
   value,
@@ -74,67 +83,17 @@ const parsePositiveInteger = (
   return Math.min(parsed, maximum);
 };
 
-const uniqueStrings = (values) => {
-  if (!Array.isArray(values)) {
-    return [];
-  }
-
-  return [
-    ...new Set(
-      values
-        .map((value) =>
-          normalizeText(value)
-        )
-        .filter(Boolean)
-    ),
-  ];
-};
-
-const normalizeChannels = (channels) => {
-  if (!Array.isArray(channels)) {
-    return ["IN_APP"];
-  }
-
-  const normalized = [
-    ...new Set(
-      channels
-        .map(normalizeUppercase)
-        .filter((channel) =>
-          NOTIFICATION_CHANNELS.includes(
-            channel
-          )
-        )
-    ),
-  ];
-
-  return normalized.length > 0
-    ? normalized
-    : ["IN_APP"];
-};
-
-const parseOptionalDate = (
-  value,
-  fieldName
-) => {
-  if (!value) {
-    return null;
-  }
-
-  const date = new Date(value);
-
+const createBatchId = () => {
   if (
-    Number.isNaN(date.getTime())
+    typeof crypto.randomUUID ===
+    "function"
   ) {
-    const error = new Error(
-      `${fieldName} is invalid.`
-    );
-
-    error.statusCode = 400;
-
-    throw error;
+    return crypto.randomUUID();
   }
 
-  return date;
+  return crypto
+    .randomBytes(16)
+    .toString("hex");
 };
 
 const calculatePercentage = (
@@ -150,63 +109,35 @@ const calculatePercentage = (
   );
 };
 
-const serializeRecipient = (
-  recipient
-) => ({
-  id: recipient.id,
-  notificationId:
-    recipient.notificationId,
-  userId: recipient.userId,
-  status: recipient.status,
+const serializeUser = (user) => {
+  if (!user) {
+    return null;
+  }
 
-  inAppDelivered:
-    recipient.inAppDelivered,
-  emailDelivered:
-    recipient.emailDelivered,
-  pushDelivered:
-    recipient.pushDelivered,
-  smsDelivered:
-    recipient.smsDelivered,
-
-  deliveredAt:
-    recipient.deliveredAt,
-  readAt: recipient.readAt,
-  clickedAt: recipient.clickedAt,
-  failedAt: recipient.failedAt,
-  failureReason:
-    recipient.failureReason,
-
-  createdAt: recipient.createdAt,
-  updatedAt: recipient.updatedAt,
-
-  user: recipient.user
-    ? {
-        id: recipient.user.id,
-        name: recipient.user.name,
-        email: recipient.user.email,
-        phone: recipient.user.phone,
-        role: recipient.user.role,
-      }
-    : null,
-});
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    phone: user.phone,
+    role: user.role,
+  };
+};
 
 const serializeNotification = (
   notification
 ) => ({
   id: notification.id,
+  batchId: notification.batchId,
+
+  userId: notification.userId,
+
   title: notification.title,
   message: notification.message,
 
   type: notification.type,
   priority: notification.priority,
   audience: notification.audience,
-
-  targetRole:
-    notification.targetRole,
-  targetUserId:
-    notification.targetUserId,
-
-  channels: notification.channels,
+  targetRole: notification.targetRole,
 
   actionText:
     notification.actionText,
@@ -215,16 +146,8 @@ const serializeNotification = (
   imageUrl:
     notification.imageUrl,
 
-  status: notification.status,
-  isPinned: notification.isPinned,
-
-  scheduledAt:
-    notification.scheduledAt,
-  expiresAt:
-    notification.expiresAt,
-  sentAt: notification.sentAt,
-  cancelledAt:
-    notification.cancelledAt,
+  isRead: notification.isRead,
+  readAt: notification.readAt,
 
   createdById:
     notification.createdById,
@@ -233,35 +156,14 @@ const serializeNotification = (
   createdByEmail:
     notification.createdByEmail,
 
-  totalRecipients:
-    notification.totalRecipients,
-  deliveredCount:
-    notification.deliveredCount,
-  readCount:
-    notification.readCount,
-  clickedCount:
-    notification.clickedCount,
-  failedCount:
-    notification.failedCount,
-
-  failureReason:
-    notification.failureReason,
-  metadata:
-    notification.metadata,
-
   createdAt:
     notification.createdAt,
   updatedAt:
     notification.updatedAt,
 
-  recipients:
-    Array.isArray(
-      notification.recipients
-    )
-      ? notification.recipients.map(
-          serializeRecipient
-        )
-      : undefined,
+  user: serializeUser(
+    notification.user
+  ),
 });
 
 const getErrorStatus = (
@@ -290,10 +192,7 @@ const getErrorStatus = (
     return 409;
   }
 
-  if (
-    error?.code === "P2003" ||
-    error?.code === "P2009"
-  ) {
+  if (error?.code === "P2003") {
     return 400;
   }
 
@@ -346,7 +245,7 @@ const writeAuditLog = async ({
     });
   } catch (error) {
     console.error(
-      "Notification audit error:",
+      "Notification audit log error:",
       error.message
     );
   }
@@ -368,14 +267,14 @@ const publishEvent = (
     }
   } catch (error) {
     console.error(
-      `Notification socket error (${eventName}):`,
+      `Socket event error (${eventName}):`,
       error.message
     );
   }
 };
 
 /* ======================================================
-   RESOLVE AUDIENCE USERS
+   RESOLVE RECIPIENTS
 ====================================================== */
 
 const resolveAudienceUsers = async ({
@@ -395,6 +294,9 @@ const resolveAudienceUsers = async ({
 
   if (audience === "ALL") {
     return prisma.user.findMany({
+      where: {
+        status: "ACTIVE",
+      },
       select,
     });
   }
@@ -410,9 +312,24 @@ const resolveAudienceUsers = async ({
       throw error;
     }
 
+    if (
+      !USER_ROLES.includes(
+        targetRole
+      )
+    ) {
+      const error = new Error(
+        "Invalid target role."
+      );
+
+      error.statusCode = 400;
+
+      throw error;
+    }
+
     return prisma.user.findMany({
       where: {
         role: targetRole,
+        status: "ACTIVE",
       },
       select,
     });
@@ -424,7 +341,7 @@ const resolveAudienceUsers = async ({
       !targetEmail
     ) {
       const error = new Error(
-        "User ID or email is required."
+        "Target user ID or email is required."
       );
 
       error.statusCode = 400;
@@ -432,26 +349,27 @@ const resolveAudienceUsers = async ({
       throw error;
     }
 
+    const conditions = [];
+
+    if (targetUserId) {
+      conditions.push({
+        id: targetUserId,
+      });
+    }
+
+    if (targetEmail) {
+      conditions.push({
+        email: {
+          equals: targetEmail,
+          mode: "insensitive",
+        },
+      });
+    }
+
     const user =
       await prisma.user.findFirst({
         where: {
-          OR: [
-            targetUserId
-              ? {
-                  id: targetUserId,
-                }
-              : undefined,
-
-            targetEmail
-              ? {
-                  email: {
-                    equals:
-                      targetEmail,
-                    mode: "insensitive",
-                  },
-                }
-              : undefined,
-          ].filter(Boolean),
+          OR: conditions,
         },
         select,
       });
@@ -508,59 +426,9 @@ const resolveAudienceUsers = async ({
 };
 
 /* ======================================================
-   CREATE RECIPIENT RECORDS
-====================================================== */
-
-const createRecipientRecords = async ({
-  transactionClient,
-  notificationId,
-  users,
-  channels,
-}) => {
-  if (
-    !Array.isArray(users) ||
-    users.length === 0
-  ) {
-    return {
-      count: 0,
-    };
-  }
-
-  const hasInApp =
-    channels.includes("IN_APP");
-
-  return transactionClient
-    .notificationRecipient
-    .createMany({
-      data: users.map((user) => ({
-        notificationId,
-        userId: user.id,
-
-        status: hasInApp
-          ? "DELIVERED"
-          : "PENDING",
-
-        inAppDelivered:
-          hasInApp,
-
-        emailDelivered: false,
-        pushDelivered: false,
-        smsDelivered: false,
-
-        deliveredAt: hasInApp
-          ? new Date()
-          : null,
-      })),
-
-      skipDuplicates: true,
-    });
-};
-
-/* ======================================================
    SEND NOTIFICATION
 
    POST /api/v1/admin/notifications/send
-   POST /api/v1/super-admin/notifications/send
 ====================================================== */
 
 exports.sendNotification = async (
@@ -593,14 +461,10 @@ exports.sendNotification = async (
           "ALL"
       );
 
-    const targetRole =
+    const targetRole = normalizeUppercase(
       req.body.targetRole ||
-      req.body.role
-        ? normalizeUppercase(
-            req.body.targetRole ||
-              req.body.role
-          )
-        : null;
+        req.body.role
+    );
 
     const targetUserId =
       normalizeText(
@@ -618,11 +482,6 @@ exports.sendNotification = async (
       req.body.userIds
     );
 
-    const channels =
-      normalizeChannels(
-        req.body.channels
-      );
-
     const actionText =
       normalizeText(
         req.body.actionText
@@ -638,22 +497,6 @@ exports.sendNotification = async (
         req.body.imageUrl
       ) || null;
 
-    const scheduledAt =
-      parseOptionalDate(
-        req.body.scheduledAt,
-        "Scheduled date"
-      );
-
-    const expiresAt =
-      parseOptionalDate(
-        req.body.expiresAt,
-        "Expiry date"
-      );
-
-    const isPinned =
-      req.body.isPinned === true ||
-      priority === "CRITICAL";
-
     if (!title) {
       return res.status(400).json({
         success: false,
@@ -667,6 +510,26 @@ exports.sendNotification = async (
         success: false,
         message:
           "Notification message is required.",
+      });
+    }
+
+    if (
+      title.length > 200
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Notification title cannot exceed 200 characters.",
+      });
+    }
+
+    if (
+      message.length > 5000
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Notification message cannot exceed 5000 characters.",
       });
     }
 
@@ -706,50 +569,20 @@ exports.sendNotification = async (
       });
     }
 
-    if (
-      scheduledAt &&
-      scheduledAt <= new Date()
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Scheduled date must be in the future.",
-      });
-    }
-
-    if (
-      expiresAt &&
-      expiresAt <= new Date()
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Expiry date must be in the future.",
-      });
-    }
-
-    if (
-      scheduledAt &&
-      expiresAt &&
-      expiresAt <= scheduledAt
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Expiry date must be after the scheduled date.",
-      });
-    }
-
     const users =
       await resolveAudienceUsers({
         audience,
-        targetRole,
+        targetRole:
+          targetRole || null,
         targetUserId,
         targetEmail,
         userIds,
       });
 
-    if (users.length === 0) {
+    if (
+      !Array.isArray(users) ||
+      users.length === 0
+    ) {
       return res.status(404).json({
         success: false,
         message:
@@ -757,202 +590,157 @@ exports.sendNotification = async (
       });
     }
 
-    const shouldSchedule =
-      Boolean(scheduledAt);
+    const batchId = createBatchId();
 
-    const notification =
-      await prisma.$transaction(
-        async (tx) => {
-          const created =
-            await tx.notification.create({
-              data: {
-                title,
-                message,
-                type,
-                priority,
-                audience,
+    const commonData = {
+      batchId,
+      title,
+      message,
+      type,
+      priority,
+      audience,
 
-                targetRole:
-                  audience === "ROLE"
-                    ? targetRole
-                    : null,
+      targetRole:
+        audience === "ROLE"
+          ? targetRole
+          : null,
 
-                targetUserId:
-                  audience === "USER"
-                    ? users[0]?.id ||
-                      null
-                    : null,
+      actionText,
+      actionUrl,
+      imageUrl,
 
-                channels,
+      createdById:
+        req.user?.id || null,
 
-                actionText,
-                actionUrl,
-                imageUrl,
+      createdByName:
+        req.user?.name || null,
 
-                status:
-                  shouldSchedule
-                    ? "SCHEDULED"
-                    : "PROCESSING",
+      createdByEmail:
+        req.user?.email || null,
+    };
 
-                isPinned,
-                scheduledAt,
-                expiresAt,
+    await prisma.notification.createMany({
+      data: users.map((user) => ({
+        ...commonData,
+        userId: user.id,
+      })),
+    });
 
-                createdById:
-                  req.user.id,
+    const createdNotifications =
+      await prisma.notification.findMany({
+        where: {
+          batchId,
+        },
 
-                createdByName:
-                  req.user.name ||
-                  null,
-
-                createdByEmail:
-                  req.user.email ||
-                  null,
-
-                totalRecipients:
-                  users.length,
-
-                metadata: {
-                  targetUserIds:
-                    users.map(
-                      (user) => user.id
-                    ),
-
-                  requestedChannels:
-                    channels,
-                },
-              },
-            });
-
-          if (!shouldSchedule) {
-            const result =
-              await createRecipientRecords({
-                transactionClient: tx,
-                notificationId:
-                  created.id,
-                users,
-                channels,
-              });
-
-            const deliveredCount =
-              channels.includes(
-                "IN_APP"
-              )
-                ? result.count
-                : 0;
-
-            return tx.notification.update({
-              where: {
-                id: created.id,
-              },
-              data: {
-                status:
-                  result.count ===
-                  users.length
-                    ? "SENT"
-                    : "PARTIALLY_SENT",
-
-                sentAt: new Date(),
-
-                deliveredCount,
-                failedCount:
-                  Math.max(
-                    users.length -
-                      result.count,
-                    0
-                  ),
-              },
-              include: {
-                recipients: {
-                  include: {
-                    user: {
-                      select: {
-                        id: true,
-                        name: true,
-                        email: true,
-                        phone: true,
-                        role: true,
-                      },
-                    },
-                  },
-                },
-              },
-            });
-          }
-
-          return tx.notification.findUnique({
-            where: {
-              id: created.id,
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              phone: true,
+              role: true,
             },
-          });
-        }
-      );
+          },
+        },
 
-    if (!shouldSchedule) {
-      publishEvent(
-        "notification-created",
-        {
-          notification:
-            serializeNotification(
-              notification
-            ),
+        orderBy: {
+          createdAt: "asc",
+        },
+      });
 
-          recipientUserIds:
-            users.map(
-              (user) => user.id
-            ),
-        }
-      );
-
-      for (const user of users) {
-        publishEvent(
-          "user-notification-created",
-          {
-            userId: user.id,
-
-            notification:
-              serializeNotification(
-                notification
-              ),
-          }
+    for (
+      const notification of
+      createdNotifications
+    ) {
+      const serialized =
+        serializeNotification(
+          notification
         );
-      }
+
+      publishEvent(
+        "user-notification-created",
+        {
+          userId:
+            notification.userId,
+
+          notification:
+            serialized,
+        }
+      );
     }
+
+    publishEvent(
+      "notification-broadcast-created",
+      {
+        batchId,
+        audience,
+        targetRole:
+          audience === "ROLE"
+            ? targetRole
+            : null,
+        recipientCount:
+          createdNotifications.length,
+        notification: {
+          batchId,
+          title,
+          message,
+          type,
+          priority,
+          audience,
+          actionText,
+          actionUrl,
+          imageUrl,
+          createdAt:
+            createdNotifications[0]
+              ?.createdAt ||
+            new Date(),
+        },
+      }
+    );
 
     await writeAuditLog({
       req,
-
-      action: shouldSchedule
-        ? "SCHEDULE_NOTIFICATION"
-        : "SEND_NOTIFICATION",
-
+      action:
+        "SEND_NOTIFICATION",
       description:
-        `${req.user.email} ${
-          shouldSchedule
-            ? "scheduled"
-            : "sent"
-        } notification "${title}" to ${users.length} recipient(s).`,
+        `${req.user?.email || "Admin"} sent notification "${title}" to ${createdNotifications.length} user(s).`,
     });
 
-    return res
-      .status(
-        shouldSchedule ? 201 : 200
-      )
-      .json({
-        success: true,
+    return res.status(201).json({
+      success: true,
+      message:
+        "Notification sent successfully.",
 
-        message: shouldSchedule
-          ? "Notification scheduled successfully."
-          : "Notification sent successfully.",
+      notification: {
+        batchId,
+        title,
+        message,
+        type,
+        priority,
+        audience,
 
-        notification:
-          serializeNotification(
-            notification
-          ),
+        targetRole:
+          audience === "ROLE"
+            ? targetRole
+            : null,
+
+        actionText,
+        actionUrl,
+        imageUrl,
 
         recipientCount:
-          users.length,
-      });
+          createdNotifications.length,
+
+        createdAt:
+          createdNotifications[0]
+            ?.createdAt ||
+          new Date(),
+      },
+
+      recipientCount:
+        createdNotifications.length,
+    });
   } catch (error) {
     return sendError(
       res,
@@ -964,7 +752,7 @@ exports.sendNotification = async (
 };
 
 /* ======================================================
-   GET NOTIFICATION HISTORY
+   GET ADMIN NOTIFICATION HISTORY
 
    GET /api/v1/admin/notifications/history
 ====================================================== */
@@ -989,196 +777,129 @@ exports.getNotificationHistory =
       const skip =
         (page - 1) * limit;
 
-      const {
-        search,
-        status,
-        type,
-        priority,
-        audience,
-        startDate,
-        endDate,
-      } = req.query;
+      const search =
+        normalizeText(
+          req.query.search
+        );
+
+      const type =
+        normalizeUppercase(
+          req.query.type
+        );
+
+      const priority =
+        normalizeUppercase(
+          req.query.priority
+        );
+
+      const audience =
+        normalizeUppercase(
+          req.query.audience
+        );
 
       const where = {};
 
-      if (status) {
-        const normalized =
-          normalizeUppercase(
-            status
-          );
-
-        if (
-          !HISTORY_STATUSES.includes(
-            normalized
-          )
-        ) {
-          return res
-            .status(400)
-            .json({
-              success: false,
-              message:
-                "Invalid notification status.",
-            });
-        }
-
-        where.status =
-          normalized;
-      }
-
-      if (type) {
-        const normalized =
-          normalizeUppercase(type);
-
-        if (
-          !NOTIFICATION_TYPES.includes(
-            normalized
-          )
-        ) {
-          return res
-            .status(400)
-            .json({
-              success: false,
-              message:
-                "Invalid notification type.",
-            });
-        }
-
-        where.type = normalized;
-      }
-
-      if (priority) {
-        const normalized =
-          normalizeUppercase(
-            priority
-          );
-
-        if (
-          !NOTIFICATION_PRIORITIES.includes(
-            normalized
-          )
-        ) {
-          return res
-            .status(400)
-            .json({
-              success: false,
-              message:
-                "Invalid priority.",
-            });
-        }
-
-        where.priority =
-          normalized;
-      }
-
-      if (audience) {
-        const normalized =
-          normalizeUppercase(
-            audience
-          );
-
-        if (
-          !NOTIFICATION_AUDIENCES.includes(
-            normalized
-          )
-        ) {
-          return res
-            .status(400)
-            .json({
-              success: false,
-              message:
-                "Invalid audience.",
-            });
-        }
-
-        where.audience =
-          normalized;
-      }
-
       if (search) {
-        const searchValue =
-          normalizeText(search);
-
         where.OR = [
           {
             title: {
-              contains:
-                searchValue,
+              contains: search,
               mode: "insensitive",
             },
           },
           {
             message: {
-              contains:
-                searchValue,
+              contains: search,
               mode: "insensitive",
             },
           },
           {
             createdByName: {
-              contains:
-                searchValue,
+              contains: search,
               mode: "insensitive",
             },
           },
           {
             createdByEmail: {
-              contains:
-                searchValue,
+              contains: search,
               mode: "insensitive",
             },
           },
         ];
       }
 
-      if (
-        startDate ||
-        endDate
-      ) {
-        where.createdAt = {};
-
-        if (startDate) {
-          const start =
-            parseOptionalDate(
-              startDate,
-              "Start date"
-            );
-
-          start.setHours(
-            0,
-            0,
-            0,
-            0
-          );
-
-          where.createdAt.gte =
-            start;
+      if (type) {
+        if (
+          !NOTIFICATION_TYPES.includes(
+            type
+          )
+        ) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "Invalid notification type.",
+          });
         }
 
-        if (endDate) {
-          const end =
-            parseOptionalDate(
-              endDate,
-              "End date"
-            );
-
-          end.setHours(
-            23,
-            59,
-            59,
-            999
-          );
-
-          where.createdAt.lte =
-            end;
-        }
+        where.type = type;
       }
 
-      const [
-        notifications,
-        total,
-      ] = await Promise.all([
-        prisma.notification.findMany({
+      if (priority) {
+        if (
+          !NOTIFICATION_PRIORITIES.includes(
+            priority
+          )
+        ) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "Invalid notification priority.",
+          });
+        }
+
+        where.priority = priority;
+      }
+
+      if (audience) {
+        if (
+          !NOTIFICATION_AUDIENCES.includes(
+            audience
+          )
+        ) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "Invalid notification audience.",
+          });
+        }
+
+        where.audience = audience;
+      }
+
+      const grouped =
+        await prisma.notification.groupBy({
+          by: [
+            "batchId",
+            "title",
+            "message",
+            "type",
+            "priority",
+            "audience",
+            "targetRole",
+            "actionText",
+            "actionUrl",
+            "imageUrl",
+            "createdById",
+            "createdByName",
+            "createdByEmail",
+            "createdAt",
+          ],
+
           where,
+
+          _count: {
+            _all: true,
+          },
 
           orderBy: {
             createdAt: "desc",
@@ -1186,26 +907,89 @@ exports.getNotificationHistory =
 
           skip,
           take: limit,
+        });
 
-          include: {
-            _count: {
-              select: {
-                recipients: true,
-              },
-            },
-          },
-        }),
-
-        prisma.notification.count({
+      const batchCount =
+        await prisma.notification.groupBy({
+          by: ["batchId"],
           where,
-        }),
-      ]);
+        });
 
-      const totalPages =
-        Math.max(
-          Math.ceil(total / limit),
-          1
-        );
+      const total =
+        batchCount.length;
+
+      const totalPages = Math.max(
+        Math.ceil(total / limit),
+        1
+      );
+
+      const history =
+  await Promise.all(
+    grouped.map(async (item) => {
+
+          const readCount =
+  await prisma.notification.count({
+    where: {
+      batchId: item.batchId,
+      isRead: true,
+    },
+  });
+
+          return {
+            id: item.batchId,
+            batchId: item.batchId,
+
+            title: item.title,
+            message: item.message,
+
+            type: item.type,
+            priority: item.priority,
+            audience: item.audience,
+            targetRole:
+              item.targetRole,
+
+            actionText:
+              item.actionText,
+            actionUrl:
+              item.actionUrl,
+            imageUrl:
+              item.imageUrl,
+
+            createdById:
+              item.createdById,
+            createdByName:
+              item.createdByName,
+            createdByEmail:
+              item.createdByEmail,
+
+            recipientCount,
+            totalRecipients:
+              recipientCount,
+
+            deliveredCount:
+              recipientCount,
+
+            readCount,
+
+            unreadCount:
+              recipientCount -
+              readCount,
+
+            readRate:
+              calculatePercentage(
+                readCount,
+                recipientCount
+              ),
+
+            status: "SENT",
+
+            createdAt:
+              item.createdAt,
+            sentAt:
+              item.createdAt,
+          };
+            })
+  );
 
       return res.status(200).json({
         success: true,
@@ -1213,23 +997,8 @@ exports.getNotificationHistory =
         message:
           "Notification history retrieved successfully.",
 
-        notifications:
-          notifications.map(
-            (notification) => ({
-              ...serializeNotification(
-                notification
-              ),
-
-              recipientRecords:
-                notification._count
-                  ?.recipients || 0,
-            })
-          ),
-
-        history:
-          notifications.map(
-            serializeNotification
-          ),
+        notifications: history,
+        history,
 
         pagination: {
           page,
@@ -1254,7 +1023,7 @@ exports.getNotificationHistory =
   };
 
 /* ======================================================
-   GET SINGLE NOTIFICATION
+   GET SINGLE NOTIFICATION BATCH
 
    GET /api/v1/admin/notifications/:id
 ====================================================== */
@@ -1262,39 +1031,58 @@ exports.getNotificationHistory =
 exports.getNotificationById =
   async (req, res) => {
     try {
-      const notificationId =
-        normalizeText(
-          req.params.id
-        );
+      const id = normalizeText(
+        req.params.id
+      );
 
-      const notification =
+      if (!id) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Notification ID is required.",
+        });
+      }
+
+      let notification =
         await prisma.notification.findUnique({
           where: {
-            id: notificationId,
-          },
-
-          include: {
-            recipients: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    phone: true,
-                    role: true,
-                  },
-                },
-              },
-
-              orderBy: {
-                createdAt: "desc",
-              },
-            },
+            id,
           },
         });
 
-      if (!notification) {
+      let batchId = id;
+
+      if (notification) {
+        batchId =
+          notification.batchId;
+      }
+
+      const notifications =
+        await prisma.notification.findMany({
+          where: {
+            batchId,
+          },
+
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                phone: true,
+                role: true,
+              },
+            },
+          },
+
+          orderBy: {
+            createdAt: "desc",
+          },
+        });
+
+      if (
+        notifications.length === 0
+      ) {
         return res.status(404).json({
           success: false,
           message:
@@ -1302,49 +1090,84 @@ exports.getNotificationById =
         });
       }
 
+      const first =
+        notifications[0];
+
+      const readCount =
+        notifications.filter(
+          (item) => item.isRead
+        ).length;
+
+      const recipientCount =
+        notifications.length;
+
       return res.status(200).json({
         success: true,
 
         message:
           "Notification retrieved successfully.",
 
-        notification:
-          serializeNotification(
-            notification
-          ),
+        notification: {
+          id: first.batchId,
+          batchId: first.batchId,
+
+          title: first.title,
+          message: first.message,
+
+          type: first.type,
+          priority:
+            first.priority,
+          audience:
+            first.audience,
+          targetRole:
+            first.targetRole,
+
+          actionText:
+            first.actionText,
+          actionUrl:
+            first.actionUrl,
+          imageUrl:
+            first.imageUrl,
+
+          createdById:
+            first.createdById,
+          createdByName:
+            first.createdByName,
+          createdByEmail:
+            first.createdByEmail,
+
+          createdAt:
+            first.createdAt,
+          sentAt:
+            first.createdAt,
+
+          recipients:
+            notifications.map(
+              serializeNotification
+            ),
+        },
 
         analytics: {
           totalRecipients:
-            notification.totalRecipients,
+            recipientCount,
 
           delivered:
-            notification.deliveredCount,
+            recipientCount,
 
-          read:
-            notification.readCount,
+          read: readCount,
 
-          clicked:
-            notification.clickedCount,
+          unread:
+            recipientCount -
+            readCount,
 
-          failed:
-            notification.failedCount,
+          failed: 0,
 
-          deliveryRate:
-            calculatePercentage(
-              notification.deliveredCount,
-              notification.totalRecipients
-            ),
+          deliveryRate: 100,
 
           readRate:
             calculatePercentage(
-              notification.readCount,
-              notification.totalRecipients
-            ),
-
-          clickRate:
-            calculatePercentage(
-              notification.clickedCount,
-              notification.totalRecipients
+              readCount,
+              recipientCount
             ),
         },
       });
@@ -1376,55 +1199,32 @@ exports.getNotificationStatistics =
       );
 
       const [
-        totalNotifications,
-        sentNotifications,
-        scheduledNotifications,
-        failedNotifications,
-        sentToday,
-        aggregateTotals,
+        allBatches,
+        sentTodayBatches,
+        totalRecipients,
+        totalRead,
         typeGroups,
-        statusGroups,
+        audienceGroups,
       ] = await Promise.all([
-        prisma.notification.count(),
-
-        prisma.notification.count({
-          where: {
-            status: {
-              in: [
-                "SENT",
-                "PARTIALLY_SENT",
-              ],
-            },
-          },
+        prisma.notification.groupBy({
+          by: ["batchId"],
         }),
 
-        prisma.notification.count({
-          where: {
-            status: "SCHEDULED",
-          },
-        }),
+        prisma.notification.groupBy({
+          by: ["batchId"],
 
-        prisma.notification.count({
           where: {
-            status: "FAILED",
-          },
-        }),
-
-        prisma.notification.count({
-          where: {
-            sentAt: {
+            createdAt: {
               gte: today,
             },
           },
         }),
 
-        prisma.notification.aggregate({
-          _sum: {
-            totalRecipients: true,
-            deliveredCount: true,
-            readCount: true,
-            clickedCount: true,
-            failedCount: true,
+        prisma.notification.count(),
+
+        prisma.notification.count({
+          where: {
+            isRead: true,
           },
         }),
 
@@ -1437,7 +1237,7 @@ exports.getNotificationStatistics =
         }),
 
         prisma.notification.groupBy({
-          by: ["status"],
+          by: ["audience"],
 
           _count: {
             _all: true,
@@ -1445,35 +1245,15 @@ exports.getNotificationStatistics =
         }),
       ]);
 
-      const totalRecipients =
-        Number(
-          aggregateTotals._sum
-            .totalRecipients || 0
-        );
+      const totalNotifications =
+        allBatches.length;
 
-      const delivered =
-        Number(
-          aggregateTotals._sum
-            .deliveredCount || 0
-        );
+      const sentToday =
+        sentTodayBatches.length;
 
-      const read =
-        Number(
-          aggregateTotals._sum
-            .readCount || 0
-        );
-
-      const clicked =
-        Number(
-          aggregateTotals._sum
-            .clickedCount || 0
-        );
-
-      const failed =
-        Number(
-          aggregateTotals._sum
-            .failedCount || 0
-        );
+      const unread =
+        totalRecipients -
+        totalRead;
 
       return res.status(200).json({
         success: true,
@@ -1483,34 +1263,39 @@ exports.getNotificationStatistics =
 
         statistics: {
           totalNotifications,
-          sentNotifications,
-          scheduledNotifications,
-          failedNotifications,
+
+          sentNotifications:
+            totalNotifications,
+
+          scheduledNotifications: 0,
+          failedNotifications: 0,
+
           sentToday,
 
           totalRecipients,
-          delivered,
-          read,
-          clicked,
-          failed,
+
+          delivered:
+            totalRecipients,
+
+          read: totalRead,
+
+          unread,
+
+          clicked: 0,
+          failed: 0,
 
           deliveryRate:
-            calculatePercentage(
-              delivered,
-              totalRecipients
-            ),
+            totalRecipients > 0
+              ? 100
+              : 0,
 
           readRate:
             calculatePercentage(
-              read,
+              totalRead,
               totalRecipients
             ),
 
-          clickRate:
-            calculatePercentage(
-              clicked,
-              totalRecipients
-            ),
+          clickRate: 0,
         },
 
         typeBreakdown:
@@ -1524,16 +1309,23 @@ exports.getNotificationStatistics =
             {}
           ),
 
-        statusBreakdown:
-          statusGroups.reduce(
+        audienceBreakdown:
+          audienceGroups.reduce(
             (result, item) => {
-              result[item.status] =
+              result[item.audience] =
                 item._count._all;
 
               return result;
             },
             {}
           ),
+
+        statusBreakdown: {
+          SENT:
+            totalNotifications,
+          SCHEDULED: 0,
+          FAILED: 0,
+        },
       });
     } catch (error) {
       return sendError(
@@ -1545,298 +1337,7 @@ exports.getNotificationStatistics =
   };
 
 /* ======================================================
-   PROCESS SCHEDULED NOTIFICATIONS
-
-   POST /api/v1/admin/notifications/process-scheduled
-
-   Ana iya kiran wannan da cron job.
-====================================================== */
-
-exports.processScheduledNotifications =
-  async (req, res) => {
-    try {
-      const now = new Date();
-
-      const scheduledNotifications =
-        await prisma.notification.findMany({
-          where: {
-            status: "SCHEDULED",
-
-            scheduledAt: {
-              lte: now,
-            },
-
-            OR: [
-              {
-                expiresAt: null,
-              },
-              {
-                expiresAt: {
-                  gt: now,
-                },
-              },
-            ],
-          },
-
-          orderBy: {
-            scheduledAt: "asc",
-          },
-
-          take: 100,
-        });
-
-      const results = [];
-
-      for (
-        const notification of
-        scheduledNotifications
-      ) {
-        try {
-          const metadataUserIds =
-            Array.isArray(
-              notification.metadata
-                ?.targetUserIds
-            )
-              ? notification.metadata
-                  .targetUserIds
-              : [];
-
-          const users =
-            await resolveAudienceUsers({
-              audience:
-                notification.audience,
-
-              targetRole:
-                notification.targetRole,
-
-              targetUserId:
-                notification.targetUserId,
-
-              targetEmail: null,
-
-              userIds:
-                metadataUserIds,
-            });
-
-          const updated =
-            await prisma.$transaction(
-              async (tx) => {
-                await tx.notification.update({
-                  where: {
-                    id: notification.id,
-                  },
-
-                  data: {
-                    status:
-                      "PROCESSING",
-                  },
-                });
-
-                const result =
-                  await createRecipientRecords({
-                    transactionClient:
-                      tx,
-
-                    notificationId:
-                      notification.id,
-
-                    users,
-
-                    channels:
-                      notification.channels,
-                  });
-
-                const deliveredCount =
-                  notification.channels.includes(
-                    "IN_APP"
-                  )
-                    ? result.count
-                    : 0;
-
-                return tx.notification.update({
-                  where: {
-                    id: notification.id,
-                  },
-
-                  data: {
-                    status:
-                      result.count ===
-                      users.length
-                        ? "SENT"
-                        : "PARTIALLY_SENT",
-
-                    sentAt: new Date(),
-
-                    totalRecipients:
-                      users.length,
-
-                    deliveredCount,
-
-                    failedCount:
-                      Math.max(
-                        users.length -
-                          result.count,
-                        0
-                      ),
-                  },
-                });
-              }
-            );
-
-          publishEvent(
-            "notification-created",
-            {
-              notification:
-                serializeNotification(
-                  updated
-                ),
-
-              recipientUserIds:
-                users.map(
-                  (user) => user.id
-                ),
-            }
-          );
-
-          results.push({
-            id: updated.id,
-            success: true,
-          });
-        } catch (error) {
-          await prisma.notification.update({
-            where: {
-              id: notification.id,
-            },
-
-            data: {
-              status: "FAILED",
-              failureReason:
-                error.message,
-            },
-          });
-
-          results.push({
-            id: notification.id,
-            success: false,
-            message:
-              error.message,
-          });
-        }
-      }
-
-      return res.status(200).json({
-        success: true,
-
-        message:
-          "Scheduled notifications processed.",
-
-        processed:
-          results.length,
-
-        results,
-      });
-    } catch (error) {
-      return sendError(
-        res,
-        error,
-        "Unable to process scheduled notifications."
-      );
-    }
-  };
-
-/* ======================================================
-   CANCEL SCHEDULED NOTIFICATION
-
-   PATCH /api/v1/admin/notifications/:id/cancel
-====================================================== */
-
-exports.cancelNotification =
-  async (req, res) => {
-    try {
-      const notificationId =
-        normalizeText(
-          req.params.id
-        );
-
-      const notification =
-        await prisma.notification.findUnique({
-          where: {
-            id: notificationId,
-          },
-        });
-
-      if (!notification) {
-        return res.status(404).json({
-          success: false,
-          message:
-            "Notification was not found.",
-        });
-      }
-
-      if (
-        notification.status !==
-        "SCHEDULED"
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Only scheduled notifications can be cancelled.",
-        });
-      }
-
-      const updated =
-        await prisma.notification.update({
-          where: {
-            id: notification.id,
-          },
-
-          data: {
-            status: "CANCELLED",
-            cancelledAt:
-              new Date(),
-          },
-        });
-
-      await writeAuditLog({
-        req,
-        action:
-          "CANCEL_NOTIFICATION",
-
-        description:
-          `${req.user.email} cancelled notification "${notification.title}".`,
-      });
-
-      publishEvent(
-        "notification-cancelled",
-        {
-          notificationId:
-            updated.id,
-        }
-      );
-
-      return res.status(200).json({
-        success: true,
-
-        message:
-          "Notification cancelled successfully.",
-
-        notification:
-          serializeNotification(
-            updated
-          ),
-      });
-    } catch (error) {
-      return sendError(
-        res,
-        error,
-        "Unable to cancel notification.",
-        400
-      );
-    }
-  };
-
-/* ======================================================
-   DELETE NOTIFICATION
+   DELETE WHOLE NOTIFICATION BATCH
 
    DELETE /api/v1/admin/notifications/:id
 ====================================================== */
@@ -1846,56 +1347,90 @@ exports.deleteNotification = async (
   res
 ) => {
   try {
-    const notificationId =
-      normalizeText(req.params.id);
+    const id = normalizeText(
+      req.params.id
+    );
 
-    const notification =
+    let notification =
       await prisma.notification.findUnique({
         where: {
-          id: notificationId,
+          id,
         },
 
         select: {
           id: true,
+          batchId: true,
           title: true,
         },
       });
 
-    if (!notification) {
-      return res.status(404).json({
-        success: false,
-        message:
-          "Notification was not found.",
-      });
+    let batchId = id;
+    let title = "Notification";
+
+    if (notification) {
+      batchId =
+        notification.batchId;
+
+      title =
+        notification.title;
+    } else {
+      const batchNotification =
+        await prisma.notification.findFirst({
+          where: {
+            batchId: id,
+          },
+
+          select: {
+            batchId: true,
+            title: true,
+          },
+        });
+
+      if (!batchNotification) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "Notification was not found.",
+        });
+      }
+
+      batchId =
+        batchNotification.batchId;
+
+      title =
+        batchNotification.title;
     }
 
-    await prisma.notification.delete({
-      where: {
-        id: notification.id,
-      },
-    });
+    const result =
+      await prisma.notification.deleteMany({
+        where: {
+          batchId,
+        },
+      });
 
     await writeAuditLog({
       req,
       action:
         "DELETE_NOTIFICATION",
-
       description:
-        `${req.user.email} deleted notification "${notification.title}".`,
+        `${req.user?.email || "Admin"} deleted notification "${title}" for ${result.count} recipient(s).`,
     });
 
     publishEvent(
       "notification-deleted",
       {
-        notificationId:
-          notification.id,
+        batchId,
       }
     );
 
     return res.status(200).json({
       success: true,
+
       message:
         "Notification deleted successfully.",
+
+      deletedCount:
+        result.count,
     });
   } catch (error) {
     return sendError(
@@ -1907,7 +1442,7 @@ exports.deleteNotification = async (
 };
 
 /* ======================================================
-   SEARCH USERS FOR NOTIFICATION FORM
+   SEARCH USERS
 
    GET /api/v1/admin/notifications/users/search
 ====================================================== */
@@ -1921,7 +1456,9 @@ exports.searchNotificationUsers =
             req.query.q
         );
 
-      if (search.length < 2) {
+      if (
+        search.length < 2
+      ) {
         return res.status(200).json({
           success: true,
           users: [],
@@ -1958,6 +1495,7 @@ exports.searchNotificationUsers =
             email: true,
             phone: true,
             role: true,
+            status: true,
           },
 
           orderBy: {
@@ -1978,4 +1516,31 @@ exports.searchNotificationUsers =
         "Unable to search users."
       );
     }
+  };
+
+/* ======================================================
+   SIMPLE SYSTEM DOES NOT SUPPORT SCHEDULING YET
+
+   Ana bar waɗannan exports saboda routes ɗinka
+   kada su kawo "handler must be a function".
+====================================================== */
+
+exports.processScheduledNotifications =
+  async (req, res) => {
+    return res.status(200).json({
+      success: true,
+      message:
+        "Scheduled notifications are not enabled in the simple notification system.",
+      processed: 0,
+      results: [],
+    });
+  };
+
+exports.cancelNotification =
+  async (req, res) => {
+    return res.status(400).json({
+      success: false,
+      message:
+        "Scheduled notifications are not enabled. Sent notifications can only be deleted.",
+    });
   };

@@ -1,287 +1,493 @@
 const prisma = require("../config/prisma");
+const { emitEvent } = require("../config/socket");
 
-const ALLOWED_FILTERS = [
-  "ALL",
-  "UNREAD",
-  "READ",
-];
+/* ======================================================
+   HELPERS
+====================================================== */
+
+const parsePositiveInteger = (
+  value,
+  fallback,
+  maximum = 100
+) => {
+  const parsed = Number(value);
+
+  if (
+    !Number.isInteger(parsed) ||
+    parsed < 1
+  ) {
+    return fallback;
+  }
+
+  return Math.min(parsed, maximum);
+};
 
 const serializeNotification = (
   notification
 ) => ({
   id: notification.id,
+  batchId: notification.batchId,
+
   title: notification.title,
   message: notification.message,
+
   type: notification.type,
-  status: notification.status,
+  priority: notification.priority,
+  audience: notification.audience,
+  targetRole: notification.targetRole,
+
+  actionText: notification.actionText,
   actionUrl: notification.actionUrl,
-  createdAt: notification.createdAt,
+  imageUrl: notification.imageUrl,
+
+  isRead: notification.isRead,
   readAt: notification.readAt,
-  isRead:
-    notification.status === "READ",
+
+  createdByName:
+    notification.createdByName,
+  createdByEmail:
+    notification.createdByEmail,
+
+  createdAt: notification.createdAt,
+  updatedAt: notification.updatedAt,
 });
 
-exports.getNotifications = async (
+const sendError = (
+  res,
+  error,
+  fallbackMessage
+) => {
+  console.error(
+    fallbackMessage,
+    error
+  );
+
+  return res.status(500).json({
+    success: false,
+    message:
+      error?.message ||
+      fallbackMessage,
+  });
+};
+
+const publishEvent = (
+  eventName,
+  payload
+) => {
+  try {
+    if (
+      typeof emitEvent ===
+      "function"
+    ) {
+      emitEvent(eventName, payload);
+    }
+  } catch (error) {
+    console.error(
+      `Socket event error (${eventName}):`,
+      error.message
+    );
+  }
+};
+
+/* ======================================================
+   GET MY NOTIFICATIONS
+
+   GET /api/v1/notifications
+====================================================== */
+
+exports.getMyNotifications = async (
   req,
   res
 ) => {
   try {
     const userId = req.user.id;
 
-    const page = Math.max(
-      Number(req.query.page) || 1,
-      1
-    );
+    const page =
+      parsePositiveInteger(
+        req.query.page,
+        1,
+        100000
+      );
 
-    const limit = Math.min(
-      Math.max(
-        Number(req.query.limit) || 50,
-        1
-      ),
-      100
-    );
+    const limit =
+      parsePositiveInteger(
+        req.query.limit,
+        20,
+        100
+      );
 
     const skip =
       (page - 1) * limit;
 
     const filter = String(
-      req.query.status ||
-      req.query.filter ||
-      "ALL"
-    )
-      .trim()
-      .toUpperCase();
-
-    if (
-      !ALLOWED_FILTERS.includes(filter)
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Filter must be ALL, UNREAD or READ.",
-      });
-    }
+      req.query.filter || "ALL"
+    ).toUpperCase();
 
     const where = {
       userId,
     };
 
-    if (filter !== "ALL") {
-      where.status = filter;
+    if (filter === "UNREAD") {
+      where.isRead = false;
+    }
+
+    if (filter === "READ") {
+      where.isRead = true;
+    }
+
+    if (
+      !["ALL", "UNREAD", "READ"].includes(
+        filter
+      )
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid notification filter.",
+      });
     }
 
     const [
       notifications,
       total,
-      unreadCount,
-      readCount,
+      unread,
+      read,
     ] = await Promise.all([
       prisma.notification.findMany({
         where,
-        orderBy: {
-          createdAt: "desc",
-        },
+
+        orderBy: [
+          {
+            createdAt: "desc",
+          },
+        ],
+
         skip,
         take: limit,
       }),
 
       prisma.notification.count({
-        where,
-      }),
-
-      prisma.notification.count({
         where: {
           userId,
-          status: "UNREAD",
         },
       }),
 
       prisma.notification.count({
         where: {
           userId,
-          status: "READ",
+          isRead: false,
+        },
+      }),
+
+      prisma.notification.count({
+        where: {
+          userId,
+          isRead: true,
         },
       }),
     ]);
 
-    const totalPages = Math.max(
-      Math.ceil(total / limit),
-      1
-    );
+    const filteredTotal =
+      await prisma.notification.count({
+        where,
+      });
+
+    const totalPages =
+      Math.max(
+        Math.ceil(
+          filteredTotal / limit
+        ),
+        1
+      );
 
     return res.status(200).json({
       success: true,
+
       message:
         "Notifications retrieved successfully.",
+
       notifications:
         notifications.map(
           serializeNotification
         ),
+
+      data: notifications.map(
+        serializeNotification
+      ),
+
       summary: {
-        total:
-          unreadCount + readCount,
-        unread: unreadCount,
-        read: readCount,
+        total,
+        unread,
+        read,
       },
+
+      counts: {
+        total,
+        unread,
+        read,
+      },
+
       pagination: {
         page,
         limit,
-        total,
+        total: filteredTotal,
         totalPages,
+
         hasNextPage:
           page < totalPages,
+
         hasPreviousPage:
           page > 1,
       },
     });
   } catch (error) {
-    console.error(
-      "Get notifications error:",
-      error
+    return sendError(
+      res,
+      error,
+      "Unable to retrieve notifications."
     );
-
-    return res.status(500).json({
-      success: false,
-      message:
-        "Unable to retrieve notifications.",
-    });
   }
 };
+
+/* ======================================================
+   GET UNREAD COUNT
+
+   GET /api/v1/notifications/unread-count
+====================================================== */
+
+exports.getUnreadCount = async (
+  req,
+  res
+) => {
+  try {
+    const unread =
+      await prisma.notification.count({
+        where: {
+          userId: req.user.id,
+          isRead: false,
+        },
+      });
+
+    return res.status(200).json({
+      success: true,
+      unread,
+      count: unread,
+    });
+  } catch (error) {
+    return sendError(
+      res,
+      error,
+      "Unable to retrieve unread count."
+    );
+  }
+};
+
+/* ======================================================
+   GET SINGLE NOTIFICATION
+
+   GET /api/v1/notifications/:id
+====================================================== */
+
+exports.getNotificationById = async (
+  req,
+  res
+) => {
+  try {
+    const notification =
+      await prisma.notification.findFirst({
+        where: {
+          id: req.params.id,
+          userId: req.user.id,
+        },
+      });
+
+    if (!notification) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Notification was not found.",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+
+      notification:
+        serializeNotification(
+          notification
+        ),
+    });
+  } catch (error) {
+    return sendError(
+      res,
+      error,
+      "Unable to retrieve notification."
+    );
+  }
+};
+
+/* ======================================================
+   MARK ONE AS READ
+
+   PATCH /api/v1/notifications/:id/read
+====================================================== */
 
 exports.markAsRead = async (
   req,
   res
 ) => {
   try {
-    const userId = req.user.id;
-    const notificationId =
-      req.params.id;
-
-    const notification =
+    const existing =
       await prisma.notification.findFirst({
         where: {
-          id: notificationId,
-          userId,
+          id: req.params.id,
+          userId: req.user.id,
         },
       });
 
-    if (!notification) {
+    if (!existing) {
       return res.status(404).json({
         success: false,
         message:
-          "Notification not found.",
+          "Notification was not found.",
       });
     }
 
-    const updatedNotification =
+    const notification =
       await prisma.notification.update({
         where: {
-          id: notification.id,
+          id: existing.id,
         },
+
         data: {
-          status: "READ",
+          isRead: true,
           readAt:
-            notification.readAt ||
+            existing.readAt ||
             new Date(),
         },
       });
+
+    publishEvent(
+      "notification-read",
+      {
+        userId: req.user.id,
+        notificationId:
+          notification.id,
+      }
+    );
 
     return res.status(200).json({
       success: true,
       message:
         "Notification marked as read.",
+
       notification:
         serializeNotification(
-          updatedNotification
+          notification
         ),
     });
   } catch (error) {
-    console.error(
-      "Mark notification as read error:",
-      error
+    return sendError(
+      res,
+      error,
+      "Unable to mark notification as read."
     );
-
-    return res.status(500).json({
-      success: false,
-      message:
-        "Unable to mark notification as read.",
-    });
   }
 };
+
+/* ======================================================
+   MARK ALL AS READ
+
+   PATCH /api/v1/notifications/read-all
+====================================================== */
 
 exports.markAllAsRead = async (
   req,
   res
 ) => {
   try {
-    const userId = req.user.id;
-    const readAt = new Date();
+    const now = new Date();
 
     const result =
       await prisma.notification.updateMany({
         where: {
-          userId,
-          status: "UNREAD",
+          userId: req.user.id,
+          isRead: false,
         },
+
         data: {
-          status: "READ",
-          readAt,
+          isRead: true,
+          readAt: now,
         },
       });
 
-    return res.status(200).json({
-      success: true,
-      message:
-        "All notifications marked as read.",
-      updatedCount: result.count,
-    });
-  } catch (error) {
-    console.error(
-      "Mark all notifications as read error:",
-      error
+    publishEvent(
+      "notifications-read-all",
+      {
+        userId: req.user.id,
+        count: result.count,
+      }
     );
 
-    return res.status(500).json({
-      success: false,
+    return res.status(200).json({
+      success: true,
+
       message:
-        "Unable to mark all notifications as read.",
+        "All notifications marked as read.",
+
+      updatedCount:
+        result.count,
     });
+  } catch (error) {
+    return sendError(
+      res,
+      error,
+      "Unable to mark all notifications as read."
+    );
   }
 };
 
-exports.deleteNotification = async (
+/* ======================================================
+   DELETE MY NOTIFICATION
+
+   DELETE /api/v1/notifications/:id
+====================================================== */
+
+exports.deleteMyNotification = async (
   req,
   res
 ) => {
   try {
-    const userId = req.user.id;
-    const notificationId =
-      req.params.id;
-
-    const notification =
+    const existing =
       await prisma.notification.findFirst({
         where: {
-          id: notificationId,
-          userId,
-        },
-        select: {
-          id: true,
+          id: req.params.id,
+          userId: req.user.id,
         },
       });
 
-    if (!notification) {
+    if (!existing) {
       return res.status(404).json({
         success: false,
         message:
-          "Notification not found.",
+          "Notification was not found.",
       });
     }
 
     await prisma.notification.delete({
       where: {
-        id: notification.id,
+        id: existing.id,
       },
     });
+
+    publishEvent(
+      "user-notification-deleted",
+      {
+        userId: req.user.id,
+        notificationId:
+          existing.id,
+      }
+    );
 
     return res.status(200).json({
       success: true,
@@ -289,48 +495,10 @@ exports.deleteNotification = async (
         "Notification deleted successfully.",
     });
   } catch (error) {
-    console.error(
-      "Delete notification error:",
-      error
+    return sendError(
+      res,
+      error,
+      "Unable to delete notification."
     );
-
-    return res.status(500).json({
-      success: false,
-      message:
-        "Unable to delete notification.",
-    });
   }
 };
-
-exports.deleteAllNotifications =
-  async (req, res) => {
-    try {
-      const userId = req.user.id;
-
-      const result =
-        await prisma.notification.deleteMany({
-          where: {
-            userId,
-          },
-        });
-
-      return res.status(200).json({
-        success: true,
-        message:
-          "All notifications deleted successfully.",
-        deletedCount:
-          result.count,
-      });
-    } catch (error) {
-      console.error(
-        "Delete all notifications error:",
-        error
-      );
-
-      return res.status(500).json({
-        success: false,
-        message:
-          "Unable to delete notifications.",
-      });
-    }
-  };

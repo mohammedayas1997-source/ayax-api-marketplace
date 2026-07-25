@@ -7,11 +7,12 @@ const auth = require(
 );
 
 const {
-  getNotifications,
+  getMyNotifications,
+  getUnreadCount,
+  getNotificationById,
   markAsRead,
   markAllAsRead,
-  deleteNotification,
-  deleteAllNotifications,
+  deleteMyNotification,
 } = require(
   "../controllers/notification.controller"
 );
@@ -20,12 +21,22 @@ router.use(auth);
 
 router.get(
   "/",
-  getNotifications
+  getMyNotifications
+);
+
+router.get(
+  "/unread-count",
+  getUnreadCount
 );
 
 router.patch(
   "/read-all",
   markAllAsRead
+);
+
+router.get(
+  "/:id",
+  getNotificationById
 );
 
 router.patch(
@@ -34,13 +45,8 @@ router.patch(
 );
 
 router.delete(
-  "/all",
-  deleteAllNotifications
-);
-
-router.delete(
   "/:id",
-  deleteNotification
+  deleteMyNotification
 );
 
 module.exports = router;

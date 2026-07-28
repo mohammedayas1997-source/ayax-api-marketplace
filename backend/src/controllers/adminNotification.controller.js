@@ -757,272 +757,314 @@ exports.sendNotification = async (
    GET /api/v1/admin/notifications/history
 ====================================================== */
 
-exports.getNotificationHistory =
-  async (req, res) => {
-    try {
-      const page =
-        parsePositiveInteger(
-          req.query.page,
-          1,
-          100000
-        );
+/* ======================================================
+   GET ADMIN NOTIFICATION HISTORY
 
-      const limit =
-        parsePositiveInteger(
-          req.query.limit,
-          20,
-          100
-        );
+   GET /api/v1/admin/notifications/history
+====================================================== */
 
-      const skip =
-        (page - 1) * limit;
+exports.getNotificationHistory = async (req, res) => {
+  try {
+    const page = parsePositiveInteger(
+      req.query.page,
+      1,
+      100000
+    );
 
-      const search =
-        normalizeText(
-          req.query.search
-        );
+    const limit = parsePositiveInteger(
+      req.query.limit,
+      20,
+      100
+    );
 
-      const type =
-        normalizeUppercase(
-          req.query.type
-        );
+    const search = normalizeText(
+      req.query.search
+    );
 
-      const priority =
-        normalizeUppercase(
-          req.query.priority
-        );
+    const type = normalizeUppercase(
+      req.query.type
+    );
 
-      const audience =
-        normalizeUppercase(
-          req.query.audience
-        );
+    const priority = normalizeUppercase(
+      req.query.priority
+    );
 
-      const where = {};
+    const audience = normalizeUppercase(
+      req.query.audience
+    );
 
-      if (search) {
-        where.OR = [
-          {
-            title: {
-              contains: search,
-              mode: "insensitive",
-            },
+    const where = {};
+
+    if (search) {
+      where.OR = [
+        {
+          title: {
+            contains: search,
+            mode: "insensitive",
           },
-          {
-            message: {
-              contains: search,
-              mode: "insensitive",
-            },
+        },
+        {
+          message: {
+            contains: search,
+            mode: "insensitive",
           },
-          {
-            createdByName: {
-              contains: search,
-              mode: "insensitive",
-            },
+        },
+        {
+          createdByName: {
+            contains: search,
+            mode: "insensitive",
           },
-          {
-            createdByEmail: {
-              contains: search,
-              mode: "insensitive",
-            },
+        },
+        {
+          createdByEmail: {
+            contains: search,
+            mode: "insensitive",
           },
-        ];
-      }
+        },
+      ];
+    }
 
-      if (type) {
-        if (
-          !NOTIFICATION_TYPES.includes(
-            type
-          )
-        ) {
-          return res.status(400).json({
-            success: false,
-            message:
-              "Invalid notification type.",
-          });
-        }
-
-        where.type = type;
-      }
-
-      if (priority) {
-        if (
-          !NOTIFICATION_PRIORITIES.includes(
-            priority
-          )
-        ) {
-          return res.status(400).json({
-            success: false,
-            message:
-              "Invalid notification priority.",
-          });
-        }
-
-        where.priority = priority;
-      }
-
-      if (audience) {
-        if (
-          !NOTIFICATION_AUDIENCES.includes(
-            audience
-          )
-        ) {
-          return res.status(400).json({
-            success: false,
-            message:
-              "Invalid notification audience.",
-          });
-        }
-
-        where.audience = audience;
-      }
-
-      const grouped =
-        await prisma.notification.groupBy({
-          by: [
-            "batchId",
-            "title",
-            "message",
-            "type",
-            "priority",
-            "audience",
-            "targetRole",
-            "actionText",
-            "actionUrl",
-            "imageUrl",
-            "createdById",
-            "createdByName",
-            "createdByEmail",
-            "createdAt",
-          ],
-
-          where,
-
-          _count: {
-            _all: true,
-          },
-
-          orderBy: {
-            createdAt: "desc",
-          },
-
-          skip,
-          take: limit,
+    if (type) {
+      if (!NOTIFICATION_TYPES.includes(type)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid notification type.",
         });
+      }
 
-      const batchCount =
-        await prisma.notification.groupBy({
-          by: ["batchId"],
-          where,
+      where.type = type;
+    }
+
+    if (priority) {
+      if (
+        !NOTIFICATION_PRIORITIES.includes(
+          priority
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Invalid notification priority.",
         });
+      }
 
-      const total =
-        batchCount.length;
+      where.priority = priority;
+    }
 
-      const totalPages = Math.max(
-        Math.ceil(total / limit),
-        1
-      );
+    if (audience) {
+      if (
+        !NOTIFICATION_AUDIENCES.includes(
+          audience
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Invalid notification audience.",
+        });
+      }
 
-      const history =
-  await Promise.all(
-    grouped.map(async (item) => {
+      where.audience = audience;
+    }
 
-          const readCount =
-  await prisma.notification.count({
-    where: {
-      batchId: item.batchId,
-      isRead: true,
-    },
-  });
+    /*
+     * Ba ma amfani da Prisma groupBy a nan.
+     * Za mu ɗauko rows sannan mu haɗa su
+     * bisa batchId a JavaScript.
+     */
+    const rows =
+      await prisma.notification.findMany({
+        where,
 
-          return {
-            id: item.batchId,
-            batchId: item.batchId,
+        select: {
+          id: true,
+          batchId: true,
+          userId: true,
 
-            title: item.title,
-            message: item.message,
+          title: true,
+          message: true,
 
-            type: item.type,
-            priority: item.priority,
-            audience: item.audience,
-            targetRole:
-              item.targetRole,
+          type: true,
+          priority: true,
+          audience: true,
+          targetRole: true,
 
-            actionText:
-              item.actionText,
-            actionUrl:
-              item.actionUrl,
-            imageUrl:
-              item.imageUrl,
+          actionText: true,
+          actionUrl: true,
+          imageUrl: true,
 
-            createdById:
-              item.createdById,
-            createdByName:
-              item.createdByName,
-            createdByEmail:
-              item.createdByEmail,
+          isRead: true,
+          readAt: true,
 
-            recipientCount,
-            totalRecipients:
-              recipientCount,
+          createdById: true,
+          createdByName: true,
+          createdByEmail: true,
 
-            deliveredCount:
-              recipientCount,
+          createdAt: true,
+          updatedAt: true,
+        },
 
-            readCount,
-
-            unreadCount:
-              recipientCount -
-              readCount,
-
-            readRate:
-              calculatePercentage(
-                readCount,
-                recipientCount
-              ),
-
-            status: "SENT",
-
-            createdAt:
-              item.createdAt,
-            sentAt:
-              item.createdAt,
-          };
-            })
-  );
-
-      return res.status(200).json({
-        success: true,
-
-        message:
-          "Notification history retrieved successfully.",
-
-        notifications: history,
-        history,
-
-        pagination: {
-          page,
-          limit,
-          total,
-          totalPages,
-
-          hasNextPage:
-            page < totalPages,
-
-          hasPreviousPage:
-            page > 1,
+        orderBy: {
+          createdAt: "desc",
         },
       });
-    } catch (error) {
-      return sendError(
-        res,
-        error,
-        "Unable to retrieve notification history."
-      );
-    }
-  };
 
-/* ======================================================
+    const batchMap = new Map();
+
+    for (const notification of rows) {
+      const batchId =
+        notification.batchId ||
+        notification.id;
+
+      const existing =
+        batchMap.get(batchId);
+
+      if (!existing) {
+        batchMap.set(batchId, {
+          id: batchId,
+          batchId,
+
+          title: notification.title,
+          message: notification.message,
+
+          type: notification.type,
+          priority:
+            notification.priority,
+          audience:
+            notification.audience,
+          targetRole:
+            notification.targetRole,
+
+          actionText:
+            notification.actionText,
+          actionUrl:
+            notification.actionUrl,
+          imageUrl:
+            notification.imageUrl,
+
+          createdById:
+            notification.createdById,
+          createdByName:
+            notification.createdByName,
+          createdByEmail:
+            notification.createdByEmail,
+
+          recipientCount: 1,
+          totalRecipients: 1,
+          deliveredCount: 1,
+
+          readCount:
+            notification.isRead ? 1 : 0,
+
+          unreadCount:
+            notification.isRead ? 0 : 1,
+
+          readRate:
+            notification.isRead ? 100 : 0,
+
+          status: "SENT",
+
+          createdAt:
+            notification.createdAt,
+          sentAt:
+            notification.createdAt,
+        });
+
+        continue;
+      }
+
+      existing.recipientCount += 1;
+      existing.totalRecipients += 1;
+      existing.deliveredCount += 1;
+
+      if (notification.isRead) {
+        existing.readCount += 1;
+      }
+
+      existing.unreadCount =
+        existing.recipientCount -
+        existing.readCount;
+
+      existing.readRate =
+        calculatePercentage(
+          existing.readCount,
+          existing.recipientCount
+        );
+
+      /*
+       * Idan sabon row ya fi tsohon sabo,
+       * mu riƙe sabon createdAt.
+       */
+      if (
+        new Date(notification.createdAt) >
+        new Date(existing.createdAt)
+      ) {
+        existing.createdAt =
+          notification.createdAt;
+
+        existing.sentAt =
+          notification.createdAt;
+      }
+    }
+
+    const allBatches = Array.from(
+      batchMap.values()
+    ).sort(
+      (first, second) =>
+        new Date(second.createdAt).getTime() -
+        new Date(first.createdAt).getTime()
+    );
+
+    const total = allBatches.length;
+
+    const totalPages = Math.max(
+      Math.ceil(total / limit),
+      1
+    );
+
+    const safePage = Math.min(
+      page,
+      totalPages
+    );
+
+    const startIndex =
+      (safePage - 1) * limit;
+
+    const history = allBatches.slice(
+      startIndex,
+      startIndex + limit
+    );
+
+    return res.status(200).json({
+      success: true,
+
+      message:
+        "Notification history retrieved successfully.",
+
+      notifications: history,
+      history,
+
+      pagination: {
+        page: safePage,
+        limit,
+        total,
+        totalPages,
+
+        hasNextPage:
+          safePage < totalPages,
+
+        hasPreviousPage:
+          safePage > 1,
+      },
+    });
+  } catch (error) {
+    return sendError(
+      res,
+      error,
+      "Unable to retrieve notification history."
+    );
+  }
+};/* ======================================================
    GET SINGLE NOTIFICATION BATCH
 
    GET /api/v1/admin/notifications/:id
@@ -1186,155 +1228,151 @@ exports.getNotificationById =
    GET /api/v1/admin/notifications/statistics
 ====================================================== */
 
-exports.getNotificationStatistics =
-  async (req, res) => {
-    try {
-      const today = new Date();
+exports.getNotificationStatistics = async (
+  req,
+  res
+) => {
+  try {
+    const today = new Date();
 
-      today.setHours(
-        0,
-        0,
-        0,
-        0
-      );
+    today.setHours(0, 0, 0, 0);
 
-      const [
-        allBatches,
-        sentTodayBatches,
-        totalRecipients,
-        totalRead,
-        typeGroups,
-        audienceGroups,
-      ] = await Promise.all([
-        prisma.notification.groupBy({
-          by: ["batchId"],
-        }),
-
-        prisma.notification.groupBy({
-          by: ["batchId"],
-
-          where: {
-            createdAt: {
-              gte: today,
-            },
-          },
-        }),
-
-        prisma.notification.count(),
-
-        prisma.notification.count({
-          where: {
-            isRead: true,
-          },
-        }),
-
-        prisma.notification.groupBy({
-          by: ["type"],
-
-          _count: {
-            _all: true,
-          },
-        }),
-
-        prisma.notification.groupBy({
-          by: ["audience"],
-
-          _count: {
-            _all: true,
-          },
-        }),
-      ]);
-
-      const totalNotifications =
-        allBatches.length;
-
-      const sentToday =
-        sentTodayBatches.length;
-
-      const unread =
-        totalRecipients -
-        totalRead;
-
-      return res.status(200).json({
-        success: true,
-
-        message:
-          "Notification statistics retrieved successfully.",
-
-        statistics: {
-          totalNotifications,
-
-          sentNotifications:
-            totalNotifications,
-
-          scheduledNotifications: 0,
-          failedNotifications: 0,
-
-          sentToday,
-
-          totalRecipients,
-
-          delivered:
-            totalRecipients,
-
-          read: totalRead,
-
-          unread,
-
-          clicked: 0,
-          failed: 0,
-
-          deliveryRate:
-            totalRecipients > 0
-              ? 100
-              : 0,
-
-          readRate:
-            calculatePercentage(
-              totalRead,
-              totalRecipients
-            ),
-
-          clickRate: 0,
-        },
-
-        typeBreakdown:
-          typeGroups.reduce(
-            (result, item) => {
-              result[item.type] =
-                item._count._all;
-
-              return result;
-            },
-            {}
-          ),
-
-        audienceBreakdown:
-          audienceGroups.reduce(
-            (result, item) => {
-              result[item.audience] =
-                item._count._all;
-
-              return result;
-            },
-            {}
-          ),
-
-        statusBreakdown: {
-          SENT:
-            totalNotifications,
-          SCHEDULED: 0,
-          FAILED: 0,
+    /*
+     * Muna ɗauko fields kaɗan kawai domin
+     * kada query ta yi nauyi.
+     */
+    const notifications =
+      await prisma.notification.findMany({
+        select: {
+          id: true,
+          batchId: true,
+          type: true,
+          audience: true,
+          isRead: true,
+          createdAt: true,
         },
       });
-    } catch (error) {
-      return sendError(
-        res,
-        error,
-        "Unable to retrieve notification statistics."
-      );
+
+    const batchIds = new Set();
+    const todayBatchIds = new Set();
+
+    const typeBreakdown = {};
+    const audienceBreakdown = {};
+
+    let totalRead = 0;
+
+    for (const notification of notifications) {
+      const batchId =
+        notification.batchId ||
+        notification.id;
+
+      batchIds.add(batchId);
+
+      if (
+        new Date(notification.createdAt) >=
+        today
+      ) {
+        todayBatchIds.add(batchId);
+      }
+
+      if (notification.isRead) {
+        totalRead += 1;
+      }
+
+      const notificationType =
+        notification.type || "INFO";
+
+      typeBreakdown[notificationType] =
+        (typeBreakdown[
+          notificationType
+        ] || 0) + 1;
+
+      const notificationAudience =
+        notification.audience || "USER";
+
+      audienceBreakdown[
+        notificationAudience
+      ] =
+        (audienceBreakdown[
+          notificationAudience
+        ] || 0) + 1;
     }
-  };
+
+    const totalNotifications =
+      batchIds.size;
+
+    const sentToday =
+      todayBatchIds.size;
+
+    const totalRecipients =
+      notifications.length;
+
+    const unread =
+      totalRecipients -
+      totalRead;
+
+    return res.status(200).json({
+      success: true,
+
+      message:
+        "Notification statistics retrieved successfully.",
+
+      statistics: {
+        totalNotifications,
+
+        sentNotifications:
+          totalNotifications,
+
+        scheduledNotifications: 0,
+        failedNotifications: 0,
+
+        sentToday,
+
+        totalRecipients,
+
+        delivered:
+          totalRecipients,
+
+        read: totalRead,
+
+        unread,
+
+        clicked: 0,
+        failed: 0,
+
+        deliveryRate:
+          totalRecipients > 0
+            ? 100
+            : 0,
+
+        readRate:
+          calculatePercentage(
+            totalRead,
+            totalRecipients
+          ),
+
+        clickRate: 0,
+      },
+
+      typeBreakdown,
+
+      audienceBreakdown,
+
+      statusBreakdown: {
+        SENT:
+          totalNotifications,
+        SCHEDULED: 0,
+        FAILED: 0,
+      },
+    });
+  } catch (error) {
+    return sendError(
+      res,
+      error,
+      "Unable to retrieve notification statistics."
+    );
+  }
+};
 
 /* ======================================================
    DELETE WHOLE NOTIFICATION BATCH

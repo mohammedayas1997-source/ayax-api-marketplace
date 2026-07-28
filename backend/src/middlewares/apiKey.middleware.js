@@ -65,7 +65,7 @@ module.exports = (
        */
       req.apiKey = key;
       req.apiUser = key.user;
-      req.user = key.user;
+      req.user = key.userSS;
 
       return next();
     } catch (error) {

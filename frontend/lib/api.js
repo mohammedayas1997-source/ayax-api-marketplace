@@ -8,14 +8,121 @@ const rawApiUrl =
   process.env.NEXT_PUBLIC_API_URL ||
   FALLBACK_API_URL;
 
-const API_BASE_URL = rawApiUrl.replace(/\/+$/, "");
+const API_BASE_URL = String(rawApiUrl)
+  .trim()
+  .replace(/\/+$/, "");
+
+const PUBLIC_PATHS = [
+  "/login",
+  "/register",
+  "/forgot-password",
+  "/reset-password",
+];
+
+const AUTH_ENDPOINTS = [
+  "/auth/login",
+  "/auth/register",
+  "/auth/forgot-password",
+  "/auth/reset-password",
+];
+
+const SESSION_ERROR_CODES = new Set([
+  "TOKEN_REQUIRED",
+  "TOKEN_EXPIRED",
+  "TOKEN_REVOKED",
+  "INVALID_TOKEN",
+  "INVALID_TOKEN_ID",
+  "INVALID_TOKEN_TYPE",
+  "INVALID_TOKEN_SUBJECT",
+  "TOKEN_NOT_ACTIVE",
+  "PASSWORD_CHANGED",
+  "ACCOUNT_NOT_FOUND",
+]);
+
+const normalizeRequestUrl = (url) => {
+  if (typeof url !== "string") {
+    return url;
+  }
+
+  /*
+   * baseURL already contains /api/v1.
+   *
+   * /api/v1/wallet becomes /wallet.
+   */
+  return url.replace(/^\/api\/v1(?=\/|$)/, "");
+};
+
+const getStoredToken = () => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const token = localStorage.getItem("token");
+
+  return token?.trim() || null;
+};
+
+const clearStoredSession = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  localStorage.removeItem("token");
+  localStorage.removeItem("user");
+  localStorage.removeItem("auth");
+  localStorage.removeItem("currentUser");
+};
+
+const isPublicPage = (pathname) => {
+  return PUBLIC_PATHS.some(
+    (path) =>
+      pathname === path ||
+      pathname.startsWith(`${path}/`)
+  );
+};
+
+const isAuthEndpoint = (requestUrl) => {
+  const normalizedUrl =
+    normalizeRequestUrl(requestUrl) || "";
+
+  return AUTH_ENDPOINTS.some(
+    (endpoint) =>
+      normalizedUrl === endpoint ||
+      normalizedUrl.startsWith(
+        `${endpoint}?`
+      )
+  );
+};
+
+const redirectToLogin = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const currentPath =
+    window.location.pathname;
+
+  if (isPublicPage(currentPath)) {
+    return;
+  }
+
+  const redirectTarget =
+    `${currentPath}${window.location.search}`;
+
+  const loginUrl =
+    `/login?redirect=${encodeURIComponent(
+      redirectTarget
+    )}`;
+
+  window.location.replace(loginUrl);
+};
 
 const api = axios.create({
   baseURL: API_BASE_URL,
 
   /*
-   * Render free instance na iya ɗaukar lokaci
-   * kafin ya farka daga sleep.
+   * Render free instances may require
+   * extra time to wake from sleep.
    */
   timeout: 90000,
 
@@ -24,103 +131,202 @@ const api = axios.create({
     "Content-Type": "application/json",
   },
 
+  /*
+   * JWT currently comes through Authorization,
+   * not an authentication cookie.
+   */
   withCredentials: false,
 });
 
+/* ======================================================
+   REQUEST INTERCEPTOR
+====================================================== */
+
 api.interceptors.request.use(
   (config) => {
-    if (typeof window !== "undefined") {
-      const token = localStorage.getItem("token");
+    config.url = normalizeRequestUrl(
+      config.url
+    );
 
-      if (token) {
-        config.headers =
-          config.headers || {};
+    config.headers =
+      config.headers || {};
 
-        config.headers.Authorization =
-          `Bearer ${token}`;
-      }
+    const token = getStoredToken();
+
+    if (token) {
+      config.headers.Authorization =
+        `Bearer ${token}`;
     }
 
     /*
-     * Yana hana URL kamar:
-     * /api/v1/api/v1/wallet
-     *
-     * Tunda baseURL ya riga yana dauke da /api/v1,
-     * request paths su zama /wallet, /auth/me, da sauransu.
+     * Useful for request tracing.
      */
     if (
-      typeof config.url === "string" &&
-      config.url.startsWith("/api/v1/")
+      typeof crypto !== "undefined" &&
+      typeof crypto.randomUUID ===
+        "function"
     ) {
-      config.url = config.url.replace(
-        /^\/api\/v1/,
-        ""
-      );
+      config.headers["x-request-id"] =
+        crypto.randomUUID();
     }
 
     return config;
   },
-  (error) => Promise.reject(error)
+
+  (error) => {
+    return Promise.reject(error);
+  }
 );
+
+/* ======================================================
+   RESPONSE INTERCEPTOR
+====================================================== */
 
 api.interceptors.response.use(
   (response) => response,
 
   (error) => {
-    const status = error.response?.status;
+    const response = error.response;
+    const status = response?.status;
 
-    if (!error.response) {
+    const responseCode =
+      response?.data?.code;
+
+    const responseMessage =
+      response?.data?.message;
+
+    const requestUrl =
+      error.config?.url || "";
+
+    if (!response) {
       console.error("API Network Error", {
         message: error.message,
         code: error.code,
         baseURL: error.config?.baseURL,
-        requestURL: error.config?.url,
+        requestURL: requestUrl,
         method: error.config?.method,
       });
 
-      error.userMessage =
-        error.code === "ECONNABORTED"
-          ? "Server response is taking too long. Please try again."
-          : "Unable to connect to the server. Check the backend and CORS configuration.";
-    } else {
-      console.error("API Response Error", {
-        status,
-        message:
-          error.response?.data?.message,
-        response:
-          error.response?.data,
-        url: error.config?.url,
-      });
+      if (
+        error.code === "ECONNABORTED" ||
+        error.code === "ETIMEDOUT"
+      ) {
+        error.userMessage =
+          "Server response is taking too long. Please try again.";
+      } else if (
+        typeof navigator !== "undefined" &&
+        navigator.onLine === false
+      ) {
+        error.userMessage =
+          "You appear to be offline. Check your internet connection.";
+      } else {
+        error.userMessage =
+          "Unable to connect to the server. Please try again.";
+      }
 
-      error.userMessage =
-        error.response?.data?.message ||
-        "The request could not be completed.";
+      return Promise.reject(error);
     }
+
+    console.error("API Response Error", {
+      status,
+      code: responseCode,
+      message: responseMessage,
+      response: response.data,
+      url: requestUrl,
+      method: error.config?.method,
+    });
+
+    error.userMessage =
+      responseMessage ||
+      "The request could not be completed.";
+
+    /*
+     * Kada login mai wrong password ya jawo
+     * unnecessary redirect loop.
+     */
+    const authenticationRequest =
+      isAuthEndpoint(requestUrl);
+
+    const sessionIsInvalid =
+      status === 401 &&
+      (
+        SESSION_ERROR_CODES.has(
+          responseCode
+        ) ||
+        !authenticationRequest
+      );
 
     if (
       typeof window !== "undefined" &&
-      status === 401
+      sessionIsInvalid
     ) {
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
+      clearStoredSession();
 
-      const currentPath =
-        window.location.pathname;
+      /*
+       * Notify components such as SocketProvider.
+       */
+      window.dispatchEvent(
+        new CustomEvent(
+          "ayax:session-expired",
+          {
+            detail: {
+              code:
+                responseCode ||
+                "UNAUTHORIZED",
 
-      const publicPaths = [
-        "/login",
-        "/register",
-        "/forgot-password",
-        "/reset-password",
-      ];
+              message:
+                responseMessage ||
+                "Your session has expired.",
+            },
+          }
+        )
+      );
 
-      if (
-        !publicPaths.includes(currentPath)
-      ) {
-        window.location.replace(
-          "/login"
-        );
-      }
+      redirectToLogin();
+    }
+
+    /*
+     * Account blocked or suspended.
+     */
+    if (
+      typeof window !== "undefined" &&
+      status === 403 &&
+      responseCode ===
+        "ACCOUNT_NOT_ACTIVE"
+    ) {
+      clearStoredSession();
+
+      window.dispatchEvent(
+        new CustomEvent(
+          "ayax:account-disabled",
+          {
+            detail: {
+              code: responseCode,
+              message:
+                responseMessage,
+            },
+          }
+        )
+      );
+
+      redirectToLogin();
+    }
+
+    /*
+     * Rate limit information.
+     */
+    if (status === 429) {
+      const retryAfter =
+        response.headers?.[
+          "retry-after"
+        ];
+
+      error.retryAfter =
+        retryAfter || null;
+
+      error.userMessage =
+        responseMessage ||
+        "Too many requests. Please wait and try again.";
     }
 
     return Promise.reject(error);
@@ -129,6 +335,7 @@ api.interceptors.response.use(
 
 export {
   API_BASE_URL,
+  clearStoredSession,
 };
 
 export default api;

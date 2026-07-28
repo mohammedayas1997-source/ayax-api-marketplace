@@ -988,13 +988,12 @@ export default function ApiKeysPage() {
                     />
 
                     <Link
-                      href="/dashboard/docs"
+                      href="/docs"
                       className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 py-3 font-semibold hover:bg-slate-700"
                     >
                       <Code2 size={17} />
                       View Docs
                     </Link>
-
                     <ActionButton
                       icon={
                         working ? (

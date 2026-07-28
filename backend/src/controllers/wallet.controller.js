@@ -16,6 +16,10 @@ const PAYSTACK_BASE_URL =
    HELPERS
 ====================================================== */
 
+const {
+  sendWalletFundedNotification,
+} = require("../services/notification.service");
+
 const getStartOfToday = () => {
   const date = new Date();
 
@@ -316,16 +320,36 @@ const creditWalletFromPaystack =
             throw error;
           }
         });
+        const walletPayload = {
+  userId,
+  balance: Number(updatedWallet.balance || 0),
+  fundedAmount: Number(amount),
+  reference: fundingReference,
+  transactionType: "CREDIT",
+  updatedAt: new Date(),
+};
 
         return {
-          alreadyProcessed: false,
-          wallet: updatedWallet,
-          funding:
-            updatedFunding,
-        };
+  alreadyProcessed: false,
+  wallet: updatedWallet,
+  funding: updatedFunding,
+  user,
+  walletPayload,
+};
       }
     );
-  };
+  };const user = await tx.user.findUnique({
+  where: {
+    id: userId,
+  },
+  select: {
+    id: true,
+    name: true,
+    email: true,
+  },
+});
+
+
 
 /* ======================================================
    GET WALLET
@@ -1402,6 +1426,21 @@ exports.verifyPaystackFunding =
           paymentReference:
             transactionData.reference,
         });
+        if (!credited.alreadyProcessed) {
+  await sendWalletFundedNotification({
+    user: credited.user,
+    amount: paidAmount,
+    balance: credited.wallet.balance,
+    reference: funding.reference,
+  });
+  const { emitEvent } = require("../config/socket");
+
+emitEvent(
+  "wallet:updated",
+  credited.walletPayload,
+  `user-${credited.user.id}`
+);
+}
 
       await createAuditLog({
         req,
@@ -1605,6 +1644,15 @@ exports.paystackWebhook = async (
       paymentReference:
         reference,
     });
+
+    if (!credited.alreadyProcessed) {
+  await sendWalletFundedNotification({
+    user: credited.user,
+    amount: paidAmount,
+    balance: credited.wallet.balance,
+    reference: funding.reference,
+  });
+}
 
     return res.status(200).json({
       received: true,

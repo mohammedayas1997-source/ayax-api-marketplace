@@ -15,15 +15,23 @@ enum PackageTier {
 }
 
 model User {
-  id        String     @id @default(cuid())
-  name      String
-  email     String     @unique
-  phone     String?
-  password  String
-  role      UserRole   @default(CUSTOMER)
-  status    UserStatus @default(ACTIVE)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  id                  String     @id @default(cuid())
+  name                String
+  email               String     @unique
+  phone               String?
+  password            String
+  role                UserRole   @default(CUSTOMER)
+  status              UserStatus @default(ACTIVE)
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+  failedLoginAttempts Int        @default(0)
+  lockedUntil         DateTime?
+  lastLoginAt         DateTime?
+  lastLoginIp         String?
+  passwordChangedAt   DateTime?
+
+  passwordResetTokens PasswordResetToken[]
+  revokedTokens       RevokedToken[]
 
   activityLogs    ActivityLog[]
   apiKeys         ApiKey[]
@@ -45,6 +53,35 @@ model User {
 
   notifications        Notification[] @relation("UserNotifications")
   createdNotifications Notification[] @relation("NotificationCreator")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([usedAt])
+}
+
+model RevokedToken {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenId   String   @unique
+  expiresAt DateTime
+  reason    String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model Wallet {

@@ -3,6 +3,7 @@ const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
 const compression = require("compression");
+const hpp = require("hpp");
 const {
   rateLimit,
   ipKeyGenerator,
@@ -193,13 +194,39 @@ app.use(
   })
 );
 
+app.use((req, res, next) => {
+  res.setHeader(
+    "Permissions-Policy",
+    "camera=(), microphone=(), geolocation=()"
+  );
+
+  next();
+});
+
+app.use(hpp());
+
 app.use(compression());
+
+app.use((req, res, next) => {
+  res.setHeader("X-API-Version", "v1");
+  next();
+});
 
 app.use(
   isProduction
     ? morgan("combined")
     : morgan("dev")
 );
+
+if (process.env.MAINTENANCE_MODE === "true") {
+  app.use((req, res) => {
+    return res.status(503).json({
+      success: false,
+      message:
+        "System is currently under maintenance.",
+    });
+  });
+}
 
 /*
  * Request ID domin tracing da audit.

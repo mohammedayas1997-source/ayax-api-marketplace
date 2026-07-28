@@ -176,6 +176,16 @@ const creditWalletFromPaystack =
             "Funding request does not belong to this user."
           );
         }
+        const user = await tx.user.findUnique({
+  where: {
+    id: userId,
+  },
+  select: {
+    id: true,
+    name: true,
+    email: true,
+  },
+});
 
         /*
          * Idempotency protection:
@@ -338,17 +348,7 @@ const creditWalletFromPaystack =
 };
       }
     );
-  };const user = await tx.user.findUnique({
-  where: {
-    id: userId,
-  },
-  select: {
-    id: true,
-    name: true,
-    email: true,
-  },
-});
-
+  };
 
 
 /* ======================================================
@@ -1433,7 +1433,7 @@ exports.verifyPaystackFunding =
     balance: credited.wallet.balance,
     reference: funding.reference,
   });
-  const { emitEvent } = require("../config/socket");
+
 
 emitEvent(
   "wallet:updated",
@@ -1636,22 +1636,26 @@ exports.paystackWebhook = async (
       });
     }
 
-    await creditWalletFromPaystack({
-      userId: funding.userId,
-      amount: paidAmount,
-      fundingReference:
-        funding.reference,
-      paymentReference:
-        reference,
-    });
+    const credited = await creditWalletFromPaystack({
+  userId: funding.userId,
+  amount: paidAmount,
+  fundingReference: funding.reference,
+  paymentReference: reference,
+});
 
-    if (!credited.alreadyProcessed) {
+if (!credited.alreadyProcessed) {
   await sendWalletFundedNotification({
     user: credited.user,
     amount: paidAmount,
     balance: credited.wallet.balance,
     reference: funding.reference,
   });
+
+  emitEvent(
+    "wallet:updated",
+    credited.walletPayload,
+    `user-${credited.user.id}`
+  );
 }
 
     return res.status(200).json({

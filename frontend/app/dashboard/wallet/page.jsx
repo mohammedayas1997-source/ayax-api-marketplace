@@ -16,7 +16,7 @@ import {
 
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import api from "@/lib/api";
-import { socket } from "@/lib/socket";
+import { useSocket } from "@/context/SocketContext";
 
 const QUICK_AMOUNTS = [5000, 10000, 50000];
 
@@ -60,6 +60,7 @@ const getStatusClasses = (status) => {
 export default function WalletPage() {
   const [wallet, setWallet] = useState(null);
   const [transactions, setTransactions] = useState([]);
+  const { socket, connected } = useSocket();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -139,60 +140,81 @@ export default function WalletPage() {
 
   useEffect(() => {
     loadWalletPage();
+  }, [loadWalletPage]);
 
-    const token = localStorage.getItem("token");
-
-    if (token) {
-      socket.auth = { token };
+  useEffect(() => {
+    if (!socket || !connected) {
+      return undefined;
     }
 
-    if (!socket.connected) {
-      socket.connect();
-    }
+    const refreshWallet = () => {
+      loadWalletPage({ silent: true }).catch((error) => {
+        console.error("Real-time wallet refresh error:", error);
+      });
+    };
 
-    const handleWalletUpdated = () => {
-      fetchWallet().catch(console.error);
-      fetchTransactions().catch(console.error);
+    const handleWalletUpdated = (payload) => {
+      if (payload?.balance !== undefined) {
+        setWallet((currentWallet) => ({
+          ...(currentWallet || {}),
+          balance: Number(payload.balance || 0),
+          updatedAt: payload.updatedAt || new Date().toISOString(),
+        }));
+      }
+
+      refreshWallet();
+    };
+
+    const handleFundingApproved = () => {
+      setMessageType("success");
+      setMessage("Your wallet funding has been approved.");
+      refreshWallet();
+    };
+
+    const handleFundingRejected = (payload) => {
+      setMessageType("error");
+      setMessage(
+        payload?.message ||
+          payload?.reason ||
+          "Your wallet funding request was rejected."
+      );
+      refreshWallet();
     };
 
     const handleTransactionUpdated = () => {
-      fetchWallet().catch(console.error);
-      fetchTransactions().catch(console.error);
+      refreshWallet();
     };
 
-    socket.on("wallet-updated", handleWalletUpdated);
-    socket.on("funding-approved", handleWalletUpdated);
-    socket.on("funding-rejected", handleWalletUpdated);
+    const handlePurchaseSuccessful = () => {
+      refreshWallet();
+    };
+
+    socket.on("wallet:updated", handleWalletUpdated);
+    socket.on("funding-approved", handleFundingApproved);
+    socket.on("funding-rejected", handleFundingRejected);
     socket.on("transaction-updated", handleTransactionUpdated);
-    socket.on("purchase-successful", handleTransactionUpdated);
+    socket.on("purchase-successful", handlePurchaseSuccessful);
 
     return () => {
-      socket.off("wallet-updated", handleWalletUpdated);
-      socket.off("funding-approved", handleWalletUpdated);
-      socket.off("funding-rejected", handleWalletUpdated);
+      socket.off("wallet:updated", handleWalletUpdated);
+      socket.off("funding-approved", handleFundingApproved);
+      socket.off("funding-rejected", handleFundingRejected);
       socket.off("transaction-updated", handleTransactionUpdated);
-      socket.off("purchase-successful", handleTransactionUpdated);
+      socket.off("purchase-successful", handlePurchaseSuccessful);
     };
-  }, [loadWalletPage, fetchWallet, fetchTransactions]);
+  }, [socket, connected, loadWalletPage]);
 
   const totals = useMemo(() => {
     return transactions.reduce(
       (result, transaction) => {
         const type = String(transaction?.type || "").toUpperCase();
-        const status = String(transaction?.status || "").toUpperCase();
         const transactionAmount = Number(transaction?.amount || 0);
 
-        if (
-          type === "CREDIT" &&
-          ["SUCCESSFUL", "APPROVED", "COMPLETED"].includes(status)
-        ) {
+        if (["CREDIT", "REFUND", "REVERSAL"].includes(type)) {
           result.totalCredit += transactionAmount;
         }
 
-        if (
-          type === "DEBIT" &&
-          ["SUCCESSFUL", "APPROVED", "COMPLETED"].includes(status)
-        ) {
+        if (["DEBIT", "ADJUSTMENT"].includes(type)) {
           result.totalDebit += transactionAmount;
         }
 
@@ -410,7 +432,10 @@ export default function WalletPage() {
                   ).toUpperCase();
 
                   const status = String(
-                    item?.status || "PENDING"
+                    item?.status ||
+                      (type === "CREDIT" || type === "REFUND" || type === "REVERSAL"
+                        ? "SUCCESSFUL"
+                        : "COMPLETED")
                   ).toUpperCase();
 
                   const isCredit = type === "CREDIT";

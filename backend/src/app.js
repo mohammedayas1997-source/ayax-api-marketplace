@@ -157,11 +157,19 @@ app.use(
       "DELETE",
       "OPTIONS",
     ],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-      "x-api-key",
-      "x-paystack-signature",
+   allowedHeaders: [
+  "Content-Type",
+  "Authorization",
+  "x-api-key",
+  "x-request-id",
+  "x-paystack-signature",
+],
+
+exposedHeaders: [
+  "x-request-id",
+  "RateLimit-Limit",
+  "RateLimit-Remaining",
+  "RateLimit-Reset",
     ],
   })
 );

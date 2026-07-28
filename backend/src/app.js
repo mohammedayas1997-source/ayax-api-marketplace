@@ -2,6 +2,11 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const morgan = require("morgan");
+const compression = require("compression");
+const {
+  rateLimit,
+  ipKeyGenerator,
+} = require("express-rate-limit");
 
 require("./config/env");
 
@@ -102,7 +107,10 @@ const adminNotificationRoutes = require("./routes/adminNotification.routes");
 ====================================================== */
 
 const app = express();
+const isProduction = process.env.NODE_ENV === "production";
 
+app.disable("x-powered-by");
+app.set("trust proxy", 1);
 /* ======================================================
    CORS
 ====================================================== */
@@ -163,13 +171,55 @@ app.use(
 
 app.use(
   helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
     crossOriginResourcePolicy: {
       policy: "cross-origin",
     },
+    referrerPolicy: {
+      policy: "no-referrer",
+    },
+    hsts: isProduction
+      ? {
+          maxAge: 31536000,
+          includeSubDomains: true,
+          preload: true,
+        }
+      : false,
+    frameguard: {
+      action: "deny",
+    },
+    noSniff: true,
   })
 );
 
-app.use(morgan("dev"));
+app.use(compression());
+
+app.use(
+  isProduction
+    ? morgan("combined")
+    : morgan("dev")
+);
+
+/*
+ * Request ID domin tracing da audit.
+ */
+app.use((req, res, next) => {
+  const incomingId = req.headers["x-request-id"];
+
+  const requestId =
+    typeof incomingId === "string" &&
+    incomingId.trim()
+      ? incomingId.trim().slice(0, 128)
+      : `${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2, 12)}`;
+
+  req.requestId = requestId;
+  res.setHeader("x-request-id", requestId);
+
+  next();
+});
 
 /* ======================================================
    PAYSTACK WEBHOOK RAW BODY
@@ -193,16 +243,97 @@ app.use(
 
 app.use(
   express.json({
-    limit: "10mb",
+    limit: "2mb",
   })
 );
 
 app.use(
   express.urlencoded({
-    extended: true,
-    limit: "10mb",
+    extended: false,
+    limit: "1mb",
+    parameterLimit: 1000,
   })
 );
+
+
+/* ======================================================
+   RATE LIMITING
+====================================================== */
+
+const rateLimitHandler = (req, res) =>
+  res.status(429).json({
+    success: false,
+    message:
+      "Too many requests. Please wait and try again.",
+    requestId: req.requestId,
+  });
+
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: isProduction ? 600 : 5000,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+
+  /*
+   * Kada health check da Paystack webhook
+   * su shiga global limiter.
+   */
+  skip(req) {
+    return (
+      req.path === "/" ||
+      req.originalUrl.startsWith("/api/v1/health") ||
+      req.originalUrl.startsWith(
+        "/api/v1/wallet/paystack/webhook"
+      )
+    );
+  },
+
+  handler: rateLimitHandler,
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: isProduction ? 12 : 200,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+
+  keyGenerator(req) {
+  const email =
+    typeof req.body?.email === "string"
+      ? req.body.email.trim().toLowerCase()
+      : "unknown";
+
+  return `${ipKeyGenerator(req)}:${email}`;
+},
+
+  handler(req, res) {
+    return res.status(429).json({
+      success: false,
+      message:
+        "Too many authentication attempts. Please wait 15 minutes and try again.",
+      requestId: req.requestId,
+    });
+  },
+});
+
+const adminLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: isProduction ? 150 : 2000,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: rateLimitHandler,
+});
+
+const paymentLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: isProduction ? 40 : 500,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: rateLimitHandler,
+});
+
+app.use(globalLimiter);
 
 /* ======================================================
    ROOT
@@ -235,6 +366,7 @@ app.use(
 
 app.use(
   "/api/v1/auth",
+  authLimiter,
   authRoutes
 );
 
@@ -244,11 +376,13 @@ app.use(
 
 app.use(
   "/api/v1/admin",
+  adminLimiter,
   adminRoutes
 );
 
 app.use(
   "/api/v1/super-admin",
+  adminLimiter,
   superAdminRoutes
 );
 
@@ -269,6 +403,7 @@ app.use(
  */
 app.use(
   "/api/v1/admin/wallet",
+  adminLimiter,
   walletModuleRoutes
 );
 
@@ -292,6 +427,16 @@ app.use(
    GET  /api/v1/wallet/paystack/verify/:reference
    POST /api/v1/wallet/paystack/webhook
 ====================================================== */
+
+app.use(
+  "/api/v1/wallet/paystack/initialize",
+  paymentLimiter
+);
+
+app.use(
+  "/api/v1/wallet/paystack/verify",
+  paymentLimiter
+);
 
 app.use(
   "/api/v1/wallet",
@@ -334,6 +479,7 @@ app.use(
 
 app.use(
   "/api/v1/admin/notifications",
+  adminLimiter,
   adminNotificationRoutes
 );
 
@@ -451,6 +597,35 @@ app.use(
   "/api/v1/notifications",
   notificationRoutes
 );
+
+/* ======================================================
+   PAYLOAD/PARSER ERROR HANDLER
+====================================================== */
+
+app.use((error, req, res, next) => {
+  if (
+    error instanceof SyntaxError &&
+    error.status === 400 &&
+    "body" in error
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid JSON payload.",
+      requestId: req.requestId,
+    });
+  }
+
+  if (error?.type === "entity.too.large") {
+    return res.status(413).json({
+      success: false,
+      message: "Request payload is too large.",
+      requestId: req.requestId,
+    });
+  }
+
+  return next(error);
+});
+
 /* ======================================================
    404 AND GLOBAL ERROR HANDLER
 

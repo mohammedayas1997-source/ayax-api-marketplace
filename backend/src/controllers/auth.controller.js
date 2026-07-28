@@ -10,6 +10,10 @@ const normalizeRole = (role) => {
   return String(role).toUpperCase();
 };
 
+const {
+  sendWelcomeNotification,
+} = require("../services/notification.service");
+
 const generateToken = (id, role) => {
   return jwt.sign(
     { id, role: normalizeRole(role) },
@@ -32,19 +36,98 @@ const cleanUser = (user) => {
   };
 };
 
+const createWelcomeNotification = async (user) => {
+  try {
+    const notification = await prisma.notification.create({
+      data: {
+        batchId: crypto.randomUUID(),
+
+        userId: user.id,
+
+        title: "🎉 Welcome to Ayax APIs",
+
+        message: `Hello ${user.name},
+
+Welcome to Ayax APIs Developer Marketplace.
+
+Your account has been created successfully.
+
+You can now:
+• Fund your wallet
+• Generate API Keys
+• Access all developer services
+• Track your transactions
+
+Thank you for choosing Ayax Digital Solutions.`,
+
+        type: "SUCCESS",
+        priority: "NORMAL",
+        audience: "USER",
+
+        actionText: "Open Dashboard",
+        actionUrl: "/dashboard",
+
+        isRead: false,
+
+        createdByName: "Ayax System",
+        createdByEmail: "system@ayaxdigital.solutions",
+      },
+    });
+
+    emitEvent("notification:new", {
+      userId: user.id,
+      notification,
+    });
+
+    return notification;
+  } catch (error) {
+    console.error("Welcome notification error:", error);
+    return null;
+  }
+};
+
 exports.register = async (req, res) => {
   try {
-    const { name, email, phone, password, role } = req.body;
+    const {
+      name,
+      email,
+      phone,
+      password,
+      role,
+    } = req.body;
 
-    if (!name || !email || !password) {
+    const normalizedName = String(name || "").trim();
+    const normalizedEmail = String(email || "")
+      .trim()
+      .toLowerCase();
+    const normalizedPhone = phone
+      ? String(phone).trim()
+      : null;
+
+    if (
+      !normalizedName ||
+      !normalizedEmail ||
+      !password
+    ) {
       return res.status(400).json({
         success: false,
-        message: "Name, email and password are required",
+        message:
+          "Name, email and password are required",
+      });
+    }
+
+    if (String(password).length < 8) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Password must contain at least 8 characters",
       });
     }
 
     const exists = await prisma.user.findUnique({
-      where: { email },
+      where: {
+        email: normalizedEmail,
+      },
     });
 
     if (exists) {
@@ -54,21 +137,27 @@ exports.register = async (req, res) => {
       });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const userRole = normalizeRole(role);
+    const hashedPassword = await bcrypt.hash(
+      password,
+      10
+    );
+
+    const userRole = "CUSTOMER";
 
     const user = await prisma.user.create({
       data: {
-        name,
-        email,
-        phone,
+        name: normalizedName,
+        email: normalizedEmail,
+        phone: normalizedPhone,
         password: hashedPassword,
         role: userRole,
+
         wallet: {
           create: {
             balance: 0,
           },
         },
+
         apiKeys: {
           create: {
             key: generateApiKey(),
@@ -76,6 +165,7 @@ exports.register = async (req, res) => {
           },
         },
       },
+
       include: {
         wallet: true,
         apiKeys: true,
@@ -90,18 +180,32 @@ exports.register = async (req, res) => {
       ip: req.ip,
     });
 
+    await createWelcomeNotification(user);
+
+    const welcomeNotification =
+      await createWelcomeNotification(user);
+
     const safeUser = cleanUser(user);
 
     return res.status(201).json({
       success: true,
-      message: "Registration successful",
-      token: generateToken(user.id, user.role),
+      message:
+        "Registration successful. Welcome to Ayax APIs.",
+      token: generateToken(
+        user.id,
+        user.role
+      ),
       user: safeUser,
+      notification: welcomeNotification,
     });
   } catch (error) {
+    console.error("Registration error:", error);
+
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message:
+        error.message ||
+        "Unable to complete registration",
     });
   }
 };

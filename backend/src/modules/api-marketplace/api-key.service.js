@@ -1011,6 +1011,15 @@ exports.statistics =
     };
   };
 
+  exports.updateLastUsed = async (id) => {
+  return prisma.apiKey.update({
+    where: { id },
+    data: {
+      lastUsedAt: new Date(),
+    },
+  });
+};
+
 /* ======================================================
    EXPORT SECURITY HELPERS
 ====================================================== */

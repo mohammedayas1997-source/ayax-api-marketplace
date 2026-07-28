@@ -60,7 +60,8 @@ const getStatusClasses = (status) => {
 export default function WalletPage() {
   const [wallet, setWallet] = useState(null);
   const [transactions, setTransactions] = useState([]);
-  const { socket, connected } = useSocket();
+  const socket = useSocket();
+  const connected = Boolean(socket?.connected);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

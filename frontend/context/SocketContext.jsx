@@ -4,7 +4,6 @@ import {
   createContext,
   useContext,
   useEffect,
-  useMemo,
   useState,
 } from "react";
 import { io } from "socket.io-client";
@@ -12,8 +11,7 @@ import { io } from "socket.io-client";
 const SocketContext = createContext(null);
 
 export function SocketProvider({ children }) {
-  const [socketInstance, setSocketInstance] = useState(null);
-  const [connected, setConnected] = useState(false);
+  const [socket, setSocket] = useState(null);
 
   useEffect(() => {
     const apiUrl =
@@ -25,18 +23,15 @@ export function SocketProvider({ children }) {
 
     if (!socketUrl) {
       console.error(
-        "Socket URL is missing. Set NEXT_PUBLIC_SOCKET_URL or NEXT_PUBLIC_API_URL."
+        "NEXT_PUBLIC_SOCKET_URL is not configured."
       );
-
       return undefined;
     }
 
     const token =
-      typeof window !== "undefined"
-        ? localStorage.getItem("token")
-        : null;
+      window.localStorage.getItem("token");
 
-    const socket = io(socketUrl, {
+    const socketInstance = io(socketUrl, {
       transports: ["websocket", "polling"],
 
       auth: token
@@ -48,70 +43,40 @@ export function SocketProvider({ children }) {
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
       timeout: 20000,
     });
 
     const handleConnect = () => {
       console.log(
         "Socket connected:",
-        socket.id
+        socketInstance.id
       );
 
-      setConnected(true);
-
-      /*
-       * Backend na iya amfani da user room
-       * bayan ya tantance JWT token.
-       */
       if (token) {
-        socket.emit("authenticate", {
+        socketInstance.emit("authenticate", {
           token,
         });
       }
     };
 
-    const handleDisconnect = (
-      reason
-    ) => {
-      console.log(
-        "Socket disconnected:",
-        reason
-      );
-
-      setConnected(false);
-    };
-
-    const handleConnectError = (
-      error
-    ) => {
+    const handleConnectError = (error) => {
       console.error(
         "Socket connection error:",
         error.message
       );
-
-      setConnected(false);
     };
 
-    const handleNotification = (
-      notification
-    ) => {
+    const handleWalletUpdated = (payload) => {
       window.dispatchEvent(
-        new CustomEvent(
-          "notification-received",
-          {
-            detail: notification,
-          }
-        )
+        new CustomEvent("wallet-updated", {
+          detail: payload,
+        })
       );
     };
 
-    const handleNewNotification = (
-      payload
-    ) => {
+    const handleNotification = (payload) => {
       const notification =
-        payload?.notification ||
-        payload;
+        payload?.notification || payload;
 
       window.dispatchEvent(
         new CustomEvent(
@@ -123,164 +88,80 @@ export function SocketProvider({ children }) {
       );
     };
 
-    const handleBroadcast = (
-      payload
-    ) => {
-      window.dispatchEvent(
-        new CustomEvent(
-          "notification-received",
-          {
-            detail: payload,
-          }
-        )
-      );
-    };
-
-    const handleWalletUpdated = (
-      payload
-    ) => {
-      window.dispatchEvent(
-        new CustomEvent(
-          "wallet-updated",
-          {
-            detail: payload,
-          }
-        )
-      );
-    };
-
-    const handleNotificationDeleted = (
-      payload
-    ) => {
-      window.dispatchEvent(
-        new CustomEvent(
-          "notification-deleted",
-          {
-            detail: payload,
-          }
-        )
-      );
-    };
-
-    socket.on(
+    socketInstance.on(
       "connect",
       handleConnect
     );
 
-    socket.on(
-      "disconnect",
-      handleDisconnect
-    );
-
-    socket.on(
+    socketInstance.on(
       "connect_error",
       handleConnectError
     );
 
-    socket.on(
-      "notification",
-      handleNotification
-    );
-
-    socket.on(
-      "notification:new",
-      handleNewNotification
-    );
-
-    socket.on(
-      "broadcast",
-      handleBroadcast
-    );
-
-    socket.on(
+    socketInstance.on(
       "wallet:updated",
       handleWalletUpdated
     );
 
-    socket.on(
-      "notification-deleted",
-      handleNotificationDeleted
+    socketInstance.on(
+      "notification",
+      handleNotification
     );
 
-    setSocketInstance(socket);
+    socketInstance.on(
+      "notification:new",
+      handleNotification
+    );
+
+    socketInstance.on(
+      "broadcast",
+      handleNotification
+    );
+
+    setSocket(socketInstance);
 
     return () => {
-      socket.off(
+      socketInstance.off(
         "connect",
         handleConnect
       );
 
-      socket.off(
-        "disconnect",
-        handleDisconnect
-      );
-
-      socket.off(
+      socketInstance.off(
         "connect_error",
         handleConnectError
       );
 
-      socket.off(
-        "notification",
-        handleNotification
-      );
-
-      socket.off(
-        "notification:new",
-        handleNewNotification
-      );
-
-      socket.off(
-        "broadcast",
-        handleBroadcast
-      );
-
-      socket.off(
+      socketInstance.off(
         "wallet:updated",
         handleWalletUpdated
       );
 
-      socket.off(
-        "notification-deleted",
-        handleNotificationDeleted
+      socketInstance.off(
+        "notification",
+        handleNotification
       );
 
-      socket.disconnect();
+      socketInstance.off(
+        "notification:new",
+        handleNotification
+      );
 
-      setSocketInstance(null);
-      setConnected(false);
+      socketInstance.off(
+        "broadcast",
+        handleNotification
+      );
+
+      socketInstance.disconnect();
     };
   }, []);
 
-  const contextValue = useMemo(
-    () => ({
-      socket: socketInstance,
-      connected,
-    }),
-    [
-      socketInstance,
-      connected,
-    ]
-  );
-
   return (
-    <SocketContext.Provider
-      value={contextValue}
-    >
+    <SocketContext.Provider value={socket}>
       {children}
     </SocketContext.Provider>
   );
 }
 
 export function useSocket() {
-  const context =
-    useContext(SocketContext);
-
-  if (!context) {
-    throw new Error(
-      "useSocket must be used inside SocketProvider."
-    );
-  }
-
-  return context;
+  return useContext(SocketContext);
 }

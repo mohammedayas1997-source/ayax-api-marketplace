@@ -38,7 +38,7 @@ export default function DataPlansAdminPage() {
   const loadPlans = async () => {
     try {
       setLoading(true);
-      const res = await api.get("/api-plans");
+      const res = await api.get("/plans");
       setPlans(res.data.plans || []);
     } catch (error) {
       setMessage(error.response?.data?.message || "Failed to load plans.");
@@ -95,10 +95,10 @@ export default function DataPlansAdminPage() {
       };
 
       if (editing) {
-        await api.patch(`/api-plans/${editing.id}`, payload);
+        await api.patch(`/plans/${editing.id}`, payload);
         setMessage("Plan updated successfully.");
       } else {
-        await api.post("/api-plans", payload);
+        await api.post("/plans", payload);
         setMessage("Plan created successfully.");
       }
 
@@ -113,7 +113,7 @@ export default function DataPlansAdminPage() {
     if (!confirm(`Delete ${plan.name}?`)) return;
 
     try {
-      await api.delete(`/api-plans/${plan.id}`);
+      await api.delete(`/plans/${plan.id}`);
       setMessage("Plan deleted successfully.");
       loadPlans();
     } catch (error) {
@@ -123,7 +123,7 @@ export default function DataPlansAdminPage() {
 
   const toggleStatus = async (plan) => {
     try {
-      await api.patch(`/api-plans/${plan.id}/status`, {
+      await api.patch(`/plans/${plan.id}/status`, {
         status: plan.status === "ACTIVE" ? "DISABLED" : "ACTIVE",
       });
       loadPlans();

@@ -1,14 +1,7 @@
 const prisma = require("../config/prisma");
-
-/* ======================================================
-   CONSTANTS
-====================================================== */
+const sendEmail = require("./sendEmail");
 
 const LOGIN_OTP_EXPIRY_MINUTES = 10;
-
-/* ======================================================
-   SEND LOGIN OTP EMAIL
-====================================================== */
 
 const sendLoginOtpEmail = async ({
   user,
@@ -22,13 +15,11 @@ const sendLoginOtpEmail = async ({
     );
 
     error.statusCode = 400;
-
     throw error;
   }
 
-  const normalizedOtp = String(
-    otp || ""
-  ).trim();
+  const normalizedOtp =
+    String(otp || "").trim();
 
   if (!/^\d{6}$/.test(normalizedOtp)) {
     const error = new Error(
@@ -36,76 +27,132 @@ const sendLoginOtpEmail = async ({
     );
 
     error.statusCode = 400;
-
     throw error;
   }
-
-  const formattedExpiry =
-    expiresAt instanceof Date
-      ? expiresAt.toISOString()
-      : new Date(
-          Date.now() +
-            LOGIN_OTP_EXPIRY_MINUTES *
-              60 *
-              1000
-        ).toISOString();
 
   const subject =
     "Your Ayax APIs login verification code";
 
-  const body = `Hello ${user.name || "User"},
+  const text = `Hello ${user.name || "User"},
 
-We received a request to sign in to your Ayax APIs account.
-
-Your login verification code is:
+Your Ayax APIs login verification code is:
 
 ${normalizedOtp}
 
-This OTP expires in ${LOGIN_OTP_EXPIRY_MINUTES} minutes and can only be used once.
+This code expires in ${LOGIN_OTP_EXPIRY_MINUTES} minutes.
 
-Security information:
-Email: ${user.email}
 IP Address: ${ipAddress || "Unknown"}
-Expires At: ${formattedExpiry}
 
-Do not share this OTP with anyone, including Ayax staff.
+Do not share this code with anyone.`;
 
-If you did not attempt to sign in, please change your password immediately and contact Ayax support.
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:24px;color:#0f172a">
+      <h2 style="margin-bottom:8px">Login Verification</h2>
 
-Ayax APIs Security
-Ayax Digital Solutions`;
+      <p>Hello ${user.name || "User"},</p>
+
+      <p>Use this code to complete your Ayax APIs login:</p>
+
+      <div style="
+        margin:24px 0;
+        padding:18px;
+        background:#f1f5f9;
+        border-radius:12px;
+        text-align:center;
+        font-size:32px;
+        font-weight:700;
+        letter-spacing:8px;
+      ">
+        ${normalizedOtp}
+      </div>
+
+      <p>
+        This code expires in
+        ${LOGIN_OTP_EXPIRY_MINUTES} minutes
+        and can only be used once.
+      </p>
+
+      <p>
+        IP Address:
+        ${ipAddress || "Unknown"}
+      </p>
+
+      <p>
+        Do not share this code with anyone,
+        including Ayax staff.
+      </p>
+
+      <p>Ayax APIs Security</p>
+    </div>
+  `;
+
+  let emailLog = null;
 
   try {
-    const emailLog =
+    emailLog =
       await prisma.emailLog.create({
         data: {
           to: user.email,
           subject,
-          body,
+          body: text,
           status: "PENDING",
         },
       });
 
+    await sendEmail({
+      to: user.email,
+      subject,
+      text,
+      html,
+    });
+
+    await prisma.emailLog.update({
+      where: {
+        id: emailLog.id,
+      },
+
+      data: {
+        status: "SENT",
+      },
+    });
+
     return {
       success: true,
-
       message:
-        "Login OTP email has been queued successfully.",
-
+        "Login OTP email sent successfully.",
       emailLogId: emailLog.id,
+      expiresAt,
     };
   } catch (error) {
     console.error(
-      "Login OTP email queue error:",
-      error.message
+      "Login OTP email error:",
+      error
     );
 
+    if (emailLog?.id) {
+      try {
+        await prisma.emailLog.update({
+          where: {
+            id: emailLog.id,
+          },
+
+          data: {
+            status: "FAILED",
+          },
+        });
+      } catch (logError) {
+        console.error(
+          "Unable to update failed email log:",
+          logError.message
+        );
+      }
+    }
+
     const emailError = new Error(
-      "Unable to queue login OTP email."
+      "Unable to send login OTP email."
     );
 
     emailError.statusCode = 500;
-
     throw emailError;
   }
 };

@@ -168,10 +168,14 @@ export default function SuperAdminDashboard() {
       } catch (requestError) {
         if (!mountedRef.current) return;
 
-        setError(
+        const backendMessage =
           requestError.response?.data?.message ||
-            requestError.userMessage ||
-            "Failed to load the Super Admin dashboard."
+          requestError.userMessage;
+
+        setError(
+          backendMessage && backendMessage.length < 220
+            ? backendMessage
+            : "The dashboard backend returned an error. Check the server logs and dashboard controller."
         );
       } finally {
         if (mountedRef.current) {

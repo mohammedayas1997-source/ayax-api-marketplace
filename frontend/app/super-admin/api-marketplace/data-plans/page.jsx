@@ -9,16 +9,32 @@ import {
   Trash2,
   CheckCircle,
   XCircle,
-  ShieldAlert,
 } from "lucide-react";
 
 import SuperAdminLayout from "@/components/layouts/SuperAdminLayout";
 import api from "@/lib/api";
 
+const NETWORKS = ["MTN", "Airtel", "Glo", "9mobile"];
+
+const DATA_BUNDLES = [
+  "500MB", "1GB", "1.5GB", "2GB", "2.5GB", "3GB", "4GB", "5GB",
+  "6GB", "7GB", "8GB", "10GB", "15GB", "20GB", "25GB", "30GB",
+  "40GB", "50GB", "75GB", "100GB",
+];
+
+const PLAN_TYPES = ["SME", "Corporate Gifting", "Gifting", "Direct Data"];
+const VALIDITIES = ["1 Day", "2 Days", "7 Days", "14 Days", "30 Days", "60 Days", "90 Days"];
+
+const makePlanCode = ({ network, bundle, planType, validity }) =>
+  [network, bundle, planType, validity]
+    .map((value) => String(value).toUpperCase().replace(/[^A-Z0-9]+/g, "_"))
+    .join("_");
+
 const emptyForm = {
-  name: "",
-  code: "",
-  category: "DATA",
+  network: "MTN",
+  bundle: "1GB",
+  planType: "SME",
+  validity: "30 Days",
   costPrice: "",
   sellingPrice: "",
   status: "ACTIVE",
@@ -75,10 +91,21 @@ export default function DataPlansAdminPage() {
 
   const openEdit = (plan) => {
     setEditing(plan);
+    const source = `${plan.name || ""} ${plan.code || ""}`.toLowerCase();
+    const detectedNetwork =
+      NETWORKS.find((item) => source.includes(item.toLowerCase())) || "MTN";
+    const detectedBundle =
+      DATA_BUNDLES.find((item) => source.includes(item.toLowerCase())) || "1GB";
+    const detectedPlanType =
+      PLAN_TYPES.find((item) => source.includes(item.toLowerCase())) || "SME";
+    const detectedValidity =
+      VALIDITIES.find((item) => source.includes(item.toLowerCase())) || "30 Days";
+
     setForm({
-      name: plan.name || "",
-      code: plan.code || "",
-      category: plan.category || "DATA",
+      network: detectedNetwork,
+      bundle: detectedBundle,
+      planType: detectedPlanType,
+      validity: detectedValidity,
       costPrice: plan.costPrice || "",
       sellingPrice: plan.sellingPrice || "",
       status: plan.status || "ACTIVE",
@@ -89,9 +116,12 @@ export default function DataPlansAdminPage() {
   const savePlan = async () => {
     try {
       const payload = {
-        ...form,
+        name: `${form.network} ${form.bundle} ${form.planType} - ${form.validity}`,
+        code: makePlanCode(form),
+        category: "DATA",
         costPrice: Number(form.costPrice),
         sellingPrice: Number(form.sellingPrice),
+        status: form.status,
       };
 
       if (editing) {
@@ -259,20 +289,21 @@ export default function DataPlansAdminPage() {
             </h2>
 
             <div className="space-y-4">
-              <Input label="Plan Name" value={form.name} onChange={(v) => setForm({ ...form, name: v })} />
-              <Input label="Code" value={form.code} onChange={(v) => setForm({ ...form, code: v })} />
-              <Input label="Category" value={form.category} onChange={(v) => setForm({ ...form, category: v })} />
+              <Select label="Network" value={form.network} onChange={(v) => setForm({ ...form, network: v })} options={NETWORKS} />
+              <Select label="Data Bundle" value={form.bundle} onChange={(v) => setForm({ ...form, bundle: v })} options={DATA_BUNDLES} />
+              <Select label="Plan Type" value={form.planType} onChange={(v) => setForm({ ...form, planType: v })} options={PLAN_TYPES} />
+              <Select label="Validity" value={form.validity} onChange={(v) => setForm({ ...form, validity: v })} options={VALIDITIES} />
+
+              <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4">
+                <p className="text-xs text-blue-400">Auto-generated plan</p>
+                <p className="mt-1 font-semibold">{`${form.network} ${form.bundle} ${form.planType} - ${form.validity}`}</p>
+                <p className="mt-1 break-all text-sm text-slate-400">{makePlanCode(form)}</p>
+              </div>
+
               <Input label="Cost Price" type="number" value={form.costPrice} onChange={(v) => setForm({ ...form, costPrice: v })} />
               <Input label="Selling Price" type="number" value={form.sellingPrice} onChange={(v) => setForm({ ...form, sellingPrice: v })} />
 
-              <select
-                value={form.status}
-                onChange={(e) => setForm({ ...form, status: e.target.value })}
-                className="w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3 outline-none"
-              >
-                <option value="ACTIVE">ACTIVE</option>
-                <option value="DISABLED">DISABLED</option>
-              </select>
+              <Select label="Status" value={form.status} onChange={(v) => setForm({ ...form, status: v })} options={["ACTIVE", "DISABLED"]} />
             </div>
 
             <div className="mt-6 flex justify-end gap-3">
@@ -293,6 +324,23 @@ export default function DataPlansAdminPage() {
         </div>
       )}
     </SuperAdminLayout>
+  );
+}
+
+function Select({ label, value, onChange, options }) {
+  return (
+    <div>
+      <label className="mb-2 block text-sm text-slate-400">{label}</label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3 outline-none"
+      >
+        {options.map((option) => (
+          <option key={option} value={option}>{option}</option>
+        ))}
+      </select>
+    </div>
   );
 }
 

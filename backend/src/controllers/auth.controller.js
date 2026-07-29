@@ -42,6 +42,33 @@ const normalizeText = (value) =>
 const normalizeEmail = (value) =>
   normalizeText(value).toLowerCase();
 
+const maskEmail = (email) => {
+  const normalized =
+    normalizeEmail(email);
+
+  const [localPart, domain] =
+    normalized.split("@");
+
+  if (!localPart || !domain) {
+    return "";
+  }
+
+  if (localPart.length <= 2) {
+    return `${localPart[0] || "*"}***@${domain}`;
+  }
+
+  return (
+    `${localPart.slice(0, 2)}` +
+    `${"*".repeat(
+      Math.max(
+        localPart.length - 2,
+        3
+      )
+    )}` +
+    `@${domain}`
+  );
+};
+
 const normalizeRole = (role) =>
   String(role || "CUSTOMER")
     .trim()
@@ -1677,33 +1704,7 @@ exports.forgotPassword = async (
       });
     }
 
-    const maskEmail = (email) => {
-  const normalized =
-    normalizeEmail(email);
-
-  const [localPart, domain] =
-    normalized.split("@");
-
-  if (!localPart || !domain) {
-    return "";
-  }
-
-  if (localPart.length <= 2) {
-    return `${localPart[0] || "*"}***@${domain}`;
-  }
-
-  return (
-    `${localPart.slice(0, 2)}` +
-    `${"*".repeat(
-      Math.max(
-        localPart.length - 2,
-        3
-      )
-    )}` +
-    `@${domain}`
-  );
-};
-
+    
     const user =
       await prisma.user.findUnique({
         where: {

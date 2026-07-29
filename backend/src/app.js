@@ -4,6 +4,7 @@ const helmet = require("helmet");
 const morgan = require("morgan");
 const compression = require("compression");
 const hpp = require("hpp");
+const crypto = require("crypto");
 
 const {
   rateLimit,
@@ -149,9 +150,11 @@ const apiMarketplaceDashboardRoutes =
     "./modules/api-marketplace/api-marketplace-dashboard.routes"
   );
 
+
 const superAdminRoutes = require(
-  "./modules/super-admin/super-admin.routes"
+  "./routes/superAdminRoutes"
 );
+
 
 const {
   notFound,
@@ -367,7 +370,6 @@ app.use((req, res, next) => {
       .trim()
       .slice(0, 128);
   } else if (
-    typeof crypto !== "undefined" &&
     typeof crypto.randomUUID === "function"
   ) {
     requestId = crypto.randomUUID();

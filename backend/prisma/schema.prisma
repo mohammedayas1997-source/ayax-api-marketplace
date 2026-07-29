@@ -32,6 +32,7 @@ model User {
 
   passwordResetTokens PasswordResetToken[]
   revokedTokens       RevokedToken[]
+  loginOtps           LoginOtp[]
 
   activityLogs    ActivityLog[]
   apiKeys         ApiKey[]
@@ -796,6 +797,21 @@ model GatewaySecurityAlert {
   resolved  Boolean   @default(false)
   createdAt DateTime  @default(now())
   device    GsmDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+}
+
+model LoginOtp {
+  id        String   @id @default(cuid())
+  userId    String
+  codeHash  String
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 enum UserRole {

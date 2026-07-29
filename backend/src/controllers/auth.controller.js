@@ -6,6 +6,15 @@ const prisma = require("../config/prisma");
 const createAuditLog = require("../utils/audit");
 const { emitEvent } = require("../config/socket");
 
+const {
+  createLoginOtp,
+  verifyLoginOtp: verifyStoredLoginOtp,
+} = require("../utils/loginOtp");
+
+const {
+  sendLoginOtpEmail,
+} = require("../utils/sendLoginOtpEmail");
+
 /* ======================================================
    CONSTANTS
 ====================================================== */
@@ -13,6 +22,7 @@ const { emitEvent } = require("../config/socket");
 const JWT_ALGORITHM = "HS256";
 const DEFAULT_TOKEN_EXPIRY = "15m";
 const PASSWORD_HASH_ROUNDS = 12;
+const OTP_RESEND_COOLDOWN_SECONDS = 60;
 
 const MAX_FAILED_LOGIN_ATTEMPTS = 5;
 const ACCOUNT_LOCK_MINUTES = 30;
@@ -907,9 +917,247 @@ exports.login = async (req, res) => {
       });
     }
 
+        /*
+     * Password ya yi daidai, amma har yanzu
+     * ba a kammala login ba sai an tabbatar
+     * da OTP.
+     */
+    const {
+      code,
+      otpId,
+      expiresAt,
+    } = await createLoginOtp(
+      user.id
+    );
+
+    await sendLoginOtpEmail({
+      user,
+      otp: code,
+      expiresAt,
+      ipAddress:
+        getClientIp(req),
+    });
+
+    await recordSecurityLog({
+      userId: user.id,
+      req,
+
+      event:
+        "LOGIN_OTP_SENT",
+
+      successful: true,
+
+      description:
+        "Login password was verified and an OTP was prepared.",
+    });
+
+    await writeAuditLog({
+      req,
+      user,
+
+      action:
+        "LOGIN_OTP_SENT",
+
+      description:
+        `Login OTP was sent to ${user.email}.`,
+    });
+
+    const response = {
+      success: true,
+
+      requiresOtp: true,
+
+      code:
+        "LOGIN_OTP_REQUIRED",
+
+      message:
+        "Password verified. Enter the verification code sent to your email.",
+
+      otpId,
+
+      userId: user.id,
+
+      expiresAt,
+
+      expiresInSeconds:
+        10 * 60,
+
+      maskedEmail:
+        maskEmail(user.email),
+    };
+
+    /*
+     * Development kawai:
+     * wannan yana taimakawa testing idan
+     * email worker bai fara aiki ba.
+     *
+     * Kada OTP ya fito a production.
+     */
+    if (
+      process.env.NODE_ENV !==
+      "production"
+    ) {
+      response.developmentOtp =
+        code;
+    }
+
+    return res.status(200).json(
+      response
+    );
+  } catch (error) {
+    return sendAuthError(
+      res,
+      error,
+      "Unable to complete login."
+    );
+  }
+};
+
+/* ======================================================
+   VERIFY LOGIN OTP
+
+   POST /api/v1/auth/login/verify-otp
+
+   Body:
+   {
+     "userId": "user-id",
+     "otpId": "otp-record-id",
+     "code": "123456"
+   }
+====================================================== */
+
+exports.verifyLoginOtp = async (
+  req,
+  res
+) => {
+  try {
+    const userId =
+      normalizeText(
+        req.body.userId
+      );
+
+    const otpId =
+      normalizeText(
+        req.body.otpId
+      );
+
+    const code =
+      normalizeText(
+        req.body.code ||
+        req.body.otp
+      );
+
+    if (
+      !userId ||
+      !otpId ||
+      !/^\d{6}$/.test(code)
+    ) {
+      return res.status(400).json({
+        success: false,
+
+        code:
+          "INVALID_OTP_REQUEST",
+
+        message:
+          "User ID, OTP ID and a valid 6-digit OTP are required.",
+      });
+    }
+
+    const user =
+      await prisma.user.findUnique({
+        where: {
+          id: userId,
+        },
+
+        select: {
+          ...safeUserSelect,
+
+          failedLoginAttempts:
+            true,
+
+          lockedUntil: true,
+        },
+      });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+
+        code:
+          "INVALID_LOGIN_OTP",
+
+        message:
+          "The login verification request is invalid or has expired.",
+      });
+    }
+
+    if (
+      normalizeRole(user.status) !==
+      "ACTIVE"
+    ) {
+      return res.status(403).json({
+        success: false,
+
+        code:
+          "ACCOUNT_NOT_ACTIVE",
+
+        message:
+          "This account is inactive, suspended, or blocked.",
+      });
+    }
+
+    if (isAccountLocked(user)) {
+      return res.status(423).json({
+        success: false,
+
+        code:
+          "ACCOUNT_TEMPORARILY_LOCKED",
+
+        message:
+          "This account is temporarily locked.",
+
+        lockedUntil:
+          user.lockedUntil,
+      });
+    }
+
+    const verification =
+      await verifyStoredLoginOtp({
+        userId,
+        otpId,
+        code,
+      });
+
+    if (!verification.success) {
+      await recordSecurityLog({
+        userId,
+        req,
+
+        event:
+          "LOGIN_OTP_FAILED",
+
+        successful: false,
+
+        description:
+          verification.message,
+      });
+
+      return res.status(400).json({
+        success: false,
+
+        code:
+          verification.code ||
+          "INVALID_LOGIN_OTP",
+
+        message:
+          verification.message,
+
+        remainingAttempts:
+          verification.remainingAttempts,
+      });
+    }
+
     const now = new Date();
-    const clientIp =
-      getClientIp(req);
 
     const updatedUser =
       await prisma.user.update({
@@ -920,27 +1168,38 @@ exports.login = async (req, res) => {
         data: {
           failedLoginAttempts: 0,
           lockedUntil: null,
+
           lastLoginAt: now,
-          lastLoginIp: clientIp,
+
+          lastLoginIp:
+            getClientIp(req),
         },
 
         select:
           safeUserSelect,
       });
 
+    /*
+     * Login history zai zama successful
+     * ne bayan OTP ya yi daidai.
+     */
     await recordLoginHistory({
-      userId: user.id,
+      userId: updatedUser.id,
       req,
       successful: true,
     });
 
     await recordSecurityLog({
-      userId: user.id,
+      userId: updatedUser.id,
       req,
-      event: "LOGIN_SUCCESS",
+
+      event:
+        "LOGIN_SUCCESS",
+
       successful: true,
+
       description:
-        "User logged in successfully.",
+        "User completed login OTP verification successfully.",
     });
 
     await writeAuditLog({
@@ -950,19 +1209,26 @@ exports.login = async (req, res) => {
       action: "LOGIN",
 
       description:
-        `${updatedUser.email} logged in successfully.`,
+        `${updatedUser.email} logged in successfully after OTP verification.`,
     });
+
+    const token =
+      generateToken(
+        updatedUser
+      );
 
     return res.status(200).json({
       success: true,
 
+      requiresOtp: false,
+
+      code:
+        "LOGIN_SUCCESS",
+
       message:
         "Login successful.",
 
-      token:
-        generateToken(
-          updatedUser
-        ),
+      token,
 
       user:
         serializeUser(
@@ -973,7 +1239,214 @@ exports.login = async (req, res) => {
     return sendAuthError(
       res,
       error,
-      "Unable to complete login."
+      "Unable to verify login OTP."
+    );
+  }
+};
+
+/* ======================================================
+   RESEND LOGIN OTP
+
+   POST /api/v1/auth/login/resend-otp
+
+   Body:
+   {
+     "userId": "user-id",
+     "otpId": "previous-otp-id"
+   }
+====================================================== */
+
+exports.resendLoginOtp = async (
+  req,
+  res
+) => {
+  try {
+    const userId =
+      normalizeText(
+        req.body.userId
+      );
+
+    const previousOtpId =
+      normalizeText(
+        req.body.otpId
+      );
+
+    if (
+      !userId ||
+      !previousOtpId
+    ) {
+      return res.status(400).json({
+        success: false,
+
+        code:
+          "INVALID_OTP_RESEND_REQUEST",
+
+        message:
+          "User ID and previous OTP ID are required.",
+      });
+    }
+
+    /*
+     * Tabbatar da cewa OTP request ɗin
+     * da aka turo na user ɗin ne.
+     */
+    const previousOtp =
+      await prisma.loginOtp.findFirst({
+        where: {
+          id: previousOtpId,
+          userId,
+        },
+
+        select: {
+          id: true,
+          createdAt: true,
+        },
+      });
+
+    if (!previousOtp) {
+      return res.status(400).json({
+        success: false,
+
+        code:
+          "INVALID_OTP_RESEND_REQUEST",
+
+        message:
+          "The OTP resend request is invalid.",
+      });
+    }
+
+    const elapsedSeconds =
+      Math.floor(
+        (
+          Date.now() -
+          new Date(
+            previousOtp.createdAt
+          ).getTime()
+        ) / 1000
+      );
+
+    if (
+      elapsedSeconds <
+      OTP_RESEND_COOLDOWN_SECONDS
+    ) {
+      const retryAfter =
+        OTP_RESEND_COOLDOWN_SECONDS -
+        elapsedSeconds;
+
+      res.setHeader(
+        "Retry-After",
+        String(retryAfter)
+      );
+
+      return res.status(429).json({
+        success: false,
+
+        code:
+          "OTP_RESEND_COOLDOWN",
+
+        message:
+          `Please wait ${retryAfter} seconds before requesting another OTP.`,
+
+        retryAfter,
+      });
+    }
+
+    const user =
+      await prisma.user.findUnique({
+        where: {
+          id: userId,
+        },
+
+        select:
+          safeUserSelect,
+      });
+
+    if (
+      !user ||
+      normalizeRole(user.status) !==
+        "ACTIVE"
+    ) {
+      return res.status(400).json({
+        success: false,
+
+        code:
+          "INVALID_OTP_RESEND_REQUEST",
+
+        message:
+          "The OTP resend request is invalid.",
+      });
+    }
+
+    const {
+      code,
+      otpId,
+      expiresAt,
+    } = await createLoginOtp(
+      user.id
+    );
+
+    await sendLoginOtpEmail({
+      user,
+      otp: code,
+      expiresAt,
+
+      ipAddress:
+        getClientIp(req),
+    });
+
+    await recordSecurityLog({
+      userId: user.id,
+      req,
+
+      event:
+        "LOGIN_OTP_RESENT",
+
+      successful: true,
+
+      description:
+        "A new login OTP was requested.",
+    });
+
+    const response = {
+      success: true,
+
+      requiresOtp: true,
+
+      code:
+        "LOGIN_OTP_RESENT",
+
+      message:
+        "A new verification code has been sent to your email.",
+
+      otpId,
+
+      userId: user.id,
+
+      expiresAt,
+
+      expiresInSeconds:
+        10 * 60,
+
+      maskedEmail:
+        maskEmail(user.email),
+    };
+
+    if (
+      process.env.NODE_ENV !==
+      "production"
+    ) {
+      response.developmentOtp =
+        code;
+    }
+
+    return res.status(200).json(
+      response
+    );
+  } catch (error) {
+    return sendAuthError(
+      res,
+      error,
+      "Unable to resend login OTP."
     );
   }
 };
@@ -1203,6 +1676,33 @@ exports.forgotPassword = async (
           "Email address is required.",
       });
     }
+
+    const maskEmail = (email) => {
+  const normalized =
+    normalizeEmail(email);
+
+  const [localPart, domain] =
+    normalized.split("@");
+
+  if (!localPart || !domain) {
+    return "";
+  }
+
+  if (localPart.length <= 2) {
+    return `${localPart[0] || "*"}***@${domain}`;
+  }
+
+  return (
+    `${localPart.slice(0, 2)}` +
+    `${"*".repeat(
+      Math.max(
+        localPart.length - 2,
+        3
+      )
+    )}` +
+    `@${domain}`
+  );
+};
 
     const user =
       await prisma.user.findUnique({

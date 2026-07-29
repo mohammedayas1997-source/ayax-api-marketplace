@@ -30,6 +30,22 @@ router.post(
   authController.login
 );
 
+
+/*
+ * POST /api/v1/auth/login/verify-otp
+ */
+router.post(
+  "/login/verify-otp",
+  authController.verifyLoginOtp
+);
+
+/*
+ * POST /api/v1/auth/login/resend-otp
+ */
+router.post(
+  "/login/resend-otp",
+  authController.resendLoginOtp
+);
 /*
  * POST /api/v1/auth/forgot-password
  *

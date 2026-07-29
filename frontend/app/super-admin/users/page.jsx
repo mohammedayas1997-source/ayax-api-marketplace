@@ -78,6 +78,11 @@ export default function UsersPage() {
         params,
       });
 
+      console.log(
+  "USERS API RESPONSE:",
+  response.data
+);
+
       const normalizedUsers = extractUsers(response.data);
 
       setUsers(normalizedUsers);

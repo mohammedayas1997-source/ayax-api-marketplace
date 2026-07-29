@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   KeyRound,
   CheckCircle,
@@ -22,12 +22,46 @@ import ActionButton from "../../components/ActionButton";
 import LoadingSkeleton from "../../components/LoadingSkeleton";
 import api from "@/lib/api";
 
-const emptyForm = {
+const KEY_ENVIRONMENTS = [
+  {
+    value: "PRODUCTION",
+    label: "Production",
+    prefix: "Production",
+  },
+  {
+    value: "DEVELOPMENT",
+    label: "Development",
+    prefix: "Development",
+  },
+  {
+    value: "TEST",
+    label: "Test",
+    prefix: "Test",
+  },
+  {
+    value: "MOBILE_APP",
+    label: "Mobile App",
+    prefix: "Mobile App",
+  },
+  {
+    value: "WEBSITE",
+    label: "Website",
+    prefix: "Website",
+  },
+  {
+    value: "CUSTOM",
+    label: "Custom Name",
+    prefix: "",
+  },
+];
+
+const createEmptyForm = () => ({
   userId: "",
-  name: "",
+  environment: "PRODUCTION",
+  customName: "",
   planId: "",
   status: "ACTIVE",
-};
+});
 
 export default function ApiKeysPage() {
   const [keys, setKeys] = useState([]);
@@ -37,34 +71,91 @@ export default function ApiKeysPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("ALL");
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [visibleKeys, setVisibleKeys] = useState({});
 
   const [formOpen, setFormOpen] = useState(false);
-  const [form, setForm] = useState(emptyForm);
-  const [pin, setPin] = useState("");
+  const [form, setForm] = useState(createEmptyForm());
+
+  const selectedUser = useMemo(
+    () => users.find((user) => user.id === form.userId),
+    [users, form.userId]
+  );
+
+  const selectedPlan = useMemo(
+    () => plans.find((plan) => plan.id === form.planId),
+    [plans, form.planId]
+  );
+
+  const selectedEnvironment =
+    KEY_ENVIRONMENTS.find(
+      (item) => item.value === form.environment
+    ) || KEY_ENVIRONMENTS[0];
+
+  const generatedKeyName =
+    form.environment === "CUSTOM"
+      ? form.customName.trim()
+      : `${selectedEnvironment.prefix} API Key${
+          selectedPlan?.name
+            ? ` - ${selectedPlan.name}`
+            : ""
+        }`;
 
   const loadKeys = async () => {
     try {
       setLoading(true);
+      setMessage("");
 
       const params = {};
-      if (search) params.search = search;
-      if (status !== "ALL") params.status = status;
 
-      const [keysRes, statsRes, usersRes, plansRes] = await Promise.all([
-        api.get("/api-keys", { params }),
-        api.get("/api-keys/statistics"),
-        api.get("/users"),
-        api.get("/api-plans"),
-      ]);
+      if (search.trim()) {
+        params.search = search.trim();
+      }
 
-      setKeys(keysRes.data.keys || []);
-      setStats(statsRes.data.stats || {});
-      setUsers(usersRes.data.users || []);
-      setPlans(plansRes.data.plans || []);
+      if (status !== "ALL") {
+        params.status = status;
+      }
+
+      const [keysRes, statsRes, usersRes, plansRes] =
+        await Promise.all([
+          api.get("/api-keys", { params }),
+          api.get("/api-keys/statistics"),
+          api.get("/users"),
+          api.get("/plans"),
+        ]);
+
+      setKeys(
+        Array.isArray(keysRes.data?.keys)
+          ? keysRes.data.keys
+          : Array.isArray(keysRes.data?.data)
+            ? keysRes.data.data
+            : []
+      );
+
+      setStats(statsRes.data?.stats || {});
+
+      setUsers(
+        Array.isArray(usersRes.data?.users)
+          ? usersRes.data.users
+          : Array.isArray(usersRes.data?.data)
+            ? usersRes.data.data
+            : []
+      );
+
+      setPlans(
+        Array.isArray(plansRes.data?.plans)
+          ? plansRes.data.plans
+          : Array.isArray(plansRes.data?.data)
+            ? plansRes.data.data
+            : []
+      );
     } catch (error) {
-      setMessage(error.response?.data?.message || "Failed to load API keys.");
+      setMessage(
+        error.response?.data?.message ||
+          error.userMessage ||
+          "Failed to load API keys."
+      );
     } finally {
       setLoading(false);
     }
@@ -74,20 +165,77 @@ export default function ApiKeysPage() {
     loadKeys();
   }, [status]);
 
+  const filteredKeys = useMemo(() => {
+    const value = search.trim().toLowerCase();
+
+    if (!value) {
+      return keys;
+    }
+
+    return keys.filter((key) =>
+      [
+        key.name,
+        key.key,
+        key.user?.name,
+        key.user?.email,
+        key.plan?.name,
+        key.status,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(value)
+    );
+  }, [keys, search]);
+
   const openCreate = () => {
-    setForm(emptyForm);
+    setForm(createEmptyForm());
+    setMessage("");
     setFormOpen(true);
   };
 
+  const closeForm = () => {
+    if (saving) return;
+
+    setFormOpen(false);
+    setForm(createEmptyForm());
+  };
+
   const submitKey = async () => {
+    if (!form.userId) {
+      setMessage("Please select a user.");
+      return;
+    }
+
+    if (!generatedKeyName) {
+      setMessage("Please enter a key name.");
+      return;
+    }
+
+    const payload = {
+      userId: form.userId,
+      name: generatedKeyName,
+      planId: form.planId || null,
+      status: form.status,
+    };
+
     try {
-      await api.post("/api-keys", form);
+      setSaving(true);
+      setMessage("");
+
+      await api.post("/api-keys", payload);
+
       setMessage("API key created successfully.");
-      setFormOpen(false);
-      setForm(emptyForm);
-      loadKeys();
+      closeForm();
+      await loadKeys();
     } catch (error) {
-      setMessage(error.response?.data?.message || "Failed to create API key.");
+      setMessage(
+        error.response?.data?.message ||
+          error.userMessage ||
+          "Failed to create API key."
+      );
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -97,47 +245,85 @@ export default function ApiKeysPage() {
     if (!enteredPin) return;
 
     try {
-      await api.patch(`/api-keys/${key.id}/regenerate`, {
-        pin: enteredPin,
-      });
+      setMessage("");
+
+      await api.patch(
+        `/api-keys/${key.id}/regenerate`,
+        {
+          pin: enteredPin,
+        }
+      );
 
       setMessage("API key regenerated successfully.");
-      loadKeys();
+      await loadKeys();
     } catch (error) {
-      setMessage(error.response?.data?.message || "Failed to regenerate key.");
+      setMessage(
+        error.response?.data?.message ||
+          error.userMessage ||
+          "Failed to regenerate key."
+      );
     }
   };
 
   const changeStatus = async (key) => {
     try {
-      const nextStatus = key.status === "ACTIVE" ? "DISABLED" : "ACTIVE";
+      setMessage("");
 
-      await api.patch(`/api-keys/${key.id}/status`, {
-        status: nextStatus,
-      });
+      const nextStatus =
+        key.status === "ACTIVE"
+          ? "DISABLED"
+          : "ACTIVE";
 
-      setMessage(`API key status changed to ${nextStatus}.`);
-      loadKeys();
+      await api.patch(
+        `/api-keys/${key.id}/status`,
+        {
+          status: nextStatus,
+        }
+      );
+
+      setMessage(
+        `API key status changed to ${nextStatus}.`
+      );
+
+      await loadKeys();
     } catch (error) {
-      setMessage(error.response?.data?.message || "Failed to update status.");
+      setMessage(
+        error.response?.data?.message ||
+          error.userMessage ||
+          "Failed to update status."
+      );
     }
   };
 
   const deleteKey = async (key) => {
-    if (!confirm(`Delete API key ${key.name}?`)) return;
+    if (!confirm(`Delete API key ${key.name}?`)) {
+      return;
+    }
 
     try {
+      setMessage("");
+
       await api.delete(`/api-keys/${key.id}`);
+
       setMessage("API key deleted successfully.");
-      loadKeys();
+      await loadKeys();
     } catch (error) {
-      setMessage(error.response?.data?.message || "Failed to delete API key.");
+      setMessage(
+        error.response?.data?.message ||
+          error.userMessage ||
+          "Failed to delete API key."
+      );
     }
   };
 
   const copyKey = async (value) => {
+    if (!value) {
+      setMessage("No API key is available to copy.");
+      return;
+    }
+
     try {
-      await navigator.clipboard.writeText(value || "");
+      await navigator.clipboard.writeText(value);
       setMessage("API key copied.");
     } catch {
       setMessage("Failed to copy API key.");
@@ -146,6 +332,11 @@ export default function ApiKeysPage() {
 
   const maskKey = (value) => {
     if (!value) return "-";
+
+    if (value.length <= 18) {
+      return `${value.slice(0, 6)}••••${value.slice(-4)}`;
+    }
+
     return `${value.slice(0, 12)}••••••••••${value.slice(-6)}`;
   };
 
@@ -160,10 +351,10 @@ export default function ApiKeysPage() {
   return (
     <DashboardLayout
       title="API Keys"
-      description="Create, manage, regenerate and disable developer API keys."
+      description="Select a user, key type and plan; the key name will be generated automatically."
     >
       {message && (
-        <div className="mb-6 bg-blue-500/10 border border-blue-500/30 text-blue-300 rounded-2xl px-5 py-4">
+        <div className="mb-6 rounded-2xl border border-blue-500/30 bg-blue-500/10 px-5 py-4 text-blue-300">
           {message}
         </div>
       )}
@@ -173,23 +364,27 @@ export default function ApiKeysPage() {
           items={[
             {
               title: "Total API Keys",
-              value: stats.total || keys.length,
+              value: stats.total ?? keys.length,
               icon: <KeyRound />,
               color: "blue",
             },
             {
               title: "Active",
               value:
-                stats.active ||
-                keys.filter((k) => k.status === "ACTIVE").length,
+                stats.active ??
+                keys.filter(
+                  (key) => key.status === "ACTIVE"
+                ).length,
               icon: <CheckCircle />,
               color: "green",
             },
             {
               title: "Disabled",
               value:
-                stats.disabled ||
-                keys.filter((k) => k.status !== "ACTIVE").length,
+                stats.disabled ??
+                keys.filter(
+                  (key) => key.status !== "ACTIVE"
+                ).length,
               icon: <XCircle />,
               color: "red",
             },
@@ -197,25 +392,44 @@ export default function ApiKeysPage() {
         />
       </div>
 
-      <div className="mb-6 grid lg:grid-cols-[1fr_220px_auto_auto] gap-4">
-        <div className="flex items-center gap-3 bg-slate-950 border border-slate-800 rounded-2xl px-4">
-          <Search size={18} className="text-slate-500" />
+      <div className="mb-6 grid gap-4 lg:grid-cols-[1fr_220px_auto_auto]">
+        <div className="flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950 px-4">
+          <Search
+            size={18}
+            className="text-slate-500"
+          />
+
           <input
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search API keys by name, user, email or key..."
-            className="w-full bg-transparent py-4 outline-none text-white placeholder:text-slate-600"
+            onChange={(event) =>
+              setSearch(event.target.value)
+            }
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                loadKeys();
+              }
+            }}
+            placeholder="Search API keys..."
+            className="w-full bg-transparent py-4 text-white outline-none placeholder:text-slate-600"
           />
         </div>
 
         <select
           value={status}
-          onChange={(e) => setStatus(e.target.value)}
-          className="bg-slate-950 border border-slate-800 rounded-2xl px-4 outline-none"
+          onChange={(event) =>
+            setStatus(event.target.value)
+          }
+          className="rounded-2xl border border-slate-800 bg-slate-950 px-4 outline-none"
         >
-          <option value="ALL">All Status</option>
-          <option value="ACTIVE">Active</option>
-          <option value="DISABLED">Disabled</option>
+          <option value="ALL">
+            All Status
+          </option>
+          <option value="ACTIVE">
+            Active
+          </option>
+          <option value="DISABLED">
+            Disabled
+          </option>
         </select>
 
         <ActionButton
@@ -226,13 +440,16 @@ export default function ApiKeysPage() {
           Refresh
         </ActionButton>
 
-        <ActionButton icon={<PlusCircle size={18} />} onClick={openCreate}>
+        <ActionButton
+          icon={<PlusCircle size={18} />}
+          onClick={openCreate}
+        >
           Create Key
         </ActionButton>
       </div>
 
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden">
-        <div className="hidden xl:grid grid-cols-8 gap-4 px-6 py-4 border-b border-slate-800 text-sm text-slate-400 font-semibold">
+      <div className="overflow-hidden rounded-3xl border border-slate-800 bg-slate-900">
+        <div className="hidden grid-cols-8 gap-4 border-b border-slate-800 px-6 py-4 text-sm font-semibold text-slate-400 xl:grid">
           <span>Name</span>
           <span>User</span>
           <span>API Key</span>
@@ -244,44 +461,72 @@ export default function ApiKeysPage() {
         </div>
 
         <div className="divide-y divide-slate-800">
-          {keys.length === 0 ? (
-            <div className="p-8 text-slate-500">No API keys found.</div>
+          {filteredKeys.length === 0 ? (
+            <div className="p-8 text-slate-500">
+              No API keys found.
+            </div>
           ) : (
-            keys.map((key) => (
+            filteredKeys.map((key) => (
               <div
                 key={key.id}
-                className="grid xl:grid-cols-8 gap-4 px-6 py-5 items-center"
+                className="grid items-center gap-4 px-6 py-5 xl:grid-cols-8"
               >
                 <div>
-                  <h3 className="font-bold">{key.name}</h3>
-                  <p className="text-xs text-slate-500">{key.id}</p>
+                  <h3 className="font-bold">
+                    {key.name}
+                  </h3>
+
+                  <p className="text-xs text-slate-500">
+                    {key.id}
+                  </p>
                 </div>
 
                 <div>
-                  <p className="text-slate-300">{key.user?.name || "-"}</p>
+                  <p className="text-slate-300">
+                    {key.user?.name || "-"}
+                  </p>
+
                   <p className="text-xs text-slate-500">
                     {key.user?.email || "-"}
                   </p>
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <span className="text-slate-400 text-xs break-all">
-                    {visibleKeys[key.id] ? key.key : maskKey(key.key)}
+                  <span className="break-all text-xs text-slate-400">
+                    {visibleKeys[key.id]
+                      ? key.key
+                      : maskKey(key.key)}
                   </span>
 
                   <button
-                    onClick={() =>
-                      setVisibleKeys({
-                        ...visibleKeys,
-                        [key.id]: !visibleKeys[key.id],
-                      })
+                    type="button"
+                    title={
+                      visibleKeys[key.id]
+                        ? "Hide API key"
+                        : "Show API key"
                     }
-                    className="text-slate-400"
+                    onClick={() =>
+                      setVisibleKeys((current) => ({
+                        ...current,
+                        [key.id]:
+                          !current[key.id],
+                      }))
+                    }
+                    className="text-slate-400 hover:text-white"
                   >
-                    {visibleKeys[key.id] ? <EyeOff size={15} /> : <Eye size={15} />}
+                    {visibleKeys[key.id] ? (
+                      <EyeOff size={15} />
+                    ) : (
+                      <Eye size={15} />
+                    )}
                   </button>
 
-                  <button onClick={() => copyKey(key.key)} className="text-slate-400">
+                  <button
+                    type="button"
+                    title="Copy API key"
+                    onClick={() => copyKey(key.key)}
+                    className="text-slate-400 hover:text-white"
+                  >
                     <Copy size={15} />
                   </button>
                 </div>
@@ -291,7 +536,7 @@ export default function ApiKeysPage() {
                 </span>
 
                 <span
-                  className={`w-fit px-3 py-1 rounded-full text-xs ${
+                  className={`w-fit rounded-full px-3 py-1 text-xs ${
                     key.status === "ACTIVE"
                       ? "bg-green-500/10 text-green-400"
                       : "bg-red-500/10 text-red-400"
@@ -302,34 +547,54 @@ export default function ApiKeysPage() {
 
                 <span className="text-slate-400">
                   {key.lastUsedAt
-                    ? new Date(key.lastUsedAt).toLocaleString()
+                    ? new Date(
+                        key.lastUsedAt
+                      ).toLocaleString()
                     : "Never"}
                 </span>
 
                 <span className="text-slate-400">
                   {key.createdAt
-                    ? new Date(key.createdAt).toLocaleDateString()
+                    ? new Date(
+                        key.createdAt
+                      ).toLocaleDateString()
                     : "-"}
                 </span>
 
                 <div className="flex gap-2">
                   <button
-                    onClick={() => regenerateKey(key)}
-                    className="bg-slate-800 hover:bg-slate-700 p-2 rounded-lg"
+                    type="button"
+                    title="Regenerate API key"
+                    onClick={() =>
+                      regenerateKey(key)
+                    }
+                    className="rounded-lg bg-slate-800 p-2 hover:bg-slate-700"
                   >
                     <RotateCcw size={16} />
                   </button>
 
                   <button
-                    onClick={() => changeStatus(key)}
-                    className="bg-slate-800 hover:bg-slate-700 p-2 rounded-lg"
+                    type="button"
+                    title={
+                      key.status === "ACTIVE"
+                        ? "Disable API key"
+                        : "Activate API key"
+                    }
+                    onClick={() =>
+                      changeStatus(key)
+                    }
+                    className="rounded-lg bg-slate-800 p-2 hover:bg-slate-700"
                   >
                     <Power size={16} />
                   </button>
 
                   <button
-                    onClick={() => deleteKey(key)}
-                    className="bg-red-500/10 text-red-400 hover:bg-red-500/20 p-2 rounded-lg"
+                    type="button"
+                    title="Delete API key"
+                    onClick={() =>
+                      deleteKey(key)
+                    }
+                    className="rounded-lg bg-red-500/10 p-2 text-red-400 hover:bg-red-500/20"
                   >
                     <Trash2 size={16} />
                   </button>
@@ -341,68 +606,168 @@ export default function ApiKeysPage() {
       </div>
 
       {formOpen && (
-        <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center px-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 w-full max-w-2xl">
-            <h2 className="text-xl font-bold mb-5">Create API Key</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/70 px-4 py-8">
+          <div className="w-full max-w-2xl rounded-3xl border border-slate-800 bg-slate-900 p-6">
+            <h2 className="mb-2 text-xl font-bold">
+              Create API Key
+            </h2>
 
-            <div className="grid gap-4">
-              <div>
-                <label className="text-sm text-slate-400">User</label>
-                <select
-                  value={form.userId}
-                  onChange={(e) =>
-                    setForm({ ...form, userId: e.target.value })
-                  }
-                  className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 outline-none"
-                >
-                  <option value="">Select User</option>
-                  {users.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.name} — {user.email}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <p className="mb-6 text-sm text-slate-400">
+              Select the user, key type and plan.
+              The key name will be generated automatically.
+            </p>
 
-              <Input
-                label="Key Name"
-                value={form.name}
-                onChange={(v) => setForm({ ...form, name: v })}
-                placeholder="Production API Key"
-              />
+            <div className="grid gap-4 md:grid-cols-2">
+              <SelectField
+                label="User"
+                value={form.userId}
+                onChange={(value) =>
+                  setForm({
+                    ...form,
+                    userId: value,
+                  })
+                }
+              >
+                <option value="">
+                  Select User
+                </option>
 
-              <div>
-                <label className="text-sm text-slate-400">Plan</label>
-                <select
-                  value={form.planId}
-                  onChange={(e) =>
-                    setForm({ ...form, planId: e.target.value })
-                  }
-                  className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 outline-none"
-                >
-                  <option value="">No specific plan</option>
-                  {plans.map((plan) => (
-                    <option key={plan.id} value={plan.id}>
-                      {plan.name}
-                    </option>
-                  ))}
-                </select>
+                {users.map((user) => (
+                  <option
+                    key={user.id}
+                    value={user.id}
+                  >
+                    {user.name} — {user.email}
+                  </option>
+                ))}
+              </SelectField>
+
+              <SelectField
+                label="Key Type"
+                value={form.environment}
+                onChange={(value) =>
+                  setForm({
+                    ...form,
+                    environment: value,
+                    customName:
+                      value === "CUSTOM"
+                        ? form.customName
+                        : "",
+                  })
+                }
+              >
+                {KEY_ENVIRONMENTS.map((item) => (
+                  <option
+                    key={item.value}
+                    value={item.value}
+                  >
+                    {item.label}
+                  </option>
+                ))}
+              </SelectField>
+
+              {form.environment === "CUSTOM" && (
+                <div className="md:col-span-2">
+                  <Input
+                    label="Custom Key Name"
+                    value={form.customName}
+                    onChange={(value) =>
+                      setForm({
+                        ...form,
+                        customName: value,
+                      })
+                    }
+                    placeholder="My Custom API Key"
+                  />
+                </div>
+              )}
+
+              <SelectField
+                label="Plan"
+                value={form.planId}
+                onChange={(value) =>
+                  setForm({
+                    ...form,
+                    planId: value,
+                  })
+                }
+              >
+                <option value="">
+                  No specific plan
+                </option>
+
+                {plans.map((plan) => (
+                  <option
+                    key={plan.id}
+                    value={plan.id}
+                  >
+                    {plan.name}
+                  </option>
+                ))}
+              </SelectField>
+
+              <SelectField
+                label="Status"
+                value={form.status}
+                onChange={(value) =>
+                  setForm({
+                    ...form,
+                    status: value,
+                  })
+                }
+              >
+                <option value="ACTIVE">
+                  ACTIVE
+                </option>
+                <option value="DISABLED">
+                  DISABLED
+                </option>
+              </SelectField>
+
+              <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4 md:col-span-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-blue-400">
+                  API key preview
+                </p>
+
+                <p className="mt-2 font-semibold">
+                  {generatedKeyName ||
+                    "API key name"}
+                </p>
+
+                <p className="mt-1 text-sm text-slate-400">
+                  User:{" "}
+                  {selectedUser
+                    ? `${selectedUser.name} — ${selectedUser.email}`
+                    : "Not selected"}
+                </p>
+
+                <p className="mt-1 text-sm text-slate-500">
+                  Plan:{" "}
+                  {selectedPlan?.name ||
+                    "No specific plan"}
+                </p>
               </div>
             </div>
 
             <div className="mt-6 flex justify-end gap-3">
               <button
-                onClick={() => setFormOpen(false)}
-                className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-2xl"
+                type="button"
+                disabled={saving}
+                onClick={closeForm}
+                className="rounded-2xl bg-slate-800 px-5 py-3 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Cancel
               </button>
 
               <button
+                type="button"
+                disabled={saving}
                 onClick={submitKey}
-                className="bg-blue-600 hover:bg-blue-700 px-5 py-3 rounded-2xl font-semibold"
+                className="rounded-2xl bg-blue-600 px-5 py-3 font-semibold hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Create Key
+                {saving
+                  ? "Creating..."
+                  : "Create Key"}
               </button>
             </div>
           </div>
@@ -412,16 +777,52 @@ export default function ApiKeysPage() {
   );
 }
 
-function Input({ label, value, onChange, placeholder, type = "text" }) {
+function SelectField({
+  label,
+  value,
+  onChange,
+  children,
+}) {
   return (
     <div>
-      <label className="text-sm text-slate-400">{label}</label>
+      <label className="text-sm text-slate-400">
+        {label}
+      </label>
+
+      <select
+        value={value}
+        onChange={(event) =>
+          onChange(event.target.value)
+        }
+        className="mt-2 w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3 outline-none focus:border-blue-500"
+      >
+        {children}
+      </select>
+    </div>
+  );
+}
+
+function Input({
+  label,
+  value,
+  onChange,
+  placeholder,
+  type = "text",
+}) {
+  return (
+    <div>
+      <label className="text-sm text-slate-400">
+        {label}
+      </label>
+
       <input
         type={type}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(event) =>
+          onChange(event.target.value)
+        }
         placeholder={placeholder}
-        className="mt-2 w-full bg-slate-950 border border-slate-800 rounded-2xl px-4 py-3 outline-none"
+        className="mt-2 w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3 outline-none focus:border-blue-500"
       />
     </div>
   );

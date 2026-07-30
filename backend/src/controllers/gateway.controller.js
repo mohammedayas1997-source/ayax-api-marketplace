@@ -1037,6 +1037,14 @@ exports.receiveCommandResult = async (req, res) => {
 
       const payload = command?.payload || {};
 
+      console.log("COMMAND PAYLOAD");
+      console.log(JSON.stringify(payload, null, 2));
+      console.log("USSD RAW MESSAGE:");
+      console.log(finalMessage);
+
+      console.log("PARSED DATA:");
+      console.log(parseDataBalance(finalMessage));
+
       const simId =
         payload.simId ||
         null;

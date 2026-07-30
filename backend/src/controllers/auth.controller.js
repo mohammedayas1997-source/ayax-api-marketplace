@@ -756,6 +756,13 @@ exports.register = async (req, res) => {
 ====================================================== */
 
 exports.login = async (req, res) => {
+  console.log("LOGIN REQUEST RECEIVED:", {
+    email: normalizeEmail(req.body?.email),
+    hasPassword: Boolean(req.body?.password),
+    time: new Date().toISOString(),
+    ipAddress: getClientIp(req),
+  });
+
   try {
     const normalizedEmail =
       normalizeEmail(req.body.email);
@@ -1067,29 +1074,29 @@ if (!emailSent && !smsSent) {
     });
 
     const response = {
-      success: true,
+  success: true,
+  requiresOtp: true,
+  code: "LOGIN_OTP_REQUIRED",
 
-      requiresOtp: true,
+  message:
+    emailSent && smsSent
+      ? "Password verified. Enter the verification code sent to your email and phone."
+      : emailSent
+        ? "Password verified. Enter the verification code sent to your email."
+        : "Password verified. Enter the verification code sent to your phone.",
 
-      code:
-        "LOGIN_OTP_REQUIRED",
+  otpId,
+  userId: user.id,
+  expiresAt,
+  expiresInSeconds: 10 * 60,
 
-      message:
-        "Password verified. Enter the verification code sent to your email.",
+  maskedEmail: maskEmail(user.email),
 
-      otpId,
-
-      userId: user.id,
-
-      expiresAt,
-
-      expiresInSeconds:
-        10 * 60,
-
-      maskedEmail:
-        maskEmail(user.email),
-    };
-
+  deliveryChannels: {
+    email: emailSent,
+    sms: smsSent,
+  },
+};
     /*
      * Development kawai:
      * wannan yana taimakawa testing idan
@@ -1489,14 +1496,61 @@ exports.resendLoginOtp = async (
       user.id
     );
 
-    await sendLoginOtpEmail({
-      user,
-      otp: code,
-      expiresAt,
+    const resendResults = await Promise.allSettled([
+  sendLoginOtpEmail({
+    user,
+    otp: code,
+    expiresAt,
+    ipAddress: getClientIp(req),
+  }),
 
-      ipAddress:
-        getClientIp(req),
-    });
+  sendLoginOtpSms({
+    user,
+    otp: code,
+  }),
+]);
+
+const emailSent =
+  resendResults[0].status === "fulfilled";
+
+const smsSent =
+  resendResults[1].status === "fulfilled";
+
+console.log("LOGIN OTP RESEND RESULTS:", {
+  userId: user.id,
+
+  email: {
+    sent: emailSent,
+    error: emailSent
+      ? null
+      : {
+          code: resendResults[0].reason?.code,
+          message: resendResults[0].reason?.message,
+        },
+  },
+
+  sms: {
+    sent: smsSent,
+    error: smsSent
+      ? null
+      : {
+          code: resendResults[1].reason?.code,
+          message: resendResults[1].reason?.message,
+          response: resendResults[1].reason?.response,
+        },
+  },
+});
+
+if (!emailSent && !smsSent) {
+  const error = new Error(
+    "Unable to resend the login verification code."
+  );
+
+  error.statusCode = 500;
+  error.code = "OTP_DELIVERY_FAILED";
+
+  throw error;
+}
 
     await recordSecurityLog({
       userId: user.id,
@@ -1519,9 +1573,17 @@ exports.resendLoginOtp = async (
       code:
         "LOGIN_OTP_RESENT",
 
-      message:
-        "A new verification code has been sent to your email.",
+     message:
+  emailSent && smsSent
+    ? "A new verification code has been sent to your email and phone."
+    : emailSent
+      ? "A new verification code has been sent to your email."
+      : "A new verification code has been sent to your phone.",
 
+deliveryChannels: {
+  email: emailSent,
+  sms: smsSent,
+},
       otpId,
 
       userId: user.id,

@@ -967,8 +967,7 @@ const deliveryResults =
       user,
       otp: code,
       expiresAt,
-      ipAddress:
-        getClientIp(req),
+      ipAddress: getClientIp(req),
     }),
 
     sendLoginOtpSms({
@@ -977,34 +976,69 @@ const deliveryResults =
     }),
   ]);
 
+const emailResult =
+  deliveryResults[0];
+
+const smsResult =
+  deliveryResults[1];
+
 const emailSent =
-  deliveryResults[0].status ===
-  "fulfilled";
+  emailResult.status === "fulfilled";
 
 const smsSent =
-  deliveryResults[1].status ===
-  "fulfilled";
+  smsResult.status === "fulfilled";
 
-if (!emailSent) {
-  console.error(
-    "Login OTP email failed:",
-    deliveryResults[0].reason
-  );
-}
+console.log("LOGIN OTP DELIVERY RESULTS:", {
+  userId: user.id,
 
-if (!smsSent) {
-  console.error(
-    "Login OTP SMS failed:",
-    deliveryResults[1].reason
-  );
-}
+  email: {
+    sent: emailSent,
+    error: emailSent
+      ? null
+      : {
+          name:
+            emailResult.reason?.name,
+
+          code:
+            emailResult.reason?.code,
+
+          message:
+            emailResult.reason?.message,
+
+          response:
+            emailResult.reason?.response,
+        },
+  },
+
+  sms: {
+    sent: smsSent,
+    error: smsSent
+      ? null
+      : {
+          name:
+            smsResult.reason?.name,
+
+          code:
+            smsResult.reason?.code,
+
+          message:
+            smsResult.reason?.message,
+
+          response:
+            smsResult.reason?.response,
+        },
+  },
+});
 
 if (!emailSent && !smsSent) {
   const error = new Error(
-    "Unable to deliver the login verification code."
+    "Login OTP could not be delivered."
   );
 
   error.statusCode = 500;
+  error.code =
+    "OTP_DELIVERY_FAILED";
+
   throw error;
 }
 

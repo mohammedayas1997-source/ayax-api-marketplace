@@ -109,6 +109,13 @@ const sendLoginOtpSms = async ({
     controller.abort();
   }, 20000);
 
+  console.log("TERMII CONFIG:", {
+  apiKeyExists: !!process.env.TERMII_API_KEY,
+  apiKeyLength: String(process.env.TERMII_API_KEY || "").length,
+  apiKeyPrefix: String(process.env.TERMII_API_KEY || "").slice(0, 5),
+  senderId: process.env.TERMII_SENDER_ID,
+});
+
   try {
     const response = await fetch(
       "https://api.ng.termii.com/api/sms/send",

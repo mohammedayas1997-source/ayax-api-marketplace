@@ -174,12 +174,14 @@ const sendLoginOtpSms = async ({
   }
 
   console.log("TERMII OTP REQUEST:", {
-    apiKeyConfigured: true,
-    apiKeyLength: apiKey.length,
-    senderId,
-    channel,
-    phone: maskPhoneNumber(phone),
-  });
+  apiKeyConfigured: Boolean(apiKey),
+  apiKeyLength: apiKey.length,
+  apiKeyPrefix: apiKey.slice(0, 7),
+  apiKeySuffix: apiKey.slice(-5),
+  senderId,
+  channel,
+  phone: maskPhoneNumber(phone),
+});
 
   const controller =
     new AbortController();

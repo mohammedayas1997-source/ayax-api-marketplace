@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const FALLBACK_API_URL =
-  "https://ayax-api-marketplace.onrender.com/api/v1";
+  "https://api.ayaxapis.com/api/v1";
 
 const rawApiUrl =
   process.env.NEXT_PUBLIC_API_BASE_URL ||

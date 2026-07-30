@@ -57,7 +57,9 @@ const getStoredToken = () => {
     return null;
   }
 
-  const token = localStorage.getItem("token");
+  const token =
+  localStorage.getItem("token") ||
+  sessionStorage.getItem("token");
 
   return token?.trim() || null;
 };
@@ -68,6 +70,7 @@ const clearStoredSession = () => {
   }
 
   localStorage.removeItem("token");
+  sessionStorage.removeItem("token");
   localStorage.removeItem("user");
   localStorage.removeItem("auth");
   localStorage.removeItem("currentUser");

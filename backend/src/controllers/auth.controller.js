@@ -447,17 +447,23 @@ const sendAuthError = (
   error,
   fallbackMessage
 ) => {
-  console.error(
-    fallbackMessage,
-    error
-  );
+  console.error("=================================");
+  console.error("AUTH ERROR");
+  console.error("Fallback:", fallbackMessage);
+  console.error("Name:", error?.name);
+  console.error("Message:", error?.message);
+  console.error("Code:", error?.code);
+  console.error("Status:", error?.statusCode);
+  console.error("Stack:");
+  console.error(error?.stack);
+  console.error("=================================");
 
   const statusCode =
     Number(error?.statusCode) || 500;
 
   return res.status(statusCode).json({
     success: false,
-
+    code: error?.code || null,
     message:
       statusCode === 500
         ? fallbackMessage

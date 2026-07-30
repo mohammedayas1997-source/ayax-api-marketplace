@@ -34,22 +34,39 @@ const parseResponseBody = async (response) => {
   }
 };
 
-const sendLoginOtpSms = async ({
-  user,
-  otp,
+const createSmsError = ({
+  message,
+  code,
+  statusCode,
+  response,
 }) => {
-  const normalizedOtp =
-    String(otp || "").trim();
+  const error = new Error(message);
+
+  error.code = code;
+
+  if (statusCode) {
+    error.statusCode = statusCode;
+  }
+
+  if (response) {
+    error.response = response;
+  }
+
+  return error;
+};
+
+const sendLoginOtpSms = async ({ user, otp }) => {
+  const normalizedOtp = String(
+    otp || ""
+  ).trim();
 
   if (!/^\d{6}$/.test(normalizedOtp)) {
-    const error = new Error(
-      "A valid 6-digit OTP is required."
-    );
-
-    error.code = "INVALID_OTP";
-    error.statusCode = 400;
-
-    throw error;
+    throw createSmsError({
+      message:
+        "A valid 6-digit OTP is required.",
+      code: "INVALID_OTP",
+      statusCode: 400,
+    });
   }
 
   const phone = normalizePhoneNumber(
@@ -57,14 +74,12 @@ const sendLoginOtpSms = async ({
   );
 
   if (!phone) {
-    const error = new Error(
-      "A valid user phone number is not available."
-    );
-
-    error.code = "PHONE_NOT_AVAILABLE";
-    error.statusCode = 400;
-
-    throw error;
+    throw createSmsError({
+      message:
+        "A valid user phone number is not available.",
+      code: "PHONE_NOT_AVAILABLE",
+      statusCode: 400,
+    });
   }
 
   const apiKey = String(
@@ -77,30 +92,38 @@ const sendLoginOtpSms = async ({
   ).trim();
 
   if (!apiKey) {
-    const error = new Error(
-      "TERMII_API_KEY is not configured."
-    );
-
-    error.code =
-      "SMS_CONFIGURATION_MISSING";
-
-    error.statusCode = 500;
-
-    throw error;
+    throw createSmsError({
+      message:
+        "TERMII_API_KEY is not configured.",
+      code:
+        "SMS_CONFIGURATION_MISSING",
+      statusCode: 500,
+    });
   }
 
   if (!senderId) {
-    const error = new Error(
-      "TERMII_SENDER_ID is not configured."
-    );
-
-    error.code =
-      "SMS_SENDER_ID_MISSING";
-
-    error.statusCode = 500;
-
-    throw error;
+    throw createSmsError({
+      message:
+        "TERMII_SENDER_ID is not configured.",
+      code: "SMS_SENDER_ID_MISSING",
+      statusCode: 500,
+    });
   }
+
+  /*
+   * Temporary safe log:
+   * Wannan ba ya nuna cikakken API key.
+   * Cire shi bayan mun gama debugging.
+   */
+  console.log("TERMII CONFIG:", {
+    apiKeyExists: Boolean(apiKey),
+    apiKeyLength: apiKey.length,
+    apiKeyPrefix: apiKey.slice(0, 5),
+    senderId,
+    phone:
+      `${phone.slice(0, 5)}*****` +
+      phone.slice(-2),
+  });
 
   const controller =
     new AbortController();
@@ -108,13 +131,6 @@ const sendLoginOtpSms = async ({
   const timeout = setTimeout(() => {
     controller.abort();
   }, 20000);
-
-  console.log("TERMII CONFIG:", {
-  apiKeyExists: !!process.env.TERMII_API_KEY,
-  apiKeyLength: String(process.env.TERMII_API_KEY || "").length,
-  apiKeyPrefix: String(process.env.TERMII_API_KEY || "").slice(0, 5),
-  senderId: process.env.TERMII_SENDER_ID,
-});
 
   try {
     const response = await fetch(
@@ -149,101 +165,104 @@ const sendLoginOtpSms = async ({
       await parseResponseBody(response);
 
     if (!response.ok) {
-      const error = new Error(
-        data?.message ||
+      throw createSmsError({
+        message:
+          data?.message ||
           data?.error ||
-          "Unable to send login OTP SMS."
-      );
+          "Unable to send login OTP SMS.",
 
-      error.code =
-        "TERMII_SMS_REQUEST_FAILED";
+        code:
+          "TERMII_SMS_REQUEST_FAILED",
 
-      error.statusCode =
-        response.status;
-
-      error.response = data;
-
-      throw error;
+        statusCode: response.status,
+        response: data,
+      });
     }
 
     /*
-     * Wasu providers suna iya dawo da HTTP 200
-     * amma body ɗin yana ɗauke da error.
+     * Kada mu dauki duk wani Termii code
+     * a matsayin error. Wasu successful
+     * responses suna iya dauke da code.
      */
+    const status = String(
+      data?.status || ""
+    ).toLowerCase();
+
     if (
-      data?.code &&
-      String(data.code).toLowerCase() !==
-        "ok"
+      status &&
+      ["error", "failed", "failure"].includes(
+        status
+      )
     ) {
-      const error = new Error(
-        data?.message ||
-          "Termii rejected the SMS request."
-      );
+      throw createSmsError({
+        message:
+          data?.message ||
+          "Termii rejected the SMS request.",
 
-      error.code =
-        "TERMII_SMS_REJECTED";
-
-      error.response = data;
-
-      throw error;
+        code: "TERMII_SMS_REJECTED",
+        statusCode: 502,
+        response: data,
+      });
     }
+
+    const messageId =
+      data?.message_id ||
+      data?.messageId ||
+      null;
 
     console.log(
       "Login OTP SMS accepted:",
       {
-        phone: `${phone.slice(
-          0,
-          5
-        )}*****${phone.slice(-2)}`,
+        phone:
+          `${phone.slice(
+            0,
+            5
+          )}*****${phone.slice(-2)}`,
 
-        messageId:
-          data?.message_id ||
-          data?.messageId ||
-          null,
+        messageId,
+        status:
+          data?.status || null,
       }
     );
 
     return {
       success: true,
-      messageId:
-        data?.message_id ||
-        data?.messageId ||
-        null,
+      messageId,
       data,
     };
   } catch (error) {
     const normalizedError =
       error?.name === "AbortError"
-        ? Object.assign(
-            new Error(
-              "Termii SMS request timed out."
-            ),
-            {
-              code:
-                "TERMII_SMS_TIMEOUT",
-              statusCode: 504,
-            }
-          )
+        ? createSmsError({
+            message:
+              "Termii SMS request timed out.",
+            code: "TERMII_SMS_TIMEOUT",
+            statusCode: 504,
+          })
         : error;
 
     console.error(
       "Login OTP SMS error:",
       {
         name:
-          normalizedError?.name,
+          normalizedError?.name ||
+          "Error",
 
         code:
-          normalizedError?.code,
+          normalizedError?.code ||
+          "UNKNOWN_SMS_ERROR",
 
         statusCode:
-          normalizedError
-            ?.statusCode,
+          normalizedError?.statusCode ||
+          null,
 
         message:
-          normalizedError?.message,
+          normalizedError?.message ||
+          "Unknown SMS error",
 
         response:
-          normalizedError?.response,
+          normalizedError?.response ||
+          null,
       }
     );
 

@@ -145,12 +145,6 @@ exports.heartbeat = async (req, res) => {
       where: { id: deviceId, secretKey },
     });
 
-    const existingCommand = await prisma.gsmCommand.findUnique({
-  where: { reference },
-});
-
-console.log("COMMAND FOUND:", existingCommand);
-
     if (!device) {
       return res.status(401).json({
         success: false,

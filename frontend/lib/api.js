@@ -8,9 +8,35 @@ const rawApiUrl =
   process.env.NEXT_PUBLIC_API_URL ||
   FALLBACK_API_URL;
 
-const API_BASE_URL = String(rawApiUrl)
-  .trim()
-  .replace(/\/+$/, "");
+const normalizeApiBaseUrl = (value) => {
+  const cleanedUrl = String(value || "")
+    .trim()
+    .replace(/\/+$/, "");
+
+  if (!cleanedUrl) {
+    return FALLBACK_API_URL;
+  }
+
+  /*
+   * Idan URL ya riga ya ƙare da /api/v1,
+   * kada a sake ƙara shi.
+   */
+  if (/\/api\/v1$/i.test(cleanedUrl)) {
+    return cleanedUrl;
+  }
+
+  /*
+   * Idan Vercel env ya ƙunshi domain kawai:
+   * https://api.ayaxapis.com
+   *
+   * zai koma:
+   * https://api.ayaxapis.com/api/v1
+   */
+  return `${cleanedUrl}/api/v1`;
+};
+
+const API_BASE_URL =
+  normalizeApiBaseUrl(rawApiUrl);
 
 const PUBLIC_PATHS = [
   "/login",

@@ -99,12 +99,28 @@ Do not share this code with anyone.`;
         },
       });
 
-    await sendEmail({
-      to: user.email,
-      subject,
-      text,
-      html,
-    });
+    const emailTimeout = new Promise((_, reject) => {
+  setTimeout(() => {
+    const error = new Error(
+      "SMTP request timed out after 30 seconds."
+    );
+
+    error.code = "SMTP_TIMEOUT";
+
+    reject(error);
+  }, 30000);
+});
+
+await Promise.race([
+  sendEmail({
+    to: user.email,
+    subject,
+    text,
+    html,
+  }),
+
+  emailTimeout,
+]);
 
     await prisma.emailLog.update({
       where: {

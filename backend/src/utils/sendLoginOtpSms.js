@@ -7,8 +7,20 @@ const normalizePhoneNumber = (phone) => {
     value = value.slice(1);
   }
 
+  /*
+   * Nigerian local number:
+   * 08012345678 -> 2348012345678
+   */
   if (value.startsWith("0")) {
     value = `234${value.slice(1)}`;
+  }
+
+  /*
+   * Idan number ya fara da 2340,
+   * cire karin zero ɗin.
+   */
+  if (value.startsWith("2340")) {
+    value = `234${value.slice(4)}`;
   }
 
   if (!/^\d{10,15}$/.test(value)) {
@@ -42,6 +54,7 @@ const createSmsError = ({
 }) => {
   const error = new Error(message);
 
+  error.name = "LoginOtpSmsError";
   error.code = code;
 
   if (statusCode) {
@@ -55,7 +68,22 @@ const createSmsError = ({
   return error;
 };
 
-const sendLoginOtpSms = async ({ user, otp }) => {
+const maskPhoneNumber = (phone) => {
+  if (!phone || phone.length < 8) {
+    return "";
+  }
+
+  return (
+    `${phone.slice(0, 5)}` +
+    "*****" +
+    `${phone.slice(-3)}`
+  );
+};
+
+const sendLoginOtpSms = async ({
+  user,
+  otp,
+}) => {
   const normalizedOtp = String(
     otp || ""
   ).trim();
@@ -64,7 +92,10 @@ const sendLoginOtpSms = async ({ user, otp }) => {
     throw createSmsError({
       message:
         "A valid 6-digit OTP is required.",
-      code: "INVALID_OTP",
+
+      code:
+        "INVALID_LOGIN_OTP",
+
       statusCode: 400,
     });
   }
@@ -77,7 +108,10 @@ const sendLoginOtpSms = async ({ user, otp }) => {
     throw createSmsError({
       message:
         "A valid user phone number is not available.",
-      code: "PHONE_NOT_AVAILABLE",
+
+      code:
+        "PHONE_NOT_AVAILABLE",
+
       statusCode: 400,
     });
   }
@@ -91,12 +125,21 @@ const sendLoginOtpSms = async ({ user, otp }) => {
       "AyaxAPIs"
   ).trim();
 
+  const channel = String(
+    process.env.TERMII_CHANNEL ||
+      "dnd"
+  )
+    .trim()
+    .toLowerCase();
+
   if (!apiKey) {
     throw createSmsError({
       message:
         "TERMII_API_KEY is not configured.",
+
       code:
         "SMS_CONFIGURATION_MISSING",
+
       statusCode: 500,
     });
   }
@@ -105,32 +148,46 @@ const sendLoginOtpSms = async ({ user, otp }) => {
     throw createSmsError({
       message:
         "TERMII_SENDER_ID is not configured.",
-      code: "SMS_SENDER_ID_MISSING",
+
+      code:
+        "SMS_SENDER_ID_MISSING",
+
       statusCode: 500,
     });
   }
 
-  /*
-   * Temporary safe log:
-   * Wannan ba ya nuna cikakken API key.
-   * Cire shi bayan mun gama debugging.
-   */
-  console.log("TERMII CONFIG:", {
-    apiKeyExists: Boolean(apiKey),
+  const allowedChannels = [
+    "dnd",
+    "generic",
+  ];
+
+  if (!allowedChannels.includes(channel)) {
+    throw createSmsError({
+      message:
+        "TERMII_CHANNEL must be dnd or generic.",
+
+      code:
+        "INVALID_TERMII_CHANNEL",
+
+      statusCode: 500,
+    });
+  }
+
+  console.log("TERMII OTP REQUEST:", {
+    apiKeyConfigured: true,
     apiKeyLength: apiKey.length,
-    apiKeyPrefix: apiKey.slice(0, 5),
     senderId,
-    phone:
-      `${phone.slice(0, 5)}*****` +
-      phone.slice(-2),
+    channel,
+    phone: maskPhoneNumber(phone),
   });
 
   const controller =
     new AbortController();
 
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, 20000);
+  const timeoutId =
+    setTimeout(() => {
+      controller.abort();
+    }, 20000);
 
   try {
     const response = await fetch(
@@ -140,22 +197,28 @@ const sendLoginOtpSms = async ({ user, otp }) => {
 
         headers: {
           Accept: "application/json",
+
           "Content-Type":
             "application/json",
         },
 
-        signal: controller.signal,
+        signal:
+          controller.signal,
 
         body: JSON.stringify({
           to: phone,
+
           from: senderId,
 
           sms:
-            `Ayax APIs: Your login verification code is ${normalizedOtp}. ` +
-            "It expires in 10 minutes. Do not share this code.",
+            `Your Ayax APIs login code is ${normalizedOtp}. ` +
+            "It expires in 10 minutes. " +
+            "Do not share this code.",
 
           type: "plain",
-          channel: "dnd",
+
+          channel,
+
           api_key: apiKey,
         }),
       }
@@ -169,65 +232,87 @@ const sendLoginOtpSms = async ({ user, otp }) => {
         message:
           data?.message ||
           data?.error ||
-          "Unable to send login OTP SMS.",
+          `Termii returned HTTP ${response.status}.`,
 
         code:
-          "TERMII_SMS_REQUEST_FAILED",
+          response.status === 401
+            ? "TERMII_INVALID_API_KEY"
+            : "TERMII_SMS_REQUEST_FAILED",
 
-        statusCode: response.status,
-        response: data,
+        statusCode:
+          response.status,
+
+        response:
+          data,
       });
     }
 
-    /*
-     * Kada mu dauki duk wani Termii code
-     * a matsayin error. Wasu successful
-     * responses suna iya dauke da code.
-     */
     const status = String(
       data?.status || ""
-    ).toLowerCase();
+    )
+      .trim()
+      .toLowerCase();
 
     if (
-      status &&
-      ["error", "failed", "failure"].includes(
-        status
-      )
+      [
+        "error",
+        "failed",
+        "failure",
+        "rejected",
+      ].includes(status)
     ) {
       throw createSmsError({
         message:
           data?.message ||
           "Termii rejected the SMS request.",
 
-        code: "TERMII_SMS_REJECTED",
+        code:
+          "TERMII_SMS_REJECTED",
+
         statusCode: 502,
-        response: data,
+
+        response:
+          data,
       });
     }
 
     const messageId =
       data?.message_id ||
       data?.messageId ||
+      data?.id ||
       null;
 
+    /*
+     * Successful HTTP response ba lallai
+     * ya nuna SMS ya shiga waya ba.
+     * Yana nuna Termii ya karɓi request.
+     */
     console.log(
-      "Login OTP SMS accepted:",
+      "LOGIN OTP SMS ACCEPTED:",
       {
         phone:
-          `${phone.slice(
-            0,
-            5
-          )}*****${phone.slice(-2)}`,
+          maskPhoneNumber(phone),
 
         messageId,
+
         status:
           data?.status || null,
+
+        balance:
+          data?.balance || null,
       }
     );
 
     return {
       success: true,
+
+      accepted: true,
+
       messageId,
+
+      status:
+        data?.status || null,
+
       data,
     };
   } catch (error) {
@@ -235,14 +320,17 @@ const sendLoginOtpSms = async ({ user, otp }) => {
       error?.name === "AbortError"
         ? createSmsError({
             message:
-              "Termii SMS request timed out.",
-            code: "TERMII_SMS_TIMEOUT",
+              "Termii SMS request timed out after 20 seconds.",
+
+            code:
+              "TERMII_SMS_TIMEOUT",
+
             statusCode: 504,
           })
         : error;
 
     console.error(
-      "Login OTP SMS error:",
+      "LOGIN OTP SMS ERROR:",
       {
         name:
           normalizedError?.name ||
@@ -263,12 +351,19 @@ const sendLoginOtpSms = async ({ user, otp }) => {
         response:
           normalizedError?.response ||
           null,
+
+        phone:
+          maskPhoneNumber(phone),
+
+        senderId,
+
+        channel,
       }
     );
 
     throw normalizedError;
   } finally {
-    clearTimeout(timeout);
+    clearTimeout(timeoutId);
   }
 };
 

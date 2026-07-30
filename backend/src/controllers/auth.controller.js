@@ -15,6 +15,10 @@ const {
   sendLoginOtpEmail,
 } = require("../utils/sendLoginOtpEmail");
 
+const {
+  sendLoginOtpSms,
+} = require("../utils/sendLoginOtpSms");
+
 /* ======================================================
    CONSTANTS
 ====================================================== */
@@ -957,13 +961,52 @@ exports.login = async (req, res) => {
       user.id
     );
 
-    await sendLoginOtpEmail({
+const deliveryResults =
+  await Promise.allSettled([
+    sendLoginOtpEmail({
       user,
       otp: code,
       expiresAt,
       ipAddress:
         getClientIp(req),
-    });
+    }),
+
+    sendLoginOtpSms({
+      user,
+      otp: code,
+    }),
+  ]);
+
+const emailSent =
+  deliveryResults[0].status ===
+  "fulfilled";
+
+const smsSent =
+  deliveryResults[1].status ===
+  "fulfilled";
+
+if (!emailSent) {
+  console.error(
+    "Login OTP email failed:",
+    deliveryResults[0].reason
+  );
+}
+
+if (!smsSent) {
+  console.error(
+    "Login OTP SMS failed:",
+    deliveryResults[1].reason
+  );
+}
+
+if (!emailSent && !smsSent) {
+  const error = new Error(
+    "Unable to deliver the login verification code."
+  );
+
+  error.statusCode = 500;
+  throw error;
+}
 
     await recordSecurityLog({
       userId: user.id,

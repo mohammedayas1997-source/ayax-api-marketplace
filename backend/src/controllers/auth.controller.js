@@ -1044,19 +1044,14 @@ console.log("LOGIN OTP DELIVERY RESULTS:", {
 });
 
 if (!emailSent && !smsSent) {
-  console.error(
-    "OTP delivery failed, but allowing login for debugging."
+  const error = new Error(
+    "Login OTP could not be delivered."
   );
 
-  return res.status(200).json({
-    success: true,
-    requiresOtp: false,
-    code: "LOGIN_SUCCESS_DEBUG",
-    message:
-      "Login successful (OTP bypass enabled).",
-    token: generateToken(user),
-    user: serializeUser(user),
-  });
+  error.statusCode = 500;
+  error.code = "OTP_DELIVERY_FAILED";
+
+  throw error;
 }
 
     await recordSecurityLog({

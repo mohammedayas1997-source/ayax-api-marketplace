@@ -28,28 +28,22 @@ const normalizeUnit = (unit = "") => {
  * AIRTIME PARSER
  * An bar salon da yake aiki a baya.
  */
-exports.parseAirtimeBalance = (message = "") => {
-  const text = normalize(message);
+function parseAirtimeBalance(text = "") {
+  if (!text) return null;
 
   const patterns = [
-    /(?:main|airtime|account|available)?\s*balance(?:\s+is|\s*:)?\s*(?:₦|NGN|N)\s*([0-9]+(?:\.[0-9]+)?)/i,
-
-    /(?:₦|NGN|N)\s*([0-9]+(?:\.[0-9]+)?)/i,
-
-    /remaining(?:\s+balance)?(?:\s+is|\s*:)?\s*(?:₦|NGN|N)?\s*([0-9]+(?:\.[0-9]+)?)/i,
-
-    /(?:balance|credit)(?:\s+is|\s*:)?\s*([0-9]+(?:\.[0-9]+)?)/i,
+    /Pulse\s+main\s+account:\s*[₦N]?\s*([\d,]+(?:\.\d+)?)/i,
+    /Main\s+Balance[:\s]*[₦N]?\s*([\d,]+(?:\.\d+)?)/i,
+    /Your\s+balance\s+is\s*[₦N]?\s*([\d,]+(?:\.\d+)?)/i,
+    /Account\s+Balance[:\s]*[₦N]?\s*([\d,]+(?:\.\d+)?)/i,
+    /Balance[:\s]*[₦N]?\s*([\d,]+(?:\.\d+)?)/i,
+    /[₦N]\s*([\d,]+(?:\.\d+)?)/i
   ];
 
   for (const pattern of patterns) {
     const match = text.match(pattern);
-
-    if (match?.[1]) {
-      const amount = Number(match[1]);
-
-      if (Number.isFinite(amount)) {
-        return amount;
-      }
+    if (match) {
+      return parseFloat(match[1].replace(/,/g, ""));
     }
   }
 

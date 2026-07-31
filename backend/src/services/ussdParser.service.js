@@ -37,18 +37,21 @@ function parseAirtimeBalance(text = "") {
     /Your\s+balance\s+is\s*[₦N]?\s*([\d,]+(?:\.\d+)?)/i,
     /Account\s+Balance[:\s]*[₦N]?\s*([\d,]+(?:\.\d+)?)/i,
     /Balance[:\s]*[₦N]?\s*([\d,]+(?:\.\d+)?)/i,
-    /[₦N]\s*([\d,]+(?:\.\d+)?)/i
+    /[₦N]\s*([\d,]+(?:\.\d+)?)/i,
   ];
 
   for (const pattern of patterns) {
     const match = text.match(pattern);
+
     if (match) {
       return parseFloat(match[1].replace(/,/g, ""));
     }
   }
 
   return null;
-};
+}
+
+exports.parseAirtimeBalance = parseAirtimeBalance;
 
 /*
  * DATA PARSER

@@ -5,7 +5,7 @@ const { emitEvent } = require("../config/socket");
 const NETWORK_CODES = {
   MTN: {
     AIRTIME: "*310#",
-    DATA: "*323#",
+    DATA: "*323*4#",
   },
   AIRTEL: {
     AIRTIME: "*310#",

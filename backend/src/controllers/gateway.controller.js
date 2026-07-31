@@ -291,8 +291,7 @@ exports.receiveIncomingSms = async (req, res) => {
     if (!deviceId || !secretKey || !message) {
       return res.status(400).json({
         success: false,
-        message:
-          "deviceId, secretKey and message are required",
+        message: "deviceId, secretKey and message are required",
       });
     }
 
@@ -318,12 +317,15 @@ exports.receiveIncomingSms = async (req, res) => {
       },
     });
 
+    // DATA: an bar yadda yake domin yana aiki
     const parsedDataBalance = parseDataBalance(message);
+
+    // AIRTIME: sabon ƙarin gyara
+    const parsedAirtimeBalance = parseAirtimeBalance(message);
 
     let updatedSim = null;
 
     if (
-      parsedDataBalance &&
       slotIndex !== undefined &&
       slotIndex !== null
     ) {
@@ -340,28 +342,72 @@ exports.receiveIncomingSms = async (req, res) => {
         });
 
         if (sim) {
-          updatedSim = await prisma.gsmSim.update({
-            where: {
-              id: sim.id,
-            },
-            data: {
-              dataBalance: String(parsedDataBalance),
-              lastSyncAt: new Date(),
-              lastBalanceCheck: new Date(),
-            },
-          });
+          const updateData = {
+            lastSyncAt: new Date(),
+            lastBalanceCheck: new Date(),
+          };
 
-          emitEvent("gsm-sims-synced", {
-            deviceId,
-            sims: [updatedSim],
-          });
+          // Kar a taɓa data logic
+          if (
+            parsedDataBalance !== null &&
+            parsedDataBalance !== undefined &&
+            String(parsedDataBalance).trim() !== ""
+          ) {
+            updateData.dataBalance =
+              String(parsedDataBalance).trim();
+          }
 
-          emitEvent("gsm-sim-balance-updated", {
-            deviceId,
-            simId: updatedSim.id,
-            slotIndex: normalizedSlot,
-            dataBalance: String(parsedDataBalance),
-          });
+          // Sabon airtime logic
+          if (
+            parsedAirtimeBalance !== null &&
+            parsedAirtimeBalance !== undefined &&
+            !Number.isNaN(Number(parsedAirtimeBalance))
+          ) {
+            updateData.airtimeBalance =
+              Number(parsedAirtimeBalance);
+          }
+
+          const hasBalance =
+            Object.prototype.hasOwnProperty.call(
+              updateData,
+              "dataBalance"
+            ) ||
+            Object.prototype.hasOwnProperty.call(
+              updateData,
+              "airtimeBalance"
+            );
+
+          if (hasBalance) {
+            updatedSim = await prisma.gsmSim.update({
+              where: {
+                id: sim.id,
+              },
+              data: updateData,
+            });
+
+            emitEvent("gsm-sims-synced", {
+              deviceId,
+              sims: [updatedSim],
+            });
+
+            emitEvent("gsm-sim-balance-updated", {
+              deviceId,
+              simId: updatedSim.id,
+              slotIndex: normalizedSlot,
+              airtimeBalance: updatedSim.airtimeBalance,
+              dataBalance: updatedSim.dataBalance,
+              sim: updatedSim,
+            });
+
+            console.log("SMS balance updated:", {
+              simId: updatedSim.id,
+              airtimeBalance:
+                updatedSim.airtimeBalance,
+              dataBalance:
+                updatedSim.dataBalance,
+              message,
+            });
+          }
         }
       }
     }
@@ -376,9 +422,10 @@ exports.receiveIncomingSms = async (req, res) => {
     return res.status(201).json({
       success: true,
       message: updatedSim
-        ? "SMS received and data balance updated"
+        ? "SMS received and SIM balance updated"
         : "SMS received successfully",
       sms,
+      airtimeBalance: parsedAirtimeBalance,
       dataBalance: parsedDataBalance,
       sim: updatedSim,
     });
@@ -391,7 +438,6 @@ exports.receiveIncomingSms = async (req, res) => {
     });
   }
 };
-
 exports.getIncomingSms = async (req, res) => {
   try {
     const sms = await prisma.smsInbox.findMany({

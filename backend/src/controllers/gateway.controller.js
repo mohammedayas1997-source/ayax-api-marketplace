@@ -1020,7 +1020,12 @@ exports.receiveCommandResult = async (req, res) => {
     });
     console.log("==================================");
 
-    if (!deviceId || !secretKey || !reference || !status) {
+    if (
+      !deviceId ||
+      !secretKey ||
+      !reference ||
+      !status
+    ) {
       return res.status(400).json({
         success: false,
         message:
@@ -1028,12 +1033,13 @@ exports.receiveCommandResult = async (req, res) => {
       });
     }
 
-    const device = await prisma.gsmDevice.findFirst({
-      where: {
-        id: deviceId,
-        secretKey,
-      },
-    });
+    const device =
+      await prisma.gsmDevice.findFirst({
+        where: {
+          id: deviceId,
+          secretKey,
+        },
+      });
 
     if (!device) {
       return res.status(401).json({
@@ -1042,60 +1048,53 @@ exports.receiveCommandResult = async (req, res) => {
       });
     }
 
-    const normalizedStatus = String(status)
-      .trim()
-      .toUpperCase();
+    const existingCommand =
+      await prisma.gsmCommand.findUnique({
+        where: {
+          reference,
+        },
+      });
 
-    const finalMessage = String(
-      message ||
-        response ||
-        normalizedStatus ||
-        ""
-    ).trim();
-
-    console.log("FINAL MESSAGE:");
-    console.log(finalMessage);
-    console.log("----------------------------------");
-
-    let command = null;
-    let updatedSim = null;
+    if (!existingCommand) {
+      return res.status(404).json({
+        success: false,
+        message: "Gateway command not found",
+      });
+    }
 
     if (
-      normalizedStatus === "PROCESSING" ||
-      normalizedStatus === "SENT"
+      existingCommand.deviceId !== deviceId
     ) {
-      command = await markCommandProcessing({
-        reference,
+      return res.status(403).json({
+        success: false,
         message:
-          finalMessage ||
-          "Command is being processed",
+          "This command does not belong to this device",
       });
-    } else if (
-      normalizedStatus === "SUCCESSFUL" ||
-      normalizedStatus === "DELIVERED"
-    ) {
-      command = await markCommandSuccessful({
-        reference,
-        message:
-          finalMessage ||
-          "Command completed successfully",
-      });
+    }
 
-      const payload = command?.payload || {};
+    const normalizedStatus =
+      String(status)
+        .trim()
+        .toUpperCase();
 
-      console.log("COMMAND PAYLOAD");
-      console.log(JSON.stringify(payload, null, 2));
-      console.log("USSD RAW MESSAGE:");
-      console.log(finalMessage);
+    const finalMessage =
+      String(
+        message ||
+          response ||
+          ""
+      ).trim();
 
-      console.log("PARSED DATA:");
-      console.log(parseDataBalance(finalMessage));
+    const normalizedMessage =
+      finalMessage.toLowerCase();
 
-      const simId =
-        payload.simId ||
-        null;
+    const payload =
+      existingCommand.payload || {};
 
-      const balanceType = String(
+    const simId =
+      payload.simId || null;
+
+    const balanceType =
+      String(
         payload.balanceType ||
           payload.service ||
           payload.type ||
@@ -1104,77 +1103,320 @@ exports.receiveCommandResult = async (req, res) => {
         .trim()
         .toUpperCase();
 
-      const isAirtimeCommand = [
-        "AIRTIME",
-        "AIRTIME_BALANCE",
-        "CHECK_AIRTIME",
-      ].includes(balanceType);
+    const isAirtimeCommand = [
+      "AIRTIME",
+      "AIRTIME_BALANCE",
+      "CHECK_AIRTIME",
+    ].includes(balanceType);
 
-      const isDataCommand = [
-        "DATA",
-        "DATA_BALANCE",
-        "CHECK_DATA",
-      ].includes(balanceType);
+    const isDataCommand = [
+      "DATA",
+      "DATA_BALANCE",
+      "CHECK_DATA",
+    ].includes(balanceType);
 
-      console.log("BALANCE COMMAND DETAILS:", {
+    const isBalanceCommand =
+      Boolean(simId) &&
+      (
+        isAirtimeCommand ||
+        isDataCommand
+      );
+
+    const isTemporaryMessage =
+      normalizedMessage.includes(
+        "awaiting network response"
+      ) ||
+      normalizedMessage.includes(
+        "awaiting ussd response"
+      ) ||
+      normalizedMessage.includes(
+        "request submitted"
+      ) ||
+      normalizedMessage.includes(
+        "request opened"
+      ) ||
+      normalizedMessage.includes(
+        "command received"
+      );
+
+    const isInvalidUssdMessage =
+      normalizedMessage.includes(
+        "invalid selection"
+      ) ||
+      normalizedMessage.includes(
+        "invalid input"
+      ) ||
+      normalizedMessage.includes(
+        "invalid choice"
+      );
+
+    console.log(
+      "COMMAND RESULT DETAILS:",
+      {
         reference,
+        normalizedStatus,
+        finalMessage,
         simId,
         balanceType,
         isAirtimeCommand,
         isDataCommand,
+        isBalanceCommand,
+        isTemporaryMessage,
+        isInvalidUssdMessage,
         payload,
+      }
+    );
+
+    let command =
+      existingCommand;
+
+    let updatedSim =
+      null;
+
+    /*
+     * Temporary response ba final result ba ne.
+     */
+    if (
+      isBalanceCommand &&
+      (
+        normalizedStatus ===
+          "PROCESSING" ||
+        normalizedStatus ===
+          "SENT" ||
+        isTemporaryMessage
+      )
+    ) {
+      command =
+        await markCommandProcessing({
+          reference,
+          message:
+            finalMessage ||
+            "Waiting for final balance response",
+        });
+
+      await prisma.gsmDevice.update({
+        where: {
+          id: deviceId,
+        },
+        data: {
+          status: "ONLINE",
+          lastSeen: new Date(),
+        },
       });
 
+      return res.json({
+        success: true,
+        pending: true,
+        message:
+          "Waiting for final network balance response",
+        command,
+        sim: null,
+      });
+    }
+
+    /*
+     * Invalid selection ba successful balance ba ne.
+     */
+    if (
+      isBalanceCommand &&
+      isInvalidUssdMessage
+    ) {
+      command =
+        await markCommandFailed({
+          reference,
+          message:
+            finalMessage ||
+            "Network rejected USSD request",
+        });
+
+      await prisma.gsmDevice.update({
+        where: {
+          id: deviceId,
+        },
+        data: {
+          status: "ONLINE",
+          lastSeen: new Date(),
+        },
+      });
+
+      return res.status(422).json({
+        success: false,
+        code:
+          "INVALID_USSD_RESPONSE",
+        message:
+          "Network rejected the balance request",
+        command,
+        sim: null,
+      });
+    }
+
+    if (
+      normalizedStatus ===
+        "PROCESSING" ||
+      normalizedStatus ===
+        "SENT"
+    ) {
+      command =
+        await markCommandProcessing({
+          reference,
+          message:
+            finalMessage ||
+            "Command is being processed",
+        });
+    } else if (
+      normalizedStatus ===
+        "SUCCESSFUL" ||
+      normalizedStatus ===
+        "DELIVERED"
+    ) {
+      let airtimeBalance =
+        null;
+
+      let dataBalance =
+        null;
+
+      let expiryValue =
+        null;
+
+      if (isAirtimeCommand) {
+        airtimeBalance =
+          parseAirtimeBalance(
+            finalMessage
+          );
+      }
+
+      if (isDataCommand) {
+        const parsedDataBalance =
+          parseDataBalance(
+            finalMessage
+          );
+
+        if (
+          parsedDataBalance !== null &&
+          parsedDataBalance !== undefined &&
+          String(
+            parsedDataBalance
+          ).trim() !== ""
+        ) {
+          dataBalance =
+            String(
+              parsedDataBalance
+            ).trim();
+        }
+      }
+
+      expiryValue =
+        parseExpiryDate(
+          finalMessage
+        );
+
+      console.log(
+        "PARSED BALANCE RESULT:",
+        {
+          finalMessage,
+          airtimeBalance,
+          dataBalance,
+          expiryValue,
+        }
+      );
+
+      const hasAirtimeBalance =
+        airtimeBalance !== null &&
+        airtimeBalance !== undefined &&
+        !Number.isNaN(
+          Number(
+            airtimeBalance
+          )
+        );
+
+      const hasDataBalance =
+        dataBalance !== null &&
+        dataBalance !== undefined &&
+        String(
+          dataBalance
+        ).trim() !== "";
+
+      /*
+       * Kada balance command ya zama SUCCESSFUL
+       * idan parser bai sami balance ba.
+       */
       if (
-        simId &&
-        (isAirtimeCommand || isDataCommand)
+        isBalanceCommand &&
+        !hasAirtimeBalance &&
+        !hasDataBalance
       ) {
+        command =
+          await markCommandProcessing({
+            reference,
+            message:
+              finalMessage ||
+              "Waiting for a valid balance response",
+          });
+
+        await prisma.gsmDevice.update({
+          where: {
+            id: deviceId,
+          },
+          data: {
+            status: "ONLINE",
+            lastSeen: new Date(),
+          },
+        });
+
+        return res.status(202).json({
+          success: true,
+          pending: true,
+          code:
+            "BALANCE_NOT_PARSED",
+          message:
+            "Response received but no valid balance was found",
+          rawResponse:
+            finalMessage,
+          command,
+          sim: null,
+        });
+      }
+
+      command =
+        await markCommandSuccessful({
+          reference,
+          message:
+            finalMessage ||
+            "Command completed successfully",
+        });
+
+      if (isBalanceCommand) {
         const updateData = {
-          lastBalanceCheck: new Date(),
-          lastSyncAt: new Date(),
+          lastBalanceCheck:
+            new Date(),
+
+          lastSyncAt:
+            new Date(),
         };
 
-        let airtimeBalance = null;
-        let dataBalance = null;
-        let expiryValue = null;
-
-        if (isAirtimeCommand) {
-          airtimeBalance =
-            parseAirtimeBalance(finalMessage);
-
-          if (
-            airtimeBalance !== null &&
-            airtimeBalance !== undefined &&
-            !Number.isNaN(Number(airtimeBalance))
-          ) {
-            updateData.airtimeBalance =
-              Number(airtimeBalance);
-          }
+        if (
+          hasAirtimeBalance
+        ) {
+          updateData.airtimeBalance =
+            Number(
+              airtimeBalance
+            );
         }
 
-        if (isDataCommand) {
-          const parsedDataBalance =
-            parseDataBalance(finalMessage);
-
-          if (
-            parsedDataBalance !== null &&
-            parsedDataBalance !== undefined &&
-            String(parsedDataBalance).trim() !== ""
-          ) {
-            dataBalance =
-              String(parsedDataBalance).trim();
-
-            updateData.dataBalance =
-              dataBalance;
-          }
+        if (
+          hasDataBalance
+        ) {
+          updateData.dataBalance =
+            String(
+              dataBalance
+            ).trim();
         }
-
-        expiryValue =
-          parseExpiryDate(finalMessage);
 
         if (expiryValue) {
           const parsedExpiry =
-            parseExpiryToDate(expiryValue);
+            parseExpiryToDate(
+              expiryValue
+            );
 
           if (parsedExpiry) {
             updateData.expiryDate =
@@ -1182,82 +1424,76 @@ exports.receiveCommandResult = async (req, res) => {
           }
         }
 
-        console.log("PARSED BALANCE RESULT:", {
-          airtimeBalance,
-          dataBalance,
-          expiryValue,
-          updateData,
-        });
+        updatedSim =
+          await prisma.gsmSim.update({
+            where: {
+              id: simId,
+            },
 
-        const hasParsedBalance =
-          Object.prototype.hasOwnProperty.call(
-            updateData,
-            "airtimeBalance"
-          ) ||
-          Object.prototype.hasOwnProperty.call(
-            updateData,
-            "dataBalance"
-          ) ||
-          Object.prototype.hasOwnProperty.call(
-            updateData,
-            "expiryDate"
-          );
-
-        if (hasParsedBalance) {
-          updatedSim =
-            await prisma.gsmSim.update({
-              where: {
-                id: simId,
-              },
-              data: updateData,
-            });
-
-          emitEvent(
-            "gsm-sim-balance-updated",
-            {
-              deviceId,
-              simId,
-              balanceType,
-              airtimeBalance:
-                updatedSim.airtimeBalance,
-              dataBalance:
-                updatedSim.dataBalance,
-              expiryDate:
-                updatedSim.expiryDate,
-              sim: updatedSim,
-            }
-          );
-
-          emitEvent("gsm-sims-synced", {
-            deviceId,
-            sims: [updatedSim],
+            data: updateData,
           });
 
-          console.log(
-            "SIM balance updated successfully:",
-            updatedSim.id
-          );
-        } else {
-          console.log(
-            "No airtime/data balance could be parsed from:",
-            finalMessage
-          );
-        }
+        emitEvent(
+          "gsm-sim-balance-updated",
+          {
+            deviceId,
+            simId,
+            balanceType,
+
+            airtimeBalance:
+              updatedSim.airtimeBalance,
+
+            dataBalance:
+              updatedSim.dataBalance,
+
+            expiryDate:
+              updatedSim.expiryDate,
+
+            sim: updatedSim,
+          }
+        );
+
+        emitEvent(
+          "gsm-sims-synced",
+          {
+            deviceId,
+            sims: [
+              updatedSim,
+            ],
+          }
+        );
+
+        console.log(
+          "SIM BALANCE UPDATED:",
+          {
+            simId:
+              updatedSim.id,
+
+            airtimeBalance:
+              updatedSim.airtimeBalance,
+
+            dataBalance:
+              updatedSim.dataBalance,
+          }
+        );
       }
     } else {
-      command = await markCommandFailed({
-        reference,
-        message:
-          finalMessage ||
-          normalizedStatus ||
-          "Command failed",
-      });
+      command =
+        await markCommandFailed({
+          reference,
+
+          message:
+            finalMessage ||
+            normalizedStatus ||
+            "Command failed",
+        });
     }
 
     await prisma.gsmDevice.update({
       where: {
         id: deviceId,
       },
+
       data: {
         status: "ONLINE",
         lastSeen: new Date(),
@@ -1266,9 +1502,11 @@ exports.receiveCommandResult = async (req, res) => {
 
     return res.json({
       success: true,
+
       message: updatedSim
         ? "Command result received and SIM balance updated"
         : "Command result received",
+
       command,
       sim: updatedSim,
     });
@@ -1280,6 +1518,7 @@ exports.receiveCommandResult = async (req, res) => {
 
     return res.status(400).json({
       success: false,
+
       message:
         error?.message ||
         "Unable to process command result",

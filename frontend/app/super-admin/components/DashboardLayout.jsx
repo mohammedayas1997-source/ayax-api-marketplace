@@ -10,24 +10,20 @@ export default function DashboardLayout({
   description,
 }) {
   return (
-    <PermissionGuard allowedRoles={["SUPER_ADMIN"]}>
+    <PermissionGuard
+      allowedRoles={["SUPER_ADMIN"]}
+    >
       <main className="min-h-screen bg-slate-950 text-white">
-        <div className="min-h-screen">
-          <div className="fixed inset-y-0 left-0 z-40 hidden w-80 lg:block">
-            <SuperSidebar />
-          </div>
+        <div className="flex">
+          <SuperSidebar />
 
-          <section className="min-h-screen min-w-0 lg:ml-80">
-            <div className="sticky top-0 z-30 border-b border-slate-800 bg-slate-950/95 backdrop-blur">
-              <SuperTopbar
-                title={title}
-                description={description}
-              />
-            </div>
+          <section className="min-w-0 flex-1 p-6 lg:p-10">
+            <SuperTopbar
+              title={title}
+              description={description}
+            />
 
-            <div className="min-w-0 overflow-x-hidden p-5 lg:p-10">
-              {children}
-            </div>
+            {children}
           </section>
         </div>
       </main>

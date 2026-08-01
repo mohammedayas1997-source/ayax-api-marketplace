@@ -252,11 +252,16 @@ export default function SuperAdminSidebar({
   const pathname = usePathname();
 
   const logout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
+  localStorage.removeItem("token");
+  localStorage.removeItem("user");
 
-    window.location.href = "/login";
-  };
+  sessionStorage.removeItem("token");
+  sessionStorage.removeItem("user");
+  sessionStorage.removeItem("loginOtpSession");
+  sessionStorage.removeItem("developmentLoginOtp");
+
+  window.location.replace("/login");
+};
 
   const isLinkActive = (href) => {
     if (href === "/super-admin") {

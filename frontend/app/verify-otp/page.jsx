@@ -492,11 +492,6 @@ export default function VerifyOtpPage() {
       console.log("ROLE:", user.role);
       console.log("================================");
 
-      const storage =
-        otpSession.rememberMe
-          ? localStorage
-          : sessionStorage;
-
       localStorage.removeItem(
         "token"
       );
@@ -513,15 +508,18 @@ export default function VerifyOtpPage() {
         "user"
       );
 
-      storage.setItem(
-        "token",
-        token
-      );
+      localStorage.setItem(
+  "token",
+  token
+);
 
-      storage.setItem(
-        "user",
-        JSON.stringify(user)
-      );
+localStorage.setItem(
+  "user",
+  JSON.stringify(user)
+);
+
+sessionStorage.removeItem("token");
+sessionStorage.removeItem("user");
       console.log(
   "LOCAL USER:",
   JSON.parse(

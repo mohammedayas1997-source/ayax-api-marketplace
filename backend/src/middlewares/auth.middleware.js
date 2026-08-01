@@ -1,4 +1,4 @@
-const jwt = require("jsonwebtoken");
+﻿const jwt = require("jsonwebtoken");
 const prisma = require("../config/prisma");
 
 /* ======================================================
@@ -151,8 +151,8 @@ const tokenWasIssuedBeforePasswordChange = (
     ).getTime();
 
   /*
-   * Ƙaramin tolerance domin kada token
-   * da aka bayar a daidai second ɗin
+   * Æ˜aramin tolerance domin kada token
+   * da aka bayar a daidai second É—in
    * password change ya samu kuskure.
    */
   return (
@@ -248,7 +248,7 @@ module.exports = async (
     }
 
     /*
-     * Token ɗinmu yana da jti.
+     * Token É—inmu yana da jti.
      * Idan babu jti, kada mu amince da shi.
      */
     const tokenId =
@@ -340,10 +340,7 @@ module.exports = async (
       );
     }
 
-req.user = {
-  ...user,
-  role: normalizeRole(user.role),
-};
+req.user = user;
 
 req.auth = {
   tokenId,
@@ -424,3 +421,4 @@ req.auth = {
     });
   }
 };
+

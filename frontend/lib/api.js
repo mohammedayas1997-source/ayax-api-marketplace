@@ -1,4 +1,4 @@
-import axios from "axios";
+﻿import axios from "axios";
 
 const FALLBACK_API_URL =
   "https://api.ayaxapis.com/api/v1";

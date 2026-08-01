@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import {
   useEffect,
@@ -508,15 +508,9 @@ export default function VerifyOtpPage() {
         "user"
       );
 
-      localStorage.setItem(
-  "token",
-  token
-);
+      locallocalStorage.setItem("token", token);
 
-localStorage.setItem(
-  "user",
-  JSON.stringify(user)
-);
+locallocalStorage.setItem("user", JSON.stringify(user));
 
 sessionStorage.removeItem("token");
 sessionStorage.removeItem("user");

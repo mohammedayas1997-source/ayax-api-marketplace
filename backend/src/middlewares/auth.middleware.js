@@ -340,29 +340,32 @@ module.exports = async (
       );
     }
 
-    req.user = user;
+req.user = {
+  ...user,
+  role: normalizeRole(user.role),
+};
 
-    req.auth = {
-      tokenId,
+req.auth = {
+  tokenId,
 
-      tokenType:
-        decoded.tokenType,
+  tokenType:
+    decoded.tokenType,
 
-      issuedAt:
-        decoded.iat || null,
+  issuedAt:
+    decoded.iat || null,
 
-      expiresAt:
-        decoded.exp || null,
+  expiresAt:
+    decoded.exp || null,
 
-      issuer:
-        decoded.iss || null,
+  issuer:
+    decoded.iss || null,
 
-      audience:
-        decoded.aud || null,
+  audience:
+    decoded.aud || null,
 
-      subject:
-        user.id,
-    };
+  subject:
+    user.id,
+};
 
     /*
      * Share expired-token cleanup ba tare

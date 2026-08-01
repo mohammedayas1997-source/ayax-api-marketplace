@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 import {
@@ -247,10 +247,7 @@ export default function LoginPage() {
         );
       }
 
-      const storage =
-        rememberMe
-          ? localStorage
-          : sessionStorage;
+      
 
       /*
        * Cire tsohon session domin kada
@@ -272,15 +269,9 @@ export default function LoginPage() {
         "user"
       );
 
-      storage.setItem(
-        "token",
-        token
-      );
+      localStorage.setItem("token", token);
 
-      storage.setItem(
-        "user",
-        JSON.stringify(user)
-      );
+      localStorage.setItem("user", JSON.stringify(user));
 
       redirectByRole(
         router,

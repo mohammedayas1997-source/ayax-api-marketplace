@@ -118,9 +118,7 @@ export default function UssdLogsPage() {
          * Idan backend route ɗinka ya bambanta,
          * canza wannan layin kawai.
          */
-        const response = await api.get(
-          "/gsm/ussd-logs"
-        );
+        const response = await api.get("/commands/ussd-logs");
 
         setLogs(
           normalizeLogs(

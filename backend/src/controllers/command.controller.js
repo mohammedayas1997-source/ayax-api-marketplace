@@ -278,3 +278,157 @@ exports.getCommands = async (req, res) => {
     });
   }
 };
+
+/* ======================================================
+   GET USSD LOGS
+   GET /api/v1/commands/ussd-logs
+====================================================== */
+
+exports.getUssdLogs = async (req, res) => {
+  try {
+    const page = Math.max(
+      Number(req.query.page) || 1,
+      1
+    );
+
+    const limit = Math.min(
+      Math.max(
+        Number(req.query.limit) || 100,
+        1
+      ),
+      200
+    );
+
+    const skip = (page - 1) * limit;
+
+    const where = {
+      type: "USSD",
+    };
+
+    const [commands, total] =
+      await Promise.all([
+        prisma.gsmCommand.findMany({
+          where,
+
+          include: {
+            device: true,
+          },
+
+          orderBy: {
+            createdAt: "desc",
+          },
+
+          skip,
+          take: limit,
+        }),
+
+        prisma.gsmCommand.count({
+          where,
+        }),
+      ]);
+
+    const logs = commands.map(
+      (command) => ({
+        id: command.id,
+        reference: command.reference,
+        deviceId: command.deviceId,
+
+        deviceName:
+          command.device?.name ||
+          command.device?.deviceName ||
+          command.device?.model ||
+          command.deviceId,
+
+        simId:
+          command.payload?.simId ||
+          null,
+
+        simSlot:
+          command.payload?.simSlot ===
+          undefined
+            ? null
+            : command.payload.simSlot,
+
+        network:
+          command.payload?.carrierName ||
+          null,
+
+        ussdCode:
+          command.payload?.ussdCode ||
+          null,
+
+        command:
+          command.payload?.ussdCode ||
+          null,
+
+        service:
+          command.payload?.service ||
+          null,
+
+        status:
+          command.status ||
+          "PENDING",
+
+        response:
+          command.response ||
+          command.result ||
+          command.message ||
+          null,
+
+        message:
+          command.message ||
+          null,
+
+        payload:
+          command.payload ||
+          null,
+
+        createdAt:
+          command.createdAt,
+
+        updatedAt:
+          command.updatedAt,
+      })
+    );
+
+    return res.status(200).json({
+      success: true,
+
+      message:
+        "USSD logs retrieved successfully.",
+
+      logs,
+      ussdLogs: logs,
+
+      pagination: {
+        page,
+        limit,
+        total,
+
+        totalPages: Math.max(
+          Math.ceil(total / limit),
+          1
+        ),
+
+        hasNextPage:
+          page * limit < total,
+
+        hasPreviousPage:
+          page > 1,
+      },
+    });
+  } catch (error) {
+    console.error(
+      "getUssdLogs error:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+
+      message:
+        error.message ||
+        "Unable to retrieve USSD logs.",
+    });
+  }
+};

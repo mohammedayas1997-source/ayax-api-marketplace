@@ -486,6 +486,11 @@ export default function VerifyOtpPage() {
           "Invalid OTP verification response from server."
         );
       }
+      console.log("========== LOGIN USER ==========");
+      console.log("TOKEN:", token);
+      console.log("USER:", user);
+      console.log("ROLE:", user.role);
+      console.log("================================");
 
       const storage =
         otpSession.rememberMe
@@ -517,6 +522,12 @@ export default function VerifyOtpPage() {
         "user",
         JSON.stringify(user)
       );
+      console.log(
+  "LOCAL USER:",
+  JSON.parse(
+    storage.getItem("user")
+  )
+);
 
       sessionStorage.removeItem(
         "loginOtpSession"

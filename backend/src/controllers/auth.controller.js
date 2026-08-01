@@ -5,6 +5,10 @@ const jwt = require("jsonwebtoken");
 const prisma = require("../config/prisma");
 const createAuditLog = require("../utils/audit");
 const { emitEvent } = require("../config/socket");
+const {
+  sendWelcomeEmail,
+  sendLoginAlertEmail,
+} = require("../services/accountEmail.service");
 
 const {
   createLoginOtp,
@@ -726,10 +730,15 @@ exports.register = async (req, res) => {
     /*
      * Welcome notification sau ɗaya kawai.
      */
-    const welcomeNotification =
-      await createWelcomeNotification(
-        user
-      );
+    const welcomeNotification = await createWelcomeNotification(user);
+    sendWelcomeEmail({
+  user,
+}).catch((error) => {
+  console.error(
+    "Welcome email error:",
+    error.message
+  );
+});
 
     return res.status(201).json({
       success: true,
@@ -1300,6 +1309,25 @@ exports.verifyLoginOtp = async (
           safeUserSelect,
       });
 
+    sendLoginAlertEmail({
+  user: updatedUser,
+
+  ipAddress:
+    getClientIp(req),
+
+  userAgent:
+    req.headers["user-agent"] ||
+    "Unknown",
+
+  loggedInAt:
+    now,
+}).catch((error) => {
+  console.error(
+    "Login alert email error:",
+    error.message
+  );
+});
+
     /*
      * Login history zai zama successful
      * ne bayan OTP ya yi daidai.
@@ -1324,14 +1352,33 @@ exports.verifyLoginOtp = async (
     });
 
     await writeAuditLog({
-      req,
-      user: updatedUser,
+  req,
+  user: updatedUser,
 
-      action: "LOGIN",
+  action: "LOGIN",
 
-      description:
-        `${updatedUser.email} logged in successfully after OTP verification.`,
-    });
+  description:
+    `${updatedUser.email} logged in successfully after OTP verification.`,
+});
+
+sendLoginAlertEmail({
+  user: updatedUser,
+
+  ipAddress:
+    getClientIp(req),
+
+  userAgent:
+    req.headers["user-agent"] ||
+    "Unknown",
+
+  loggedInAt:
+    now,
+}).catch((error) => {
+  console.error(
+    "Login alert email error:",
+    error.message
+  );
+});
 
     const token =
       generateToken(

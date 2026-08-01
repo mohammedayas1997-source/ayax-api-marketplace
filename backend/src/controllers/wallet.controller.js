@@ -20,6 +20,10 @@ const {
   sendWalletFundedNotification,
 } = require("../services/notification.service");
 
+const {
+  sendWalletFundingEmail,
+} = require("../services/accountEmail.service");
+
 const getStartOfToday = () => {
   const date = new Date();
 
@@ -330,6 +334,8 @@ const creditWalletFromPaystack =
             throw error;
           }
         });
+
+      
         const walletPayload = {
   userId,
   balance: Number(updatedWallet.balance || 0),
@@ -339,11 +345,15 @@ const creditWalletFromPaystack =
   updatedAt: new Date(),
 };
 
-        return {
+       return {
   alreadyProcessed: false,
   wallet: updatedWallet,
   funding: updatedFunding,
   user,
+  previousBalance: balanceBefore,
+  newBalance: balanceAfter,
+  amount: Number(amount),
+  reference: fundingReference,
   walletPayload,
 };
       }
@@ -563,6 +573,7 @@ exports.getWallet = async (
     });
   }
 };
+
 
 /* ======================================================
    WALLET TRANSACTIONS
@@ -844,6 +855,7 @@ exports.getWalletTransactions =
     }
   };
 
+
 /*
  * Compatibility da tsohon route:
  * getMyTransactions yana amfani da
@@ -951,6 +963,8 @@ exports.createFundingRequest =
       });
     }
   };
+
+  
 
 /* ======================================================
    MY FUNDING REQUESTS
@@ -1426,7 +1440,7 @@ exports.verifyPaystackFunding =
           paymentReference:
             transactionData.reference,
         });
-        if (!credited.alreadyProcessed) {
+       if (!credited.alreadyProcessed) {
   await sendWalletFundedNotification({
     user: credited.user,
     amount: paidAmount,
@@ -1434,13 +1448,37 @@ exports.verifyPaystackFunding =
     reference: funding.reference,
   });
 
+  sendWalletFundingEmail({
+    user: credited.user,
+    amount: credited.amount,
+    previousBalance:
+      credited.previousBalance,
+    newBalance:
+      credited.newBalance,
+    reference:
+      credited.reference,
+    paymentReference:
+      credited.funding.paymentReference,
+    channel:
+      credited.funding.channel ||
+      "PAYSTACK",
+    fundedAt:
+      credited.funding.approvedAt ||
+      new Date(),
+  }).catch((error) => {
+    console.error(
+      "Wallet funding email error:",
+      error.message
+    );
+  });
 
-emitEvent(
-  "wallet:updated",
-  credited.walletPayload,
-  `user-${credited.user.id}`
-);
+  emitEvent(
+    "wallet:updated",
+    credited.walletPayload,
+    `user-${credited.user.id}`
+  );
 }
+
 
       await createAuditLog({
         req,
@@ -1649,6 +1687,30 @@ if (!credited.alreadyProcessed) {
     amount: paidAmount,
     balance: credited.wallet.balance,
     reference: funding.reference,
+  });
+
+  sendWalletFundingEmail({
+    user: credited.user,
+    amount: credited.amount,
+    previousBalance:
+      credited.previousBalance,
+    newBalance:
+      credited.newBalance,
+    reference:
+      credited.reference,
+    paymentReference:
+      credited.funding.paymentReference,
+    channel:
+      credited.funding.channel ||
+      "PAYSTACK",
+    fundedAt:
+      credited.funding.approvedAt ||
+      new Date(),
+  }).catch((error) => {
+    console.error(
+      "Wallet funding email error:",
+      error.message
+    );
   });
 
   emitEvent(

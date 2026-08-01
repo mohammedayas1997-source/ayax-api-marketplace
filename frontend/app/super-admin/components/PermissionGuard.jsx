@@ -62,13 +62,27 @@ export default function PermissionGuard({
   const [checking, setChecking] = useState(true);
 
   const normalizedAllowedRoles =
-    useMemo(
-      () =>
-        allowedRoles
-          .map(normalizeRole)
-          .filter(Boolean),
-      [allowedRoles]
-    );
+  useMemo(() => {
+    const roles = Array.isArray(
+      allowedRoles
+    )
+      ? allowedRoles
+      : [];
+
+    const normalizedRoles = roles
+      .map(normalizeRole)
+      .filter(Boolean);
+
+    /*
+     * Duk pages da ke ƙarƙashin
+     * super-admin za su buƙaci
+     * SUPER_ADMIN idan ba a bayar
+     * da wani role ba.
+     */
+    return normalizedRoles.length > 0
+      ? normalizedRoles
+      : ["SUPER_ADMIN"];
+  }, [allowedRoles]);
 
   useEffect(() => {
     let active = true;

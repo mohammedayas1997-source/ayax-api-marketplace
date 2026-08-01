@@ -1,5 +1,5 @@
 const prisma = require("../config/prisma");
-const sendEmail = require("./sendEmail");
+const sendEmail = require("../utils/sendEmail");
 
 const FRONTEND_URL = String(
   process.env.FRONTEND_URL ||

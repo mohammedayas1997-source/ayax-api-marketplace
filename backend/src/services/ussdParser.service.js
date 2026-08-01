@@ -28,30 +28,44 @@ const normalizeUnit = (unit = "") => {
  * AIRTIME PARSER
  * An bar salon da yake aiki a baya.
  */
-function parseAirtimeBalance(text = "") {
-  if (!text) return null;
+function parseAirtimeBalance(message = "") {
+  const text = normalize(message);
+
+  if (!text) {
+    return null;
+  }
 
   const patterns = [
-    /Pulse\s+main\s+account:\s*[₦N]?\s*([\d,]+(?:\.\d+)?)/i,
-    /Main\s+Balance[:\s]*[₦N]?\s*([\d,]+(?:\.\d+)?)/i,
-    /Your\s+balance\s+is\s*[₦N]?\s*([\d,]+(?:\.\d+)?)/i,
-    /Account\s+Balance[:\s]*[₦N]?\s*([\d,]+(?:\.\d+)?)/i,
-    /Balance[:\s]*[₦N]?\s*([\d,]+(?:\.\d+)?)/i,
-    /[₦N]\s*([\d,]+(?:\.\d+)?)/i,
+    /Pulse\s+main\s+account\s*:\s*(?:₦|NGN|N)?\s*([0-9]+(?:\.[0-9]+)?)/i,
+
+    /Main\s+(?:account\s+)?balance\s*(?:is|:)?\s*(?:₦|NGN|N)?\s*([0-9]+(?:\.[0-9]+)?)/i,
+
+    /Your\s+(?:airtime\s+)?balance\s*(?:is|:)?\s*(?:₦|NGN|N)?\s*([0-9]+(?:\.[0-9]+)?)/i,
+
+    /Account\s+balance\s*(?:is|:)?\s*(?:₦|NGN|N)?\s*([0-9]+(?:\.[0-9]+)?)/i,
+
+    /Available\s+balance\s*(?:is|:)?\s*(?:₦|NGN|N)?\s*([0-9]+(?:\.[0-9]+)?)/i,
+
+    /(?:₦|NGN|N)\s*([0-9]+(?:\.[0-9]+)?)/i,
   ];
 
   for (const pattern of patterns) {
     const match = text.match(pattern);
 
-    if (match) {
-      return parseFloat(match[1].replace(/,/g, ""));
+    if (match?.[1]) {
+      const amount = Number(match[1]);
+
+      if (Number.isFinite(amount)) {
+        return amount;
+      }
     }
   }
 
   return null;
 }
 
-exports.parseAirtimeBalance = parseAirtimeBalance;
+exports.parseAirtimeBalance =
+  parseAirtimeBalance;
 
 /*
  * DATA PARSER

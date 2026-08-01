@@ -1,62 +1,98 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
 import {
   ShieldAlert,
   LockKeyhole,
 } from "lucide-react";
 
-const normalizeRole = (role) =>
-  String(role || "")
+/* ======================================================
+   ROLE NORMALIZATION
+====================================================== */
+
+const normalizeRole = (role) => {
+  return String(role || "")
     .trim()
     .toUpperCase()
     .replace(/[\s-]+/g, "_");
+};
+
+/* ======================================================
+   GET SAVED USER
+====================================================== */
+
+const getSavedUser = () => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const savedUser =
+      localStorage.getItem("user") ||
+      sessionStorage.getItem("user");
+
+    if (!savedUser) {
+      return null;
+    }
+
+    return JSON.parse(savedUser);
+  } catch (error) {
+    console.error(
+      "Unable to read saved user:",
+      error
+    );
+
+    localStorage.removeItem("user");
+    sessionStorage.removeItem("user");
+
+    return null;
+  }
+};
+
+/* ======================================================
+   PERMISSION GUARD
+====================================================== */
 
 export default function PermissionGuard({
   allowedRoles = [],
   children,
   fallback = null,
 }) {
-  const [user, setUser] = useState(null);
-  const [checking, setChecking] = useState(true);
+  const [user, setUser] =
+    useState(null);
+
+  const [checking, setChecking] =
+    useState(true);
 
   const normalizedAllowedRoles =
-    useMemo(
-      () =>
-        allowedRoles.map(
-          normalizeRole
-        ),
-      [allowedRoles]
-    );
+    useMemo(() => {
+      return allowedRoles
+        .map(normalizeRole)
+        .filter(Boolean);
+    }, [allowedRoles]);
 
   useEffect(() => {
-    try {
-      const savedUser =
-        localStorage.getItem("user");
+    const savedUser =
+      getSavedUser();
 
-      if (savedUser) {
-        const parsedUser =
-          JSON.parse(savedUser);
-
-        setUser(parsedUser);
-      }
-    } catch (error) {
-      console.error(
-        "Unable to read saved user:",
-        error
-      );
-
-      localStorage.removeItem("user");
-    } finally {
-      setChecking(false);
-    }
+    setUser(savedUser);
+    setChecking(false);
   }, []);
+
+  /* ====================================================
+     LOADING
+  ==================================================== */
 
   if (checking) {
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-white">
         <div className="text-center">
-          <div className="h-14 w-14 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-5" />
+          <div className="mx-auto mb-5 h-14 w-14 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
 
           <p className="text-slate-400">
             Checking permission...
@@ -66,14 +102,20 @@ export default function PermissionGuard({
     );
   }
 
-  const userRole =
-    normalizeRole(user?.role);
+  const currentRole =
+    normalizeRole(
+      user?.role
+    );
 
   const hasPermission =
     Boolean(user) &&
     normalizedAllowedRoles.includes(
-      userRole
+      currentRole
     );
+
+  /* ====================================================
+     ACCESS DENIED
+  ==================================================== */
 
   if (!hasPermission) {
     if (fallback) {
@@ -81,9 +123,9 @@ export default function PermissionGuard({
     }
 
     return (
-      <div className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 text-center">
-          <div className="w-16 h-16 bg-red-500/10 text-red-400 rounded-3xl flex items-center justify-center mx-auto mb-5">
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 p-6 text-white">
+        <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900 p-8 text-center">
+          <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-3xl bg-red-500/10 text-red-400">
             <ShieldAlert size={34} />
           </div>
 
@@ -91,22 +133,25 @@ export default function PermissionGuard({
             Access Denied
           </h1>
 
-          <p className="text-slate-400 mt-3 leading-7">
-            You do not have permission to access this page.
+          <p className="mt-3 leading-7 text-slate-400">
+            You do not have permission
+            to access this page.
           </p>
 
-          <div className="mt-6 bg-slate-950 border border-slate-800 rounded-2xl p-4 flex items-center justify-center gap-3 text-slate-400">
+          <div className="mt-6 flex items-center justify-center gap-3 rounded-2xl border border-slate-800 bg-slate-950 p-4 text-slate-400">
             <LockKeyhole size={18} />
 
-            Required roles:{" "}
-            {normalizedAllowedRoles.join(
-              ", "
-            )}
+            <span>
+              Required roles:{" "}
+              {normalizedAllowedRoles.length > 0
+                ? normalizedAllowedRoles.join(", ")
+                : "NONE"}
+            </span>
           </div>
 
           <div className="mt-3 text-xs text-slate-500">
             Current role:{" "}
-            {userRole || "UNKNOWN"}
+            {currentRole || "UNKNOWN"}
           </div>
         </div>
       </div>

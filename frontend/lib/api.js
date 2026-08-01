@@ -17,10 +17,13 @@ const PUBLIC_PATHS = [
   "/register",
   "/forgot-password",
   "/reset-password",
+  "/verify-otp",
 ];
 
 const AUTH_ENDPOINTS = [
   "/auth/login",
+  "/auth/login/verify-otp",
+  "/auth/login/resend-otp",
   "/auth/register",
   "/auth/forgot-password",
   "/auth/reset-password",
@@ -49,7 +52,10 @@ const normalizeRequestUrl = (url) => {
    *
    * /api/v1/wallet becomes /wallet.
    */
-  return url.replace(/^\/api\/v1(?=\/|$)/, "");
+  return url.replace(
+    /^\/api\/v1(?=\/|$)/,
+    ""
+  );
 };
 
 const getStoredToken = () => {
@@ -58,10 +64,35 @@ const getStoredToken = () => {
   }
 
   const token =
-  localStorage.getItem("token") ||
-  sessionStorage.getItem("token");
+    localStorage.getItem("token") ||
+    sessionStorage.getItem("token");
 
   return token?.trim() || null;
+};
+
+const getStoredUser = () => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const rawUser =
+      localStorage.getItem("user") ||
+      sessionStorage.getItem("user");
+
+    if (!rawUser) {
+      return null;
+    }
+
+    return JSON.parse(rawUser);
+  } catch (error) {
+    console.error(
+      "Unable to read stored user:",
+      error
+    );
+
+    return null;
+  }
 };
 
 const clearStoredSession = () => {
@@ -70,23 +101,45 @@ const clearStoredSession = () => {
   }
 
   localStorage.removeItem("token");
-  sessionStorage.removeItem("token");
   localStorage.removeItem("user");
   localStorage.removeItem("auth");
-  localStorage.removeItem("currentUser");
+  localStorage.removeItem(
+    "currentUser"
+  );
+
+  sessionStorage.removeItem("token");
+  sessionStorage.removeItem("user");
+  sessionStorage.removeItem("auth");
+  sessionStorage.removeItem(
+    "currentUser"
+  );
+
+  sessionStorage.removeItem(
+    "loginOtpSession"
+  );
+
+  sessionStorage.removeItem(
+    "developmentLoginOtp"
+  );
 };
 
 const isPublicPage = (pathname) => {
   return PUBLIC_PATHS.some(
     (path) =>
       pathname === path ||
-      pathname.startsWith(`${path}/`)
+      pathname.startsWith(
+        `${path}/`
+      )
   );
 };
 
-const isAuthEndpoint = (requestUrl) => {
+const isAuthEndpoint = (
+  requestUrl
+) => {
   const normalizedUrl =
-    normalizeRequestUrl(requestUrl) || "";
+    normalizeRequestUrl(
+      requestUrl
+    ) || "";
 
   return AUTH_ENDPOINTS.some(
     (endpoint) =>
@@ -117,7 +170,9 @@ const redirectToLogin = () => {
       redirectTarget
     )}`;
 
-  window.location.replace(loginUrl);
+  window.location.replace(
+    loginUrl
+  );
 };
 
 const api = axios.create({
@@ -131,7 +186,8 @@ const api = axios.create({
 
   headers: {
     Accept: "application/json",
-    "Content-Type": "application/json",
+    "Content-Type":
+      "application/json",
   },
 
   /*
@@ -147,14 +203,16 @@ const api = axios.create({
 
 api.interceptors.request.use(
   (config) => {
-    config.url = normalizeRequestUrl(
-      config.url
-    );
+    config.url =
+      normalizeRequestUrl(
+        config.url
+      );
 
     config.headers =
       config.headers || {};
 
-    const token = getStoredToken();
+    const token =
+      getStoredToken();
 
     if (token) {
       config.headers.Authorization =
@@ -165,19 +223,23 @@ api.interceptors.request.use(
      * Useful for request tracing.
      */
     if (
-      typeof crypto !== "undefined" &&
+      typeof crypto !==
+        "undefined" &&
       typeof crypto.randomUUID ===
         "function"
     ) {
-      config.headers["x-request-id"] =
-        crypto.randomUUID();
+      config.headers[
+        "x-request-id"
+      ] = crypto.randomUUID();
     }
 
     return config;
   },
 
   (error) => {
-    return Promise.reject(error);
+    return Promise.reject(
+      error
+    );
   }
 );
 
@@ -189,8 +251,11 @@ api.interceptors.response.use(
   (response) => response,
 
   (error) => {
-    const response = error.response;
-    const status = response?.status;
+    const response =
+      error.response;
+
+    const status =
+      response?.status;
 
     const responseCode =
       response?.data?.code;
@@ -202,22 +267,37 @@ api.interceptors.response.use(
       error.config?.url || "";
 
     if (!response) {
-      console.error("API Network Error", {
-        message: error.message,
-        code: error.code,
-        baseURL: error.config?.baseURL,
-        requestURL: requestUrl,
-        method: error.config?.method,
-      });
+      console.error(
+        "API Network Error",
+        {
+          message:
+            error.message,
+
+          code:
+            error.code,
+
+          baseURL:
+            error.config?.baseURL,
+
+          requestURL:
+            requestUrl,
+
+          method:
+            error.config?.method,
+        }
+      );
 
       if (
-        error.code === "ECONNABORTED" ||
-        error.code === "ETIMEDOUT"
+        error.code ===
+          "ECONNABORTED" ||
+        error.code ===
+          "ETIMEDOUT"
       ) {
         error.userMessage =
           "Server response is taking too long. Please try again.";
       } else if (
-        typeof navigator !== "undefined" &&
+        typeof navigator !==
+          "undefined" &&
         navigator.onLine === false
       ) {
         error.userMessage =
@@ -227,28 +307,44 @@ api.interceptors.response.use(
           "Unable to connect to the server. Please try again.";
       }
 
-      return Promise.reject(error);
+      return Promise.reject(
+        error
+      );
     }
 
-    console.error("API Response Error", {
-      status,
-      code: responseCode,
-      message: responseMessage,
-      response: response.data,
-      url: requestUrl,
-      method: error.config?.method,
-    });
+    console.error(
+      "API Response Error",
+      {
+        status,
+        code:
+          responseCode,
+
+        message:
+          responseMessage,
+
+        response:
+          response.data,
+
+        url:
+          requestUrl,
+
+        method:
+          error.config?.method,
+      }
+    );
 
     error.userMessage =
       responseMessage ||
       "The request could not be completed.";
 
     /*
-     * Kada login mai wrong password ya jawo
+     * Kada login/OTP request ya jawo
      * unnecessary redirect loop.
      */
     const authenticationRequest =
-      isAuthEndpoint(requestUrl);
+      isAuthEndpoint(
+        requestUrl
+      );
 
     const sessionIsInvalid =
       status === 401 &&
@@ -260,14 +356,12 @@ api.interceptors.response.use(
       );
 
     if (
-      typeof window !== "undefined" &&
+      typeof window !==
+        "undefined" &&
       sessionIsInvalid
     ) {
       clearStoredSession();
 
-      /*
-       * Notify components such as SocketProvider.
-       */
       window.dispatchEvent(
         new CustomEvent(
           "ayax:session-expired",
@@ -292,7 +386,8 @@ api.interceptors.response.use(
      * Account blocked or suspended.
      */
     if (
-      typeof window !== "undefined" &&
+      typeof window !==
+        "undefined" &&
       status === 403 &&
       responseCode ===
         "ACCOUNT_NOT_ACTIVE"
@@ -304,7 +399,9 @@ api.interceptors.response.use(
           "ayax:account-disabled",
           {
             detail: {
-              code: responseCode,
+              code:
+                responseCode,
+
               message:
                 responseMessage,
             },
@@ -332,12 +429,16 @@ api.interceptors.response.use(
         "Too many requests. Please wait and try again.";
     }
 
-    return Promise.reject(error);
+    return Promise.reject(
+      error
+    );
   }
 );
 
 export {
   API_BASE_URL,
+  getStoredToken,
+  getStoredUser,
   clearStoredSession,
 };
 

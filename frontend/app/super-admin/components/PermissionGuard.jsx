@@ -11,11 +11,29 @@ import {
   LockKeyhole,
 } from "lucide-react";
 
-const normalizeRole = (role) =>
-  String(role || "")
+import api from "@/lib/api";
+
+const normalizeRole = (role) => {
+  const value = String(role || "")
     .trim()
     .toUpperCase()
     .replace(/[\s-]+/g, "_");
+
+  const aliases = {
+    SUPERADMIN: "SUPER_ADMIN",
+    SUPER_ADMIN: "SUPER_ADMIN",
+    STAFFADMIN: "STAFF_ADMIN",
+    STAFF_ADMIN: "STAFF_ADMIN",
+    CUSTOMERSERVICE: "CUSTOMER_SERVICE",
+    CUSTOMER_SERVICE: "CUSTOMER_SERVICE",
+    ADMIN: "ADMIN",
+    USER: "CUSTOMER",
+    DEVELOPER: "CUSTOMER",
+    CUSTOMER: "CUSTOMER",
+  };
+
+  return aliases[value] || value;
+};
 
 const readStoredUser = () => {
   if (typeof window === "undefined") {
@@ -23,24 +41,14 @@ const readStoredUser = () => {
   }
 
   try {
-    const value =
+    const rawUser =
       localStorage.getItem("user") ||
       sessionStorage.getItem("user");
 
-    if (!value) {
-      return null;
-    }
-
-    return JSON.parse(value);
-  } catch (error) {
-    console.error(
-      "PermissionGuard storage error:",
-      error
-    );
-
-    localStorage.removeItem("user");
-    sessionStorage.removeItem("user");
-
+    return rawUser
+      ? JSON.parse(rawUser)
+      : null;
+  } catch {
     return null;
   }
 };
@@ -63,11 +71,82 @@ export default function PermissionGuard({
     );
 
   useEffect(() => {
-    const savedUser =
-      readStoredUser();
+    let active = true;
 
-    setUser(savedUser);
-    setChecking(false);
+    const checkPermission = async () => {
+      try {
+        const storedUser =
+          readStoredUser();
+
+        if (
+          storedUser?.id &&
+          storedUser?.role
+        ) {
+          setUser(storedUser);
+        }
+
+        const response =
+          await api.get("/auth/me");
+
+        const currentUser =
+          response?.data?.user ||
+          response?.data?.data?.user ||
+          response?.data?.data ||
+          null;
+
+        if (!active) {
+          return;
+        }
+
+        if (currentUser?.id) {
+          const normalizedUser = {
+            ...currentUser,
+            role: normalizeRole(
+              currentUser.role
+            ),
+          };
+
+          localStorage.setItem(
+            "user",
+            JSON.stringify(
+              normalizedUser
+            )
+          );
+
+          sessionStorage.removeItem(
+            "user"
+          );
+
+          setUser(
+            normalizedUser
+          );
+        } else {
+          setUser(null);
+        }
+      } catch (error) {
+        console.error(
+          "Permission check error:",
+          error?.response?.data ||
+            error?.message
+        );
+
+        if (active) {
+          setUser(
+            readStoredUser()
+          );
+        }
+      } finally {
+        if (active) {
+          setChecking(false);
+        }
+      }
+    };
+
+    checkPermission();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   if (checking) {
@@ -85,7 +164,9 @@ export default function PermissionGuard({
   }
 
   const currentRole =
-    normalizeRole(user?.role);
+    normalizeRole(
+      user?.role
+    );
 
   const hasPermission =
     Boolean(user?.id) &&
@@ -110,7 +191,8 @@ export default function PermissionGuard({
           </h1>
 
           <p className="mt-3 leading-7 text-slate-400">
-            You do not have permission to access this page.
+            You do not have permission
+            to access this page.
           </p>
 
           <div className="mt-6 flex items-center justify-center gap-3 rounded-2xl border border-slate-800 bg-slate-950 p-4 text-slate-400">
@@ -118,7 +200,9 @@ export default function PermissionGuard({
 
             <span>
               Required roles:{" "}
-              {normalizedAllowedRoles.join(", ")}
+              {normalizedAllowedRoles.join(
+                ", "
+              )}
             </span>
           </div>
 

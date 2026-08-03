@@ -814,6 +814,23 @@ model LoginOtp {
   @@index([expiresAt])
 }
 
+model GsmUssdLog {
+
+  id          String   @id @default(cuid())
+
+  deviceId    String
+
+  reference   String
+
+  request     String?
+
+  response    String?
+
+  status      String
+
+  createdAt   DateTime @default(now())
+}
+
 enum UserRole {
   SUPER_ADMIN
   ADMIN

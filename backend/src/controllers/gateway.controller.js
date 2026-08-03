@@ -1073,9 +1073,30 @@ exports.receiveCommandResult = async (req, res) => {
     }
 
     const normalizedStatus =
-      String(status)
-        .trim()
-        .toUpperCase();
+String(status || "")
+.trim()
+.toUpperCase();
+
+const waitingStates = [
+  "WAITING",
+  "PROCESSING",
+  "PENDING",
+  "SENT"
+];
+
+const successStates = [
+  "SUCCESS",
+  "SUCCESSFUL",
+  "COMPLETED",
+  "DELIVERED"
+];
+
+const failedStates = [
+  "FAILED",
+  "FAILURE",
+  "ERROR",
+  "CANCELLED"
+];
 
     const finalMessage =
       String(
@@ -1087,8 +1108,34 @@ exports.receiveCommandResult = async (req, res) => {
     const normalizedMessage =
       finalMessage.toLowerCase();
 
+      const autoReplyMatch =
+  finalMessage.match(
+    /reply\s+(?:with\s+)?(\d+)/i
+  ) ||
+  finalMessage.match(
+    /select\s+(\d+)/i
+  ) ||
+  finalMessage.match(
+    /choose\s+(\d+)/i
+  ) ||
+  finalMessage.match(
+    /press\s+(\d+)/i
+  ) ||
+  finalMessage.match(
+    /enter\s+(\d+)/i
+  );
+
+const autoReply =
+  autoReplyMatch?.[1] || null;
+
     const payload =
       existingCommand.payload || {};
+
+    const ussdSession = {
+      sessionId: payload.sessionId || null,
+      step: Number(payload.step || 1),
+      nextCode: payload.nextCode || null,
+    };
 
     const simId =
       payload.simId || null;
@@ -1122,33 +1169,54 @@ exports.receiveCommandResult = async (req, res) => {
         isDataCommand
       );
 
-    const isTemporaryMessage =
-      normalizedMessage.includes(
-        "awaiting network response"
-      ) ||
-      normalizedMessage.includes(
-        "awaiting ussd response"
-      ) ||
-      normalizedMessage.includes(
-        "request submitted"
-      ) ||
-      normalizedMessage.includes(
-        "request opened"
-      ) ||
-      normalizedMessage.includes(
-        "command received"
-      );
+    const waitingKeywords = [
+  "awaiting",
+  "reply",
+  "select",
+  "choose",
+  "enter",
+  "input",
+  "press",
+  "send",
+  "option",
+  "processing",
+  "loading",
+  "please wait",
+  "request submitted",
+  "request opened",
+  "command received",
+  "ussd running",
+  "running ussd",
+  "waiting"
+];
 
-    const isInvalidUssdMessage =
-      normalizedMessage.includes(
-        "invalid selection"
-      ) ||
-      normalizedMessage.includes(
-        "invalid input"
-      ) ||
-      normalizedMessage.includes(
-        "invalid choice"
-      );
+const isTemporaryMessage =
+  waitingKeywords.some(keyword =>
+    normalizedMessage.includes(keyword)
+  );
+
+    const failedKeywords = [
+  "failed",
+  "failure",
+  "invalid",
+  "invalid selection",
+  "invalid input",
+  "invalid choice",
+  "error",
+  "unable",
+  "not allowed",
+  "cancelled",
+  "expired",
+  "try again",
+  "insufficient",
+  "network error",
+  "connection error"
+];
+
+const isInvalidUssdMessage =
+  failedKeywords.some(keyword =>
+    normalizedMessage.includes(keyword)
+  );
 
     console.log(
       "COMMAND RESULT DETAILS:",
@@ -1177,42 +1245,102 @@ exports.receiveCommandResult = async (req, res) => {
      * Temporary response ba final result ba ne.
      */
     if (
-      isBalanceCommand &&
-      (
-        normalizedStatus ===
-          "PROCESSING" ||
-        normalizedStatus ===
-          "SENT" ||
+    isBalanceCommand &&
+    (
+        waitingStates.includes(normalizedStatus) ||
         isTemporaryMessage
-      )
-    ) {
-      command =
-        await markCommandProcessing({
-          reference,
-          message:
-            finalMessage ||
-            "Waiting for final balance response",
-        });
+    )
+) {
 
-      await prisma.gsmDevice.update({
-        where: {
-          id: deviceId,
-        },
+    command = await markCommandProcessing({
+        reference,
+        message: finalMessage || "Waiting for USSD response",
+    });
+
+    await prisma.gsmUssdLog.create({
         data: {
-          status: "ONLINE",
-          lastSeen: new Date(),
+            deviceId,
+            reference,
+            response: finalMessage,
+            status: normalizedStatus,
         },
-      });
+    });
 
-      return res.json({
+    emitEvent("gateway-ussd-waiting", {
+        deviceId,
+        reference,
+        sessionId: ussdSession.sessionId,
+        step: ussdSession.step,
+        message: finalMessage,
+    });
+
+    if (autoReply) {
+
+    const nextReference =
+        "USSD-" +
+        crypto.randomBytes(6)
+        .toString("hex")
+        .toUpperCase();
+
+    await prisma.gsmCommand.create({
+
+        data:{
+
+            reference: nextReference,
+
+            deviceId,
+
+            type:"USSD_REPLY",
+
+            status:"PENDING",
+
+            payload:{
+
+                sessionId:
+                    ussdSession.sessionId,
+
+                reply:autoReply,
+
+                simId,
+
+                balanceType
+
+            }
+
+        }
+
+    });
+
+    emitEvent(
+
+        "gateway-command",
+
+        {
+
+            reference:nextReference,
+
+            type:"USSD_REPLY",
+
+            reply:autoReply,
+
+            sessionId:
+                ussdSession.sessionId
+
+        },
+
+        deviceId
+
+    );
+
+}
+
+    return res.json({
         success: true,
         pending: true,
-        message:
-          "Waiting for final network balance response",
+        waiting: true,
         command,
-        sim: null,
-      });
-    }
+    });
+}
 
     /*
      * Invalid selection ba successful balance ba ne.
@@ -1228,6 +1356,15 @@ exports.receiveCommandResult = async (req, res) => {
             finalMessage ||
             "Network rejected USSD request",
         });
+
+        await prisma.gsmUssdLog.create({
+          data: {
+              deviceId,
+              reference,
+              response: finalMessage,
+              status: "SUCCESS",
+          },
+      });
 
       await prisma.gsmDevice.update({
         where: {
@@ -1251,10 +1388,9 @@ exports.receiveCommandResult = async (req, res) => {
     }
 
     if (
-      normalizedStatus ===
-        "PROCESSING" ||
-      normalizedStatus ===
-        "SENT"
+      normalizedStatus === "WAITING" ||
+      waitingStates.includes(normalizedStatus) ||
+      normalizedStatus === "SENT"
     ) {
       command =
         await markCommandProcessing({
@@ -1264,11 +1400,7 @@ exports.receiveCommandResult = async (req, res) => {
             "Command is being processed",
         });
     } else if (
-      normalizedStatus ===
-        "SUCCESSFUL" ||
-      normalizedStatus ===
-        "DELIVERED"
-    ) {
+    successStates.includes(normalizedStatus)) {
       let airtimeBalance =
         null;
 
@@ -1477,16 +1609,16 @@ exports.receiveCommandResult = async (req, res) => {
           }
         );
       }
+    } else if (failedStates.includes(normalizedStatus)) {
+      command = await markCommandFailed({
+        reference,
+        message: finalMessage || "Command failed",
+      });
     } else {
-      command =
-        await markCommandFailed({
-          reference,
-
-          message:
-            finalMessage ||
-            normalizedStatus ||
-            "Command failed",
-        });
+      command = await markCommandProcessing({
+        reference,
+        message: finalMessage || "Waiting...",
+      });
     }
 
     await prisma.gsmDevice.update({

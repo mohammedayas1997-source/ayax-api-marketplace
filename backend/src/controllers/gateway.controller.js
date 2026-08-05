@@ -1202,18 +1202,28 @@ exports.receiveCommandResult = async (req, res) => {
         payload.nextCode || null,
     };
 
-    const simId =
-      payload.simId || null;
+const simId =
+  payload.simId ||
+  req.body.simId ||
+  null;
 
-    const balanceType =
-      String(
-        payload.balanceType ||
-        payload.service ||
-        payload.type ||
-        ""
-      )
-        .trim()
-        .toUpperCase();
+const balanceType =
+  String(
+    payload.balanceType ||
+    req.body.balanceType ||
+    payload.service ||
+    req.body.service ||
+    payload.type ||
+    req.body.requestType ||
+    ""
+  )
+    .trim()
+    .toUpperCase();
+
+const network =
+  payload.network ||
+  req.body.network ||
+  null;
 
     const isAirtimeCommand = [
       "AIRTIME",

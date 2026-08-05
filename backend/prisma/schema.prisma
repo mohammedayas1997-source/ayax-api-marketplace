@@ -8,52 +8,41 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-enum PackageTier {
-  REGULAR
-  STANDARD
-  PREMIUM
-}
-
 model User {
-  id                  String     @id @default(cuid())
+  id                  String               @id @default(cuid())
   name                String
-  email               String     @unique
+  email               String               @unique
   phone               String?
   password            String
-  role                UserRole   @default(CUSTOMER)
-  status              UserStatus @default(ACTIVE)
-  createdAt           DateTime   @default(now())
-  updatedAt           DateTime   @updatedAt
-  failedLoginAttempts Int        @default(0)
+  role                UserRole             @default(CUSTOMER)
+  status              UserStatus           @default(ACTIVE)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  failedLoginAttempts Int                  @default(0)
   lockedUntil         DateTime?
   lastLoginAt         DateTime?
   lastLoginIp         String?
   passwordChangedAt   DateTime?
-
-  passwordResetTokens PasswordResetToken[]
-  revokedTokens       RevokedToken[]
+  activityLogs        ActivityLog[]
+  apiKeys             ApiKey[]
+  apiUsages           ApiUsage[]
+  fundingRequests     FundingRequest[]
+  loginHistory        LoginHistory[]
   loginOtps           LoginOtp[]
+  notifications       Notification[]       @relation("UserNotifications")
+  passwordResetTokens PasswordResetToken[]
+  refundRequests      RefundRequest[]
+  revokedTokens       RevokedToken[]
+  securityLogs        SecurityLog[]
+  supportTickets      SupportTicket[]
+  transactions        Transaction[]
+  wallet              Wallet?
+  walletFundings      WalletFunding[]
+  walletLedgers       WalletLedger[]
+  walletWithdrawals   WalletWithdrawal[]
+  webhooks            Webhook[]
 
-  activityLogs    ActivityLog[]
-  apiKeys         ApiKey[]
-  apiUsages       ApiUsage[]
-  fundingRequests FundingRequest[]
-  loginHistory    LoginHistory[]
-
-  refundRequests RefundRequest[]
-  securityLogs   SecurityLog[]
-  supportTickets SupportTicket[]
-  transactions   Transaction[]
-
-  wallet            Wallet?
-  walletFundings    WalletFunding[]
-  walletLedgers     WalletLedger[]
-  walletWithdrawals WalletWithdrawal[]
-
-  webhooks Webhook[]
-
-  notifications        Notification[] @relation("UserNotifications")
-  createdNotifications Notification[] @relation("NotificationCreator")
+  @@index([lockedUntil])
 }
 
 model PasswordResetToken {
@@ -63,8 +52,7 @@ model PasswordResetToken {
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([expiresAt])
@@ -78,8 +66,7 @@ model RevokedToken {
   expiresAt DateTime
   reason    String?
   createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([expiresAt])
@@ -97,22 +84,21 @@ model Wallet {
 model ApiKey {
   id                 String         @id @default(cuid())
   userId             String
-  name               String         @default("Live API Key")
   key                String         @unique
-  keyPrefix          String?
+  name               String         @default("Live API Key")
   status             ApiKeyStatus   @default(ACTIVE)
-  environment        ApiEnvironment @default(PRODUCTION)
-  scopes             ApiScope[]     @default([DATA, AIRTIME, ELECTRICITY, CABLE, BVN, NIN])
-  rateLimitPerMinute Int            @default(100)
-  rateLimitPerDay    Int            @default(10000)
-  expiresAt          DateTime?
-  lastUsedAt         DateTime?
-  revokedAt          DateTime?
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
-
-  user   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  usages ApiUsage[]
+  environment        ApiEnvironment @default(PRODUCTION)
+  expiresAt          DateTime?
+  keyPrefix          String?
+  lastUsedAt         DateTime?
+  rateLimitPerDay    Int            @default(10000)
+  rateLimitPerMinute Int            @default(100)
+  revokedAt          DateTime?
+  scopes             ApiScope[]     @default([DATA, AIRTIME, ELECTRICITY, CABLE, BVN, NIN])
+  user               User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  usages             ApiUsage[]
 
   @@index([userId, status])
   @@index([environment, status])
@@ -327,26 +313,21 @@ model ApiPlan {
 }
 
 model ServicePricing {
-  id String @id @default(cuid())
-
-  serviceCode String
-  serviceName String
-  category    String
-  tier        PackageTier
-
-  costPrice    Float   @default(0)
+  id           String      @id @default(cuid())
+  serviceCode  String
+  serviceName  String
+  category     String
+  tier         PackageTier
+  costPrice    Float       @default(0)
   sellingPrice Float
-  currency     String  @default("NGN")
-  enabled      Boolean @default(true)
-
-  features Json?
-  metadata Json?
-
-  createdBy String?
-  updatedBy String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  currency     String      @default("NGN")
+  enabled      Boolean     @default(true)
+  features     Json?
+  metadata     Json?
+  createdBy    String?
+  updatedBy    String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
 
   @@unique([serviceCode, tier])
   @@index([category, enabled])
@@ -402,42 +383,27 @@ model AuditLog {
 }
 
 model Notification {
-  id      String @id @default(cuid())
-  batchId String
-
-  userId String
-
-  title   String
-  message String
-
-  type     String @default("INFO")
-  priority String @default("NORMAL")
-  audience String @default("USER")
-
-  targetRole UserRole?
-
-  actionText String?
-  actionUrl  String?
-  imageUrl   String?
-
-  isRead Boolean   @default(false)
-  readAt DateTime?
-
+  id             String             @id @default(cuid())
+  userId         String
+  title          String
+  message        String
+  type           String             @default("INFO")
+  status         NotificationStatus @default(UNREAD)
+  actionUrl      String?
+  createdAt      DateTime           @default(now())
+  readAt         DateTime?
+  batchId        String?
+  priority       String?            @default("NORMAL")
+  audience       String?            @default("USER")
+  targetRole     String?
+  actionText     String?
+  imageUrl       String?
+  isRead         Boolean            @default(false)
   createdById    String?
   createdByName  String?
   createdByEmail String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  user      User  @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
-  createdBy User? @relation("NotificationCreator", fields: [createdById], references: [id], onDelete: SetNull)
-
-  @@index([userId, isRead, createdAt])
-  @@index([batchId])
-  @@index([createdById])
-  @@index([type])
-  @@index([audience])
+  updatedAt      DateTime?          @default(now()) @updatedAt @db.Timestamp(6)
+  user           User               @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model LoginHistory {
@@ -489,23 +455,22 @@ model ApiUsage {
   apiKeyId       String?
   endpoint       String
   method         String
-  service        String?
-  reference      String?
   amount         Float          @default(0)
   status         ApiUsageStatus @default(PROCESSING)
-  httpStatusCode Int?
-  errorCode      String?
-  errorMessage   String?
   requestBody    String?
   responseBody   String?
   ipAddress      String?
   userAgent      String?
   latency        Int?
   createdAt      DateTime       @default(now())
+  errorCode      String?
+  errorMessage   String?
+  httpStatusCode Int?
+  reference      String?
+  service        String?
   updatedAt      DateTime       @updatedAt
-
-  apiKey ApiKey? @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
-  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKey         ApiKey?        @relation(fields: [apiKeyId], references: [id])
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
   @@index([apiKeyId, createdAt])
@@ -807,28 +772,35 @@ model LoginOtp {
   used      Boolean  @default(false)
   attempts  Int      @default(0)
   createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([expiresAt])
 }
 
+model playing_with_neon {
+  id    Int    @id @default(autoincrement())
+  name  String
+  value Float? @db.Real
+}
+
 model GsmUssdLog {
+  id        String   @id
+  deviceId  String
+  reference String
+  request   String?
+  response  String?
+  status    String
+  createdAt DateTime @default(now())
 
-  id          String   @id @default(cuid())
+  @@index([deviceId])
+  @@index([reference])
+}
 
-  deviceId    String
-
-  reference   String
-
-  request     String?
-
-  response    String?
-
-  status      String
-
-  createdAt   DateTime @default(now())
+enum PackageTier {
+  REGULAR
+  STANDARD
+  PREMIUM
 }
 
 enum UserRole {
@@ -1101,4 +1073,16 @@ enum ApiScope {
   TRANSACTIONS
   WALLET
   WEBHOOKS
+}
+
+enum NotificationStatus {
+  UNREAD
+  READ
+}
+
+enum NotificationType {
+  INFO
+  SUCCESS
+  WARNING
+  ERROR
 }

@@ -1182,26 +1182,6 @@ const autoReply =
         isDataCommand
       );
 
-    const waitingKeywords = [
-  "awaiting",
-  "reply",
-  "select",
-  "choose",
-  "enter",
-  "input",
-  "press",
-  "send",
-  "option",
-  "processing",
-  "loading",
-  "please wait",
-  "request submitted",
-  "request opened",
-  "command received",
-  "ussd running",
-  "running ussd",
-  "waiting"
-];
 
 const waitingKeywords = [
   "awaiting network response",

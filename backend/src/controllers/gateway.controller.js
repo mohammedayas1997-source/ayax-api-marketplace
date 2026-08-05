@@ -1072,6 +1072,19 @@ exports.receiveCommandResult = async (req, res) => {
       });
     }
 
+    await prisma.gsmCommand.update({
+  where: {
+    reference,
+  },
+  data: {
+    response: finalMessage,
+    updatedAt: new Date(),
+  },
+});
+emitEvent("gateway-command-updated", {
+  reference,
+});
+
     const normalizedStatus =
 String(status || "")
 .trim()
@@ -1190,31 +1203,30 @@ const autoReply =
   "waiting"
 ];
 
-const isTemporaryMessage =
-  waitingKeywords.some(keyword =>
-    normalizedMessage.includes(keyword)
-  );
-
-    const failedKeywords = [
-  "failed",
-  "failure",
-  "invalid",
-  "invalid selection",
-  "invalid input",
-  "invalid choice",
-  "error",
-  "unable",
-  "not allowed",
-  "cancelled",
-  "expired",
-  "try again",
-  "insufficient",
-  "network error",
-  "connection error"
+const waitingKeywords = [
+  "awaiting network response",
+  "awaiting ussd response",
+  "request submitted",
+  "request opened",
+  "command received",
+  "loading",
+  "please wait",
+  "processing",
+  "sending",
+  "running",
+  "connecting",
+  "ussd running",
+  "ussd request sent",
+  "checking",
+  "fetching",
+  "working",
+  "dialing",
+  "executing",
+  "wait..."
 ];
 
-const isInvalidUssdMessage =
-  failedKeywords.some(keyword =>
+const isTemporaryMessage =
+  waitingKeywords.some(keyword =>
     normalizedMessage.includes(keyword)
   );
 
@@ -1244,13 +1256,39 @@ const isInvalidUssdMessage =
     /*
      * Temporary response ba final result ba ne.
      */
-    if (
-    isBalanceCommand &&
-    (
-        waitingStates.includes(normalizedStatus) ||
-        isTemporaryMessage
-    )
+   if (
+  isBalanceCommand &&
+  (
+    waitingStates.includes(normalizedStatus) ||
+    isTemporaryMessage
+  )
+) 
+
+if (
+    finalMessage.length < 5
 ) {
+
+    command =
+        await markCommandProcessing({
+
+            reference,
+
+            message: "Waiting for complete USSD response"
+
+        });
+
+    return res.json({
+
+        success: true,
+
+        pending: true,
+
+        command
+
+    });
+
+}
+{
 
     command = await markCommandProcessing({
         reference,

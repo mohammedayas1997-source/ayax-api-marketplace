@@ -82,6 +82,7 @@ const parseExpiryToDate = (value) => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
+// 1. pairDevice
 exports.pairDevice = async (req, res) => {
   try {
     const { deviceName, deviceCode, location } = req.body;
@@ -172,6 +173,7 @@ exports.pairDevice = async (req, res) => {
   }
 };
 
+// 2. heartbeat
 exports.heartbeat = async (req, res) => {
   try {
     const { deviceId, secretKey, battery, charging, signal, internet } = req.body;
@@ -211,6 +213,7 @@ exports.heartbeat = async (req, res) => {
   }
 };
 
+// 3. generatePairCode
 exports.generatePairCode = async (req, res) => {
   try {
     const code = "AYAX-" + crypto.randomBytes(3).toString("hex").toUpperCase();
@@ -233,6 +236,7 @@ exports.generatePairCode = async (req, res) => {
   }
 };
 
+// 4. getDevices
 exports.getDevices = async (req, res) => {
   try {
     const devices = await prisma.gsmDevice.findMany({
@@ -254,6 +258,7 @@ exports.getDevices = async (req, res) => {
   }
 };
 
+// 5. disconnectDevice
 exports.disconnectDevice = async (req, res) => {
   try {
     const { id } = req.params;
@@ -274,6 +279,7 @@ exports.disconnectDevice = async (req, res) => {
   }
 };
 
+// 6. deleteDevice
 exports.deleteDevice = async (req, res) => {
   try {
     const { id } = req.params;
@@ -293,6 +299,7 @@ exports.deleteDevice = async (req, res) => {
   }
 };
 
+// 7. renameDevice
 exports.renameDevice = async (req, res) => {
   try {
     const { id } = req.params;
@@ -311,6 +318,7 @@ exports.renameDevice = async (req, res) => {
   }
 };
 
+// 8. receiveIncomingSms
 exports.receiveIncomingSms = async (req, res) => {
   try {
     const {
@@ -448,6 +456,7 @@ exports.receiveIncomingSms = async (req, res) => {
   }
 };
 
+// 9. getIncomingSms
 exports.getIncomingSms = async (req, res) => {
   try {
     const sms = await prisma.smsInbox.findMany({
@@ -462,6 +471,7 @@ exports.getIncomingSms = async (req, res) => {
   }
 };
 
+// 10. syncSims
 exports.syncSims = async (req, res) => {
   try {
     const { deviceId, secretKey, sims } = req.body;
@@ -556,6 +566,7 @@ exports.syncSims = async (req, res) => {
   }
 };
 
+// 11. getDeviceSims
 exports.getDeviceSims = async (req, res) => {
   try {
     const sims = await prisma.gsmSim.findMany({
@@ -575,6 +586,7 @@ exports.getDeviceSims = async (req, res) => {
   }
 };
 
+// 12. refreshSimBalance
 exports.refreshSimBalance = async (req, res) => {
   try {
     const { simId, type = "AIRTIME" } = req.body;
@@ -616,6 +628,7 @@ exports.refreshSimBalance = async (req, res) => {
   }
 };
 
+// 13. getGatewayDevices
 exports.getGatewayDevices = async (req, res) => {
   try {
     const devices = await prisma.gsmDevice.findMany({
@@ -643,6 +656,7 @@ exports.getGatewayDevices = async (req, res) => {
   }
 };
 
+// 14. updateLocation
 exports.updateLocation = async (req, res) => {
   try {
     const {
@@ -705,6 +719,7 @@ exports.updateLocation = async (req, res) => {
   }
 };
 
+// 15. receiveSecurityAlert
 exports.receiveSecurityAlert = async (req, res) => {
   try {
     const { deviceId, secretKey, type, message } = req.body;
@@ -746,6 +761,7 @@ exports.receiveSecurityAlert = async (req, res) => {
   }
 };
 
+// 16. getSecurityAlerts
 exports.getSecurityAlerts = async (req, res) => {
   try {
     const alerts = await prisma.gatewaySecurityAlert.findMany({
@@ -770,6 +786,7 @@ exports.getSecurityAlerts = async (req, res) => {
   }
 };
 
+// 17. resolveSecurityAlert
 exports.resolveSecurityAlert = async (req, res) => {
   try {
     const alert = await prisma.gatewaySecurityAlert.update({
@@ -796,6 +813,7 @@ exports.resolveSecurityAlert = async (req, res) => {
   }
 };
 
+// 18. startDeviceAlarm
 exports.startDeviceAlarm = async (req, res) => {
   try {
     const { deviceId } = req.body;
@@ -819,6 +837,7 @@ exports.startDeviceAlarm = async (req, res) => {
   }
 };
 
+// 19. stopDeviceAlarm
 exports.stopDeviceAlarm = async (req, res) => {
   try {
     const { deviceId } = req.body;
@@ -842,6 +861,7 @@ exports.stopDeviceAlarm = async (req, res) => {
   }
 };
 
+// 20. lockGatewayDevice
 exports.lockGatewayDevice = async (req, res) => {
   try {
     const { deviceId } = req.body;
@@ -871,6 +891,7 @@ exports.lockGatewayDevice = async (req, res) => {
   }
 };
 
+// 21. receiveCommandResult
 exports.receiveCommandResult = async (req, res) => {
   try {
     const {

@@ -1326,14 +1326,23 @@ const network =
             "Waiting for complete USSD response",
         });
 
-      await prisma.gsmUssdLog.create({
-        data: {
-          deviceId,
-          reference,
-          response: finalMessage,
-          status: normalizedStatus,
-        },
-      });
+      const crypto = require("crypto");
+
+await prisma.gsmUssdLog.create({
+  data: {
+    id: crypto.randomUUID(),
+
+    deviceId,
+
+    reference,
+
+    request: null,
+
+    response: finalMessage,
+
+    status: normalizedStatus,
+  },
+});
 
       emitEvent(
         "gateway-ussd-waiting",
@@ -1434,16 +1443,21 @@ const network =
             "Network rejected USSD request",
         });
 
-      await prisma.gsmUssdLog.create({
-        data: {
-          deviceId,
-          reference,
-          response:
-            finalMessage,
-          status:
-            "FAILED",
-        },
-      });
+      const crypto = require("crypto");
+
+await prisma.gsmUssdLog.create({
+  data: {
+    id: crypto.randomUUID(),
+
+    deviceId,
+
+    reference,
+
+    response: finalMessage,
+
+    status: normalizedStatus,
+  },
+});
 
       await prisma.gsmDevice.update({
         where: {

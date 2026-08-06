@@ -7,16 +7,22 @@ async function updateCommand(reference, status, response = null) {
     status === "FAILED" ||
     status === "CANCELLED";
 
-  const command = await prisma.gsmCommand.update({
-    where: {
-      reference,
-    },
+  const command = await prisma.gsmCommand.findUnique({
+    where: { reference }
+});
+
+if (!command) {
+    throw new Error(`Command not found: ${reference}`);
+}
+
+const updated = await prisma.gsmCommand.update({
+    where: { reference },
     data: {
-      status,
-      response,
-      completedAt: isCompleted ? new Date() : null,
-    },
-  });
+        status,
+        response,
+        completedAt: isCompleted ? new Date() : command.completedAt
+    }
+});
 
   emitEvent("gsm-command-updated", {
     command,

@@ -33,7 +33,6 @@ const parseExpiryToDate = (value) => {
 
   const text = String(value).trim();
 
-  // DD/MM/YYYY ko DD-MM-YYYY
   const dayFirstNumeric = text.match(
     /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2}|\d{4})$/
   );
@@ -44,7 +43,6 @@ const parseExpiryToDate = (value) => {
     return Number.isNaN(date.getTime()) ? null : date;
   }
 
-  // YYYY-MM-DD ko YYYY/MM/DD
   const yearFirstNumeric = text.match(
     /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/
   );
@@ -54,7 +52,6 @@ const parseExpiryToDate = (value) => {
     return Number.isNaN(date.getTime()) ? null : date;
   }
 
-  // "31-Aug-2026" / "31 August 2026"
   const dayMonthName = text.match(
     /^(\d{1,2})[\s\-]+([A-Za-z]{3,9})[\s\-]+(\d{2,4})$/
   );
@@ -68,7 +65,6 @@ const parseExpiryToDate = (value) => {
     }
   }
 
-  // "August 31 2026" / "Aug-31-2026" / "Aug 31, 2026"
   const monthNameDay = text.match(
     /^([A-Za-z]{3,9})[\s\-]+(\d{1,2})[\s\-,]+(\d{2,4})$/
   );
@@ -82,7 +78,6 @@ const parseExpiryToDate = (value) => {
     }
   }
 
-  // last resort
   const parsed = new Date(text);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };

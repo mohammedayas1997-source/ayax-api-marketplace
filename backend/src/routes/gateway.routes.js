@@ -6,13 +6,10 @@ const {
   heartbeat,
   receiveCommandResult,
   generatePairCode,
-  getDevices,
   disconnectDevice,
-  getPairCodes,
   deleteDevice,
   renameDevice,
   receiveIncomingSms,
-  updateSimNumber,
   getIncomingSms,
   syncSims,
   getDeviceSims,
@@ -47,7 +44,6 @@ router.delete("/devices/:id", deleteDevice);
 router.post("/sims/sync", syncSims);
 router.post("/sims/refresh-balance", refreshSimBalance);
 router.get("/devices/:deviceId/sims", getDeviceSims);
-router.patch("/sims/:simId/number", updateSimNumber);
 
 // =========================
 // Incoming SMS
@@ -75,6 +71,5 @@ router.post("/lock-device", lockGatewayDevice);
 // Pair Codes
 // =========================
 router.post("/pair-code/generate", generatePairCode);
-router.get("/pair-code", getPairCodes);
 
 module.exports = router;

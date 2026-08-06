@@ -344,21 +344,45 @@ exports.parseDataBalance = (message = "") => {
 exports.parseExpiryDate = (message = "") => {
   const text = normalize(message);
 
-  const patterns = [
-    /\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/,
+  // separator na iya zama space, dash, ko slash — misali "31-Aug-2026" ko "31 August 2026"
+  const sep = "[\\s\\/\\-]+";
 
+  const patterns = [
+    // Keyword + numeric date: "expires 31/08/2026", "expiry date - 31-08-26", "valid till 2026-08-31"
+    new RegExp(
+      `(?:valid\\s+(?:until|till)|expires?\\s+(?:on)?|expiry(?:\\s+date)?)\\s*(?:is|:|-)?\\s*` +
+      `(\\d{1,2}${sep}\\d{1,2}${sep}\\d{2,4}|\\d{4}${sep}\\d{1,2}${sep}\\d{1,2})`,
+      "i"
+    ),
+
+    // Keyword + "31-Aug-2026" / "31 August 2026"
+    new RegExp(
+      `(?:valid\\s+(?:until|till)|expires?\\s+(?:on)?|expiry(?:\\s+date)?)\\s*(?:is|:|-)?\\s*` +
+      `(\\d{1,2}${sep}[A-Za-z]{3,9}${sep}\\d{2,4})`,
+      "i"
+    ),
+
+    // Keyword + "August 31 2026" / "Aug-31-2026"
+    new RegExp(
+      `(?:valid\\s+(?:until|till)|expires?\\s+(?:on)?|expiry(?:\\s+date)?)\\s*(?:is|:|-)?\\s*` +
+      `([A-Za-z]{3,9}${sep}\\d{1,2}${sep}\\d{2,4})`,
+      "i"
+    ),
+
+    // Fallback (babu keyword): kowace ranar lamba a saƙon, misali "31/08/2026"
+    /\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/,
     /\b\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}\b/,
 
-    /(?:valid\s+(?:until|till)|expires?\s+(?:on)?|expiry(?:\s+date)?\s*:?)\s*([A-Za-z]+\s+\d{1,2},?\s+\d{4})/i,
-
-    /(?:valid\s+(?:until|till)|expires?\s+(?:on)?|expiry(?:\s+date)?\s*:?)\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i,
+    // Fallback: "31-Aug-2026" / "31 August 2026" ba tare da keyword ba
+    /\b\d{1,2}[\s\-]+[A-Za-z]{3,9}[\s\-]+\d{2,4}\b/,
+    /\b[A-Za-z]{3,9}[\s\-]+\d{1,2}[\s\-,]+\d{2,4}\b/,
   ];
 
   for (const pattern of patterns) {
     const match = text.match(pattern);
 
     if (match) {
-      return match[1] || match[0];
+      return (match[1] || match[0]).trim();
     }
   }
 

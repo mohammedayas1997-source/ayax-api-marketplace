@@ -13,38 +13,79 @@ const {
 } = require("../services/ussdParser.service");
 const { sendBalanceCheckCommand } = require("../services/balanceCheck.service");
 
+const MONTHS = {
+  jan: 0, january: 0,
+  feb: 1, february: 1,
+  mar: 2, march: 2,
+  apr: 3, april: 3,
+  may: 4,
+  jun: 5, june: 5,
+  jul: 6, july: 6,
+  aug: 7, august: 7,
+  sep: 8, sept: 8, september: 8,
+  oct: 9, october: 9,
+  nov: 10, november: 10,
+  dec: 11, december: 11,
+};
+
 const parseExpiryToDate = (value) => {
   if (!value) return null;
 
   const text = String(value).trim();
 
-  const dayFirst = text.match(
-    /^(\d{1,2})[/-](\d{1,2})[/-](\d{2}|\d{4})$/
+  // DD/MM/YYYY ko DD-MM-YYYY
+  const dayFirstNumeric = text.match(
+    /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2}|\d{4})$/
   );
-
-  if (dayFirst) {
-    const [, day, month, rawYear] = dayFirst;
-    const year =
-      rawYear.length === 2
-        ? Number(`20${rawYear}`)
-        : Number(rawYear);
-
-    const date = new Date(
-      year,
-      Number(month) - 1,
-      Number(day),
-      23,
-      59,
-      59
-    );
-
+  if (dayFirstNumeric) {
+    const [, day, month, rawYear] = dayFirstNumeric;
+    const year = rawYear.length === 2 ? Number(`20${rawYear}`) : Number(rawYear);
+    const date = new Date(year, Number(month) - 1, Number(day), 23, 59, 59);
     return Number.isNaN(date.getTime()) ? null : date;
   }
 
-  const parsed = new Date(text);
+  // YYYY-MM-DD ko YYYY/MM/DD
+  const yearFirstNumeric = text.match(
+    /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/
+  );
+  if (yearFirstNumeric) {
+    const [, year, month, day] = yearFirstNumeric;
+    const date = new Date(Number(year), Number(month) - 1, Number(day), 23, 59, 59);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
 
+  // "31-Aug-2026" / "31 August 2026"
+  const dayMonthName = text.match(
+    /^(\d{1,2})[\s\-]+([A-Za-z]{3,9})[\s\-]+(\d{2,4})$/
+  );
+  if (dayMonthName) {
+    const [, day, monthName, rawYear] = dayMonthName;
+    const month = MONTHS[monthName.toLowerCase()];
+    if (month !== undefined) {
+      const year = rawYear.length === 2 ? Number(`20${rawYear}`) : Number(rawYear);
+      const date = new Date(year, month, Number(day), 23, 59, 59);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+  }
+
+  // "August 31 2026" / "Aug-31-2026" / "Aug 31, 2026"
+  const monthNameDay = text.match(
+    /^([A-Za-z]{3,9})[\s\-]+(\d{1,2})[\s\-,]+(\d{2,4})$/
+  );
+  if (monthNameDay) {
+    const [, monthName, day, rawYear] = monthNameDay;
+    const month = MONTHS[monthName.toLowerCase()];
+    if (month !== undefined) {
+      const year = rawYear.length === 2 ? Number(`20${rawYear}`) : Number(rawYear);
+      const date = new Date(year, month, Number(day), 23, 59, 59);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+  }
+
+  // last resort
+  const parsed = new Date(text);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
-};
+};;
 
 
 exports.pairDevice = async (req, res) => {

@@ -85,8 +85,7 @@ const parseExpiryToDate = (value) => {
   // last resort
   const parsed = new Date(text);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
-};;
-
+};
 
 exports.pairDevice = async (req, res) => {
   try {
@@ -217,7 +216,6 @@ exports.heartbeat = async (req, res) => {
   }
 };
 
-
 exports.generatePairCode = async (req, res) => {
   try {
     const code = "AYAX-" + crypto.randomBytes(3).toString("hex").toUpperCase();
@@ -243,17 +241,17 @@ exports.generatePairCode = async (req, res) => {
 exports.getDevices = async (req, res) => {
   try {
     const devices = await prisma.gsmDevice.findMany({
-    include:{
-        sims:{
-            orderBy:{
-                slotIndex:"asc"
-            }
-        }
-    },
-    orderBy:{
-        createdAt:"desc"
-    }
-});
+      include: {
+        sims: {
+          orderBy: {
+            slotIndex: "asc",
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
 
     return res.json({ success: true, devices });
   } catch (error) {
@@ -317,6 +315,7 @@ exports.renameDevice = async (req, res) => {
     return res.status(400).json({ success: false, message: error.message });
   }
 };
+
 exports.receiveIncomingSms = async (req, res) => {
   try {
     const {
@@ -358,18 +357,12 @@ exports.receiveIncomingSms = async (req, res) => {
       },
     });
 
-    // DATA: an bar yadda yake domin yana aiki
     const parsedDataBalance = parseDataBalance(message);
-
-    // AIRTIME: sabon ƙarin gyara
     const parsedAirtimeBalance = parseAirtimeBalance(message);
 
     let updatedSim = null;
 
-    if (
-      slotIndex !== undefined &&
-      slotIndex !== null
-    ) {
+    if (slotIndex !== undefined && slotIndex !== null) {
       const normalizedSlot = Number(slotIndex);
 
       if (!Number.isNaN(normalizedSlot)) {
@@ -388,35 +381,25 @@ exports.receiveIncomingSms = async (req, res) => {
             lastBalanceCheck: new Date(),
           };
 
-          // Kar a taɓa data logic
           if (
             parsedDataBalance !== null &&
             parsedDataBalance !== undefined &&
             String(parsedDataBalance).trim() !== ""
           ) {
-            updateData.dataBalance =
-              String(parsedDataBalance).trim();
+            updateData.dataBalance = String(parsedDataBalance).trim();
           }
 
-          // Sabon airtime logic
           if (
             parsedAirtimeBalance !== null &&
             parsedAirtimeBalance !== undefined &&
             !Number.isNaN(Number(parsedAirtimeBalance))
           ) {
-            updateData.airtimeBalance =
-              Number(parsedAirtimeBalance);
+            updateData.airtimeBalance = Number(parsedAirtimeBalance);
           }
 
           const hasBalance =
-            Object.prototype.hasOwnProperty.call(
-              updateData,
-              "dataBalance"
-            ) ||
-            Object.prototype.hasOwnProperty.call(
-              updateData,
-              "airtimeBalance"
-            );
+            Object.prototype.hasOwnProperty.call(updateData, "dataBalance") ||
+            Object.prototype.hasOwnProperty.call(updateData, "airtimeBalance");
 
           if (hasBalance) {
             updatedSim = await prisma.gsmSim.update({
@@ -438,15 +421,6 @@ exports.receiveIncomingSms = async (req, res) => {
               airtimeBalance: updatedSim.airtimeBalance,
               dataBalance: updatedSim.dataBalance,
               sim: updatedSim,
-            });
-
-            console.log("SMS balance updated:", {
-              simId: updatedSim.id,
-              airtimeBalance:
-                updatedSim.airtimeBalance,
-              dataBalance:
-                updatedSim.dataBalance,
-              message,
             });
           }
         }
@@ -472,13 +446,13 @@ exports.receiveIncomingSms = async (req, res) => {
     });
   } catch (error) {
     console.error("Incoming SMS error:", error);
-
     return res.status(400).json({
       success: false,
       message: error.message,
     });
   }
 };
+
 exports.getIncomingSms = async (req, res) => {
   try {
     const sms = await prisma.smsInbox.findMany({
@@ -492,6 +466,7 @@ exports.getIncomingSms = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
 exports.syncSims = async (req, res) => {
   try {
     const { deviceId, secretKey, sims } = req.body;
@@ -541,77 +516,24 @@ exports.syncSims = async (req, res) => {
           },
         },
         update: {
-          carrierName:
-            sim.carrierName ||
-            sim.displayName ||
-            "Unknown",
-
-          displayName:
-            sim.displayName ||
-            sim.carrierName ||
-            "Unknown",
-
-          phoneNumber:
-            sim.phoneNumber ||
-            sim.number ||
-            null,
-
-          countryIso:
-            sim.countryIso || null,
-
-          mcc:
-            sim.mcc === null ||
-            sim.mcc === undefined ||
-            sim.mcc === ""
-              ? null
-              : Number(sim.mcc),
-
-          mnc:
-            sim.mnc === null ||
-            sim.mnc === undefined ||
-            sim.mnc === ""
-              ? null
-              : Number(sim.mnc),
-
+          carrierName: sim.carrierName || sim.displayName || "Unknown",
+          displayName: sim.displayName || sim.carrierName || "Unknown",
+          phoneNumber: sim.phoneNumber || sim.number || null,
+          countryIso: sim.countryIso || null,
+          mcc: sim.mcc === null || sim.mcc === undefined || sim.mcc === "" ? null : Number(sim.mcc),
+          mnc: sim.mnc === null || sim.mnc === undefined || sim.mnc === "" ? null : Number(sim.mnc),
           status: "ACTIVE",
           lastSyncAt: new Date(),
         },
         create: {
           deviceId,
           slotIndex,
-
-          carrierName:
-            sim.carrierName ||
-            sim.displayName ||
-            "Unknown",
-
-          displayName:
-            sim.displayName ||
-            sim.carrierName ||
-            "Unknown",
-
-          phoneNumber:
-            sim.phoneNumber ||
-            sim.number ||
-            null,
-
-          countryIso:
-            sim.countryIso || null,
-
-          mcc:
-            sim.mcc === null ||
-            sim.mcc === undefined ||
-            sim.mcc === ""
-              ? null
-              : Number(sim.mcc),
-
-          mnc:
-            sim.mnc === null ||
-            sim.mnc === undefined ||
-            sim.mnc === ""
-              ? null
-              : Number(sim.mnc),
-
+          carrierName: sim.carrierName || sim.displayName || "Unknown",
+          displayName: sim.displayName || sim.carrierName || "Unknown",
+          phoneNumber: sim.phoneNumber || sim.number || null,
+          countryIso: sim.countryIso || null,
+          mcc: sim.mcc === null || sim.mcc === undefined || sim.mcc === "" ? null : Number(sim.mcc),
+          mnc: sim.mnc === null || sim.mnc === undefined || sim.mnc === "" ? null : Number(sim.mnc),
           status: "ACTIVE",
           lastSyncAt: new Date(),
         },
@@ -632,13 +554,13 @@ exports.syncSims = async (req, res) => {
     });
   } catch (error) {
     console.error("syncSims error:", error);
-
     return res.status(400).json({
       success: false,
       message: error.message,
     });
   }
 };
+
 exports.getDeviceSims = async (req, res) => {
   try {
     const sims = await prisma.gsmSim.findMany({
@@ -657,6 +579,7 @@ exports.getDeviceSims = async (req, res) => {
     });
   }
 };
+
 exports.refreshSimBalance = async (req, res) => {
   try {
     const { simId, type = "AIRTIME" } = req.body;
@@ -680,10 +603,10 @@ exports.refreshSimBalance = async (req, res) => {
     });
 
     emitEvent("gsm-sim-refresh", {
-    simId: sim.id,
-    deviceId: sim.deviceId,
-    type,
-});
+      simId: sim.id,
+      deviceId: sim.deviceId,
+      type,
+    });
 
     return res.status(201).json({
       success: true,
@@ -697,6 +620,7 @@ exports.refreshSimBalance = async (req, res) => {
     });
   }
 };
+
 exports.getGatewayDevices = async (req, res) => {
   try {
     const devices = await prisma.gsmDevice.findMany({
@@ -723,6 +647,7 @@ exports.getGatewayDevices = async (req, res) => {
     });
   }
 };
+
 exports.updateLocation = async (req, res) => {
   try {
     const {
@@ -777,7 +702,6 @@ exports.updateLocation = async (req, res) => {
       success: true,
       message: "Location updated",
     });
-
   } catch (error) {
     return res.status(400).json({
       success: false,
@@ -876,138 +800,57 @@ exports.resolveSecurityAlert = async (req, res) => {
     });
   }
 };
+
 exports.startDeviceAlarm = async (req, res) => {
   try {
-
     const { deviceId } = req.body;
-
-    const reference =
-      "ALARM-" +
-      crypto.randomBytes(6).toString("hex").toUpperCase();
+    const reference = "ALARM-" + crypto.randomBytes(6).toString("hex").toUpperCase();
 
     await prisma.gsmCommand.create({
-
       data: {
-
         reference,
-
         deviceId,
-
         type: "START_ALARM",
-
         status: "PENDING",
-
-        payload: {}
-
-      }
-
-    });
-
-    emitEvent(
-
-      "gateway-command",
-
-      {
-
-        reference,
-
-        type: "START_ALARM"
-
+        payload: {},
       },
-
-      deviceId
-
-    );
-
-    return res.json({
-
-      success: true
-
     });
 
+    emitEvent("gateway-command", { reference, type: "START_ALARM" }, deviceId);
+
+    return res.json({ success: true });
   } catch (e) {
-
-    return res.status(400).json({
-
-      success: false,
-
-      message: e.message
-
-    });
-
+    return res.status(400).json({ success: false, message: e.message });
   }
-
 };
+
 exports.stopDeviceAlarm = async (req, res) => {
-
   try {
-
     const { deviceId } = req.body;
-
-    const reference =
-      "STOPALARM-" +
-      crypto.randomBytes(6).toString("hex").toUpperCase();
+    const reference = "STOPALARM-" + crypto.randomBytes(6).toString("hex").toUpperCase();
 
     await prisma.gsmCommand.create({
-
       data: {
-
         reference,
-
         deviceId,
-
         type: "STOP_ALARM",
-
         status: "PENDING",
-
-        payload: {}
-
-      }
-
-    });
-
-    emitEvent(
-
-      "gateway-command",
-
-      {
-
-        reference,
-
-        type: "STOP_ALARM"
-
+        payload: {},
       },
-
-      deviceId
-
-    );
-
-    return res.json({
-
-      success: true
-
     });
 
+    emitEvent("gateway-command", { reference, type: "STOP_ALARM" }, deviceId);
+
+    return res.json({ success: true });
   } catch (e) {
-
-    return res.status(400).json({
-
-      success: false,
-
-      message: e.message
-
-    });
-
+    return res.status(400).json({ success: false, message: e.message });
   }
-
 };
+
 exports.lockGatewayDevice = async (req, res) => {
   try {
     const { deviceId } = req.body;
-
-    const reference =
-      "LOCK-" +
-      crypto.randomBytes(6).toString("hex").toUpperCase();
+    const reference = "LOCK-" + crypto.randomBytes(6).toString("hex").toUpperCase();
 
     await prisma.gsmCommand.create({
       data: {
@@ -1019,20 +862,12 @@ exports.lockGatewayDevice = async (req, res) => {
       },
     });
 
-    emitEvent(
-      "gateway-command",
-      {
-        reference,
-        type: "LOCK_DEVICE",
-      },
-      deviceId
-    );
+    emitEvent("gateway-command", { reference, type: "LOCK_DEVICE" }, deviceId);
 
     return res.json({
       success: true,
       message: "Lock command sent successfully",
     });
-
   } catch (error) {
     return res.status(400).json({
       success: false,
@@ -1040,6 +875,7 @@ exports.lockGatewayDevice = async (req, res) => {
     });
   }
 };
+
 exports.receiveCommandResult = async (req, res) => {
   try {
     const {
@@ -1051,36 +887,16 @@ exports.receiveCommandResult = async (req, res) => {
       response,
     } = req.body;
 
-    console.log("==================================");
-    console.log("GATEWAY RESULT RECEIVED:", {
-      deviceId,
-      reference,
-      status,
-      message,
-      response,
-    });
-    console.log("==================================");
-
-    if (
-      !deviceId ||
-      !secretKey ||
-      !reference ||
-      !status
-    ) {
+    if (!deviceId || !secretKey || !reference || !status) {
       return res.status(400).json({
         success: false,
-        message:
-          "deviceId, secretKey, reference and status are required",
+        message: "deviceId, secretKey, reference and status are required",
       });
     }
 
-    const device =
-      await prisma.gsmDevice.findFirst({
-        where: {
-          id: deviceId,
-          secretKey,
-        },
-      });
+    const device = await prisma.gsmDevice.findFirst({
+      where: { id: deviceId, secretKey },
+    });
 
     if (!device) {
       return res.status(401).json({
@@ -1089,12 +905,9 @@ exports.receiveCommandResult = async (req, res) => {
       });
     }
 
-    const existingCommand =
-      await prisma.gsmCommand.findUnique({
-        where: {
-          reference,
-        },
-      });
+    const existingCommand = await prisma.gsmCommand.findUnique({
+      where: { reference },
+    });
 
     if (!existingCommand) {
       return res.status(404).json({
@@ -1103,298 +916,119 @@ exports.receiveCommandResult = async (req, res) => {
       });
     }
 
-    if (
-      existingCommand.deviceId !== deviceId
-    ) {
+    if (existingCommand.deviceId !== deviceId) {
       return res.status(403).json({
         success: false,
-        message:
-          "This command does not belong to this device",
+        message: "This command does not belong to this device",
       });
     }
 
-    const normalizedStatus =
-      String(status || "")
-        .trim()
-        .toUpperCase();
-
-    const finalMessage =
-      String(
-        message ||
-        response ||
-        ""
-      ).trim();
+    const normalizedStatus = String(status || "").trim().toUpperCase();
+    const finalMessage = String(message || response || "").trim();
 
     await prisma.gsmCommand.update({
-      where: {
-        reference,
-      },
+      where: { reference },
       data: {
         response: finalMessage,
         updatedAt: new Date(),
       },
     });
 
-    emitEvent(
-      "gateway-command-updated",
-      {
-        reference,
-      }
-    );
+    emitEvent("gateway-command-updated", { reference });
 
-    const normalizedMessage =
-      finalMessage.toLowerCase();
+    const normalizedMessage = finalMessage.toLowerCase();
 
-    const waitingStates = [
-      "WAITING",
-      "PROCESSING",
-      "PENDING",
-      "SENT",
-    ];
-
-    const successStates = [
-      "SUCCESS",
-      "SUCCESSFUL",
-      "COMPLETED",
-      "DELIVERED",
-    ];
-
-    const failedStates = [
-      "FAILED",
-      "FAILURE",
-      "ERROR",
-      "CANCELLED",
-    ];
+    const waitingStates = ["WAITING", "PROCESSING", "PENDING", "SENT"];
+    const successStates = ["SUCCESS", "SUCCESSFUL", "COMPLETED", "DELIVERED"];
+    const failedStates = ["FAILED", "FAILURE", "ERROR", "CANCELLED"];
 
     const waitingKeywords = [
-      "awaiting network response",
-      "awaiting ussd response",
-      "request submitted",
-      "request opened",
-      "command received",
-      "loading",
-      "please wait",
-      "processing",
-      "sending",
-      "running",
-      "connecting",
-      "ussd running",
-      "ussd request sent",
-      "checking",
-      "fetching",
-      "working",
-      "dialing",
-      "executing",
-      "wait...",
+      "awaiting network response", "awaiting ussd response", "request submitted",
+      "request opened", "command received", "loading", "please wait",
+      "processing", "sending", "running", "connecting", "ussd running",
+      "ussd request sent", "checking", "fetching", "working", "dialing",
+      "executing", "wait...",
     ];
 
     const invalidKeywords = [
-      "invalid",
-      "invalid choice",
-      "invalid option",
-      "wrong selection",
-      "connection problem",
-      "network error",
-      "try again later",
-      "failed",
-      "error",
-      "problem performing request",
+      "invalid", "invalid choice", "invalid option", "wrong selection",
+      "connection problem", "network error", "try again later", "failed",
+      "error", "problem performing request",
     ];
 
-    const isTemporaryMessage =
-      waitingKeywords.some((keyword) =>
-        normalizedMessage.includes(keyword)
-      );
-
-    const isInvalidUssdMessage =
-      invalidKeywords.some((keyword) =>
-        normalizedMessage.includes(keyword)
-      );
+    const isTemporaryMessage = waitingKeywords.some((keyword) => normalizedMessage.includes(keyword));
+    const isInvalidUssdMessage = invalidKeywords.some((keyword) => normalizedMessage.includes(keyword));
 
     const autoReplyMatch =
-      finalMessage.match(
-        /reply\s+(?:with\s+)?(\d+)/i
-      ) ||
-      finalMessage.match(
-        /select\s+(\d+)/i
-      ) ||
-      finalMessage.match(
-        /choose\s+(\d+)/i
-      ) ||
-      finalMessage.match(
-        /press\s+(\d+)/i
-      ) ||
-      finalMessage.match(
-        /enter\s+(\d+)/i
-      );
+      finalMessage.match(/reply\s+(?:with\s+)?(\d+)/i) ||
+      finalMessage.match(/select\s+(\d+)/i) ||
+      finalMessage.match(/choose\s+(\d+)/i) ||
+      finalMessage.match(/press\s+(\d+)/i) ||
+      finalMessage.match(/enter\s+(\d+)/i);
 
-    const autoReply =
-      autoReplyMatch?.[1] || null;
-
-    const payload =
-      existingCommand.payload || {};
+    const autoReply = autoReplyMatch?.[1] || null;
+    const payload = existingCommand.payload || {};
 
     const ussdSession = {
-      sessionId:
-        payload.sessionId || null,
-      step:
-        Number(payload.step || 1),
-      nextCode:
-        payload.nextCode || null,
+      sessionId: payload.sessionId || null,
+      step: Number(payload.step || 1),
+      nextCode: payload.nextCode || null,
     };
 
-const simId =
-  payload.simId ||
-  req.body.simId ||
-  null;
+    const simId = payload.simId || req.body.simId || null;
+    const balanceType = String(
+      payload.balanceType || req.body.balanceType || payload.service || req.body.service || payload.type || req.body.requestType || ""
+    ).trim().toUpperCase();
 
-const balanceType =
-  String(
-    payload.balanceType ||
-    req.body.balanceType ||
-    payload.service ||
-    req.body.service ||
-    payload.type ||
-    req.body.requestType ||
-    ""
-  )
-    .trim()
-    .toUpperCase();
+    const isAirtimeCommand = ["AIRTIME", "AIRTIME_BALANCE", "CHECK_AIRTIME"].includes(balanceType);
+    const isDataCommand = ["DATA", "DATA_BALANCE", "CHECK_DATA"].includes(balanceType);
+    const isBalanceCommand = Boolean(simId) && (isAirtimeCommand || isDataCommand);
 
-const network =
-  payload.network ||
-  req.body.network ||
-  null;
-
-    const isAirtimeCommand = [
-      "AIRTIME",
-      "AIRTIME_BALANCE",
-      "CHECK_AIRTIME",
-    ].includes(balanceType);
-
-    const isDataCommand = [
-      "DATA",
-      "DATA_BALANCE",
-      "CHECK_DATA",
-    ].includes(balanceType);
-
-    const isBalanceCommand =
-      Boolean(simId) &&
-      (
-        isAirtimeCommand ||
-        isDataCommand
-      );
-
-    console.log(
-      "COMMAND RESULT DETAILS:",
-      {
-        reference,
-        normalizedStatus,
-        finalMessage,
-        simId,
-        balanceType,
-        isAirtimeCommand,
-        isDataCommand,
-        isBalanceCommand,
-        isTemporaryMessage,
-        isInvalidUssdMessage,
-        payload,
-      }
-    );
-
-    let command =
-      existingCommand;
-
+    let command = existingCommand;
     let updatedSim = null;
-        /*
-     * Temporary / Waiting USSD response
-     */
+
     if (
       isBalanceCommand &&
-      (
-        waitingStates.includes(normalizedStatus) ||
-        isTemporaryMessage ||
-        finalMessage.length < 5
-      )
+      (waitingStates.includes(normalizedStatus) || isTemporaryMessage || finalMessage.length < 5)
     ) {
+      command = await markCommandProcessing({
+        reference,
+        message: finalMessage || "Waiting for complete USSD response",
+      });
 
-      command =
-        await markCommandProcessing({
-          reference,
-          message:
-            finalMessage ||
-            "Waiting for complete USSD response",
-        });
-
-      const crypto = require("crypto");
-
-await prisma.gsmUssdLog.create({
-  data: {
-    id: crypto.randomUUID(),
-
-    deviceId,
-
-    reference,
-
-    request: null,
-
-    response: finalMessage,
-
-    status: normalizedStatus,
-  },
-});
-
-      emitEvent(
-        "gateway-ussd-waiting",
-        {
+      await prisma.gsmUssdLog.create({
+        data: {
+          id: crypto.randomUUID(),
           deviceId,
           reference,
-          sessionId:
-            ussdSession.sessionId,
-          step:
-            ussdSession.step,
-          message:
-            finalMessage,
-        }
-      );
+          request: null,
+          response: finalMessage,
+          status: normalizedStatus,
+        },
+      });
 
-      if (
-        autoReply &&
-        ussdSession.sessionId
-      ) {
+      emitEvent("gateway-ussd-waiting", {
+        deviceId,
+        reference,
+        sessionId: ussdSession.sessionId,
+        step: ussdSession.step,
+        message: finalMessage,
+      });
 
-        const nextReference =
-          "USSD-" +
-          crypto
-            .randomBytes(6)
-            .toString("hex")
-            .toUpperCase();
+      if (autoReply && ussdSession.sessionId) {
+        const nextReference = "USSD-" + crypto.randomBytes(6).toString("hex").toUpperCase();
 
         await prisma.gsmCommand.create({
           data: {
-            reference:
-              nextReference,
-
+            reference: nextReference,
             deviceId,
-
-            type:
-              "USSD_REPLY",
-
-            status:
-              "PENDING",
-
+            type: "USSD_REPLY",
+            status: "PENDING",
             payload: {
-              sessionId:
-                ussdSession.sessionId,
-
-              step:
-                ussdSession.step + 1,
-
-              reply:
-                autoReply,
-
+              sessionId: ussdSession.sessionId,
+              step: ussdSession.step + 1,
+              reply: autoReply,
               simId,
-
               balanceType,
             },
           },
@@ -1403,17 +1037,10 @@ await prisma.gsmUssdLog.create({
         emitEvent(
           "gateway-command",
           {
-            reference:
-              nextReference,
-
-            type:
-              "USSD_REPLY",
-
-            reply:
-              autoReply,
-
-            sessionId:
-              ussdSession.sessionId,
+            reference: nextReference,
+            type: "USSD_REPLY",
+            reply: autoReply,
+            sessionId: ussdSession.sessionId,
           },
           deviceId
         );
@@ -1427,357 +1054,134 @@ await prisma.gsmUssdLog.create({
       });
     }
 
-    /*
-     * Invalid USSD response
-     */
-    if (
-      isBalanceCommand &&
-      isInvalidUssdMessage
-    ) {
+    if (isBalanceCommand && isInvalidUssdMessage) {
+      command = await markCommandFailed({
+        reference,
+        message: finalMessage || "Network rejected USSD request",
+      });
 
-      command =
-        await markCommandFailed({
+      await prisma.gsmUssdLog.create({
+        data: {
+          id: crypto.randomUUID(),
+          deviceId,
           reference,
-          message:
-            finalMessage ||
-            "Network rejected USSD request",
-        });
-
-      const crypto = require("crypto");
-
-await prisma.gsmUssdLog.create({
-  data: {
-    id: crypto.randomUUID(),
-
-    deviceId,
-
-    reference,
-
-    response: finalMessage,
-
-    status: normalizedStatus,
-  },
-});
+          response: finalMessage,
+          status: normalizedStatus,
+        },
+      });
 
       await prisma.gsmDevice.update({
-        where: {
-          id: deviceId,
-        },
-        data: {
-          status: "ONLINE",
-          lastSeen: new Date(),
-        },
+        where: { id: deviceId },
+        data: { status: "ONLINE", lastSeen: new Date() },
       });
 
       return res.status(422).json({
         success: false,
-        code:
-          "INVALID_USSD_RESPONSE",
-        message:
-          "Network rejected the balance request",
+        code: "INVALID_USSD_RESPONSE",
+        message: "Network rejected the balance request",
         command,
         sim: null,
       });
     }
 
-        /*
-     * Command still processing
-     */
-    if (
-      normalizedStatus === "WAITING" ||
-      waitingStates.includes(normalizedStatus) ||
-      normalizedStatus === "SENT"
-    ) {
-
-      command =
-        await markCommandProcessing({
-          reference,
-          message:
-            finalMessage ||
-            "Command is being processed",
-        });
-
-    } else if (
-      successStates.includes(normalizedStatus)
-    ) {
-
+    if (normalizedStatus === "WAITING" || waitingStates.includes(normalizedStatus) || normalizedStatus === "SENT") {
+      command = await markCommandProcessing({
+        reference,
+        message: finalMessage || "Command is being processed",
+      });
+    } else if (successStates.includes(normalizedStatus)) {
       let airtimeBalance = null;
       let dataBalance = null;
       let expiryValue = null;
 
       if (isAirtimeCommand) {
-        airtimeBalance =
-          parseAirtimeBalance(finalMessage);
+        airtimeBalance = parseAirtimeBalance(finalMessage);
       }
 
       if (isDataCommand) {
-
-        const parsedDataBalance =
-          parseDataBalance(finalMessage);
-
-        if (
-          parsedDataBalance !== null &&
-          parsedDataBalance !== undefined &&
-          String(parsedDataBalance).trim() !== ""
-        ) {
-          dataBalance =
-            String(parsedDataBalance).trim();
+        const parsedDataBalance = parseDataBalance(finalMessage);
+        if (parsedDataBalance !== null && parsedDataBalance !== undefined && String(parsedDataBalance).trim() !== "") {
+          dataBalance = String(parsedDataBalance).trim();
         }
-
       }
 
-      expiryValue =
-        parseExpiryDate(finalMessage);
+      expiryValue = parseExpiryDate(finalMessage);
 
-      console.log(
-        "PARSED BALANCE RESULT:",
-        {
-          finalMessage,
-          airtimeBalance,
-          dataBalance,
-          expiryValue,
-        }
-      );
+      const hasAirtimeBalance = airtimeBalance !== null && airtimeBalance !== undefined && !Number.isNaN(Number(airtimeBalance));
+      const hasDataBalance = dataBalance !== null && dataBalance !== undefined && String(dataBalance).trim() !== "";
 
-      const hasAirtimeBalance =
-        airtimeBalance !== null &&
-        airtimeBalance !== undefined &&
-        !Number.isNaN(
-          Number(airtimeBalance)
-        );
-
-      const hasDataBalance =
-        dataBalance !== null &&
-        dataBalance !== undefined &&
-        String(dataBalance).trim() !== "";
-
-      /*
-       * Kada a mark SUCCESS idan parser bai gano balance ba.
-       */
-      if (
-        isBalanceCommand &&
-        !hasAirtimeBalance &&
-        !hasDataBalance
-      ) {
-
-        command =
-          await markCommandProcessing({
-            reference,
-            message:
-              finalMessage ||
-              "Waiting for valid balance response",
-          });
-
-        await prisma.gsmDevice.update({
-          where: {
-            id: deviceId,
-          },
-          data: {
-            status: "ONLINE",
-            lastSeen: new Date(),
-          },
-        });
-
-        return res.status(202).json({
-          success: true,
-          pending: true,
-          code: "BALANCE_NOT_PARSED",
-          message:
-            "Response received but balance not detected yet",
-          rawResponse: finalMessage,
-          command,
-          sim: null,
-        });
-
-      }
-
-      command =
-        await markCommandSuccessful({
+      if (isBalanceCommand && !hasAirtimeBalance && !hasDataBalance) {
+        command = await markCommandFailed({
           reference,
-          message:
-            finalMessage ||
-            "Command completed successfully",
+          message: "Could not parse balance from USSD response",
         });
-              if (isBalanceCommand) {
 
-        const updateData = {
-          lastBalanceCheck: new Date(),
+        return res.status(422).json({
+          success: false,
+          code: "PARSE_BALANCE_FAILED",
+          message: "USSD response received but failed to parse balance",
+          response: finalMessage,
+          command,
+        });
+      }
+
+      command = await markCommandSuccessful({
+        reference,
+        message: finalMessage || "Balance check successful",
+      });
+
+      if (isBalanceCommand && simId) {
+        const simUpdateData = {
           lastSyncAt: new Date(),
+          lastBalanceCheck: new Date(),
         };
 
         if (hasAirtimeBalance) {
-          updateData.airtimeBalance =
-            Number(airtimeBalance);
+          simUpdateData.airtimeBalance = Number(airtimeBalance);
         }
 
         if (hasDataBalance) {
-          updateData.dataBalance =
-            String(dataBalance).trim();
+          simUpdateData.dataBalance = dataBalance;
         }
 
         if (expiryValue) {
-
-          const parsedExpiry =
-            parseExpiryToDate(expiryValue);
-
-          if (parsedExpiry) {
-            updateData.expiryDate =
-              parsedExpiry;
-          }
-
+          simUpdateData.dataExpiresAt = parseExpiryToDate(expiryValue);
         }
 
-        updatedSim =
-          await prisma.gsmSim.update({
-            where: {
-              id: simId,
-            },
-            data: updateData,
-          });
+        updatedSim = await prisma.gsmSim.update({
+          where: { id: simId },
+          data: simUpdateData,
+        });
 
-        emitEvent(
-          "gsm-sim-balance-updated",
-          {
-            deviceId,
-            simId,
-            balanceType,
-            airtimeBalance:
-              updatedSim.airtimeBalance,
-            dataBalance:
-              updatedSim.dataBalance,
-            expiryDate:
-              updatedSim.expiryDate,
-            sim: updatedSim,
-          }
-        );
+        emitEvent("gsm-sims-synced", {
+          deviceId,
+          sims: [updatedSim],
+        });
 
-        emitEvent(
-          "gsm-sims-synced",
-          {
-            deviceId,
-            sims: [updatedSim],
-          }
-        );
-
-        console.log(
-          "SIM BALANCE UPDATED:",
-          {
-            simId:
-              updatedSim.id,
-            airtimeBalance:
-              updatedSim.airtimeBalance,
-            dataBalance:
-              updatedSim.dataBalance,
-            expiryDate:
-              updatedSim.expiryDate,
-          }
-        );
-
+        emitEvent("gsm-sim-balance-updated", {
+          deviceId,
+          simId: updatedSim.id,
+          slotIndex: updatedSim.slotIndex,
+          airtimeBalance: updatedSim.airtimeBalance,
+          dataBalance: updatedSim.dataBalance,
+          dataExpiresAt: updatedSim.dataExpiresAt,
+          sim: updatedSim,
+        });
       }
-
-    } else if (
-      failedStates.includes(normalizedStatus)
-    ) {
-
-      command =
-        await markCommandFailed({
-          reference,
-          message:
-            finalMessage ||
-            "Command failed",
-        });
-
-    } else {
-
-      command =
-        await markCommandProcessing({
-          reference,
-          message:
-            finalMessage ||
-            "Waiting...",
-        });
-
+    } else if (failedStates.includes(normalizedStatus)) {
+      command = await markCommandFailed({
+        reference,
+        message: finalMessage || "Command failed",
+      });
     }
-
-    await prisma.gsmDevice.update({
-      where: {
-        id: deviceId,
-      },
-      data: {
-        status: "ONLINE",
-        lastSeen: new Date(),
-      },
-    });
 
     return res.json({
       success: true,
-      message: updatedSim
-        ? "Command result received and SIM balance updated"
-        : "Command result received",
       command,
       sim: updatedSim,
     });
-
   } catch (error) {
-
-    console.error(
-      "receiveCommandResult error:",
-      error
-    );
-
-    return res.status(400).json({
-      success: false,
-      message:
-        error?.message ||
-        "Unable to process command result",
-    });
-
-  }
-};
-
-exports.getPairCodes = async (req, res) => {
-  try {
-    const pairCodes = await prisma.gsmPairCode.findMany({
-      orderBy: {
-        createdAt: "desc",
-      },
-      take: 100,
-    });
-
-    return res.json({
-      success: true,
-      pairCodes,
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
-exports.updateSimNumber = async (req, res) => {
-  try {
-    const { simId } = req.params;
-    const { phoneNumber } = req.body;
-
-    const sim = await prisma.gsmSim.update({
-      where: { id: simId },
-      data: {
-        phoneNumber: phoneNumber?.trim() || null,
-      },
-    });
-
-   emitEvent("gsm-sim-balance-updated", {
-  deviceId: sim.deviceId,
-  sim,
-});
-
-    return res.json({
-      success: true,
-      message: "SIM number updated",
-      sim,
-    });
-  } catch (error) {
+    console.error("receiveCommandResult error:", error);
     return res.status(400).json({
       success: false,
       message: error.message,

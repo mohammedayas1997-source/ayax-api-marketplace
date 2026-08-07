@@ -8,34 +8,34 @@ async function updateCommand(reference, status, response = null) {
     status === "CANCELLED";
 
   const command = await prisma.gsmCommand.findUnique({
-    where: { reference }
-});
-
-if (!command) {
-    throw new Error(`Command not found: ${reference}`);
-}
-
-const updated = await prisma.gsmCommand.update({
     where: { reference },
-    data: {
-        status,
-        response,
-        completedAt: isCompleted ? new Date() : command.completedAt
-    }
-});
-
-  emitEvent("gsm-command-updated", {
-    command,
-    reference: command.reference,
-    deviceId: command.deviceId,
-    type: command.type,
-    status: command.status,
-    response: command.response,
-    payload: command.payload,
-    completedAt: command.completedAt,
   });
 
-  return command;
+  if (!command) {
+    throw new Error(`Command not found: ${reference}`);
+  }
+
+  const updated = await prisma.gsmCommand.update({
+    where: { reference },
+    data: {
+      status,
+      response,
+      completedAt: isCompleted ? new Date() : command.completedAt,
+    },
+  });
+
+  emitEvent("gsm-command-updated", {
+    command: updated,
+    reference: updated.reference,
+    deviceId: updated.deviceId,
+    type: updated.type,
+    status: updated.status,
+    response: updated.response,
+    payload: updated.payload,
+    completedAt: updated.completedAt,
+  });
+
+  return updated;
 }
 
 async function markCommandProcessing({ reference, message }) {
@@ -47,19 +47,13 @@ async function markCommandProcessing({ reference, message }) {
 }
 
 async function markCommandSuccessful({ reference, message }) {
-  const command = await prisma.gsmCommand.update({
-    where: { reference },
-    data: {
-      status: "SUCCESSFUL",
-      response: message,
-      completedAt: new Date(),
-    },
-  });
-
-  emitEvent("gsm-command-updated", command);
-
-  return command;
+  return updateCommand(
+    reference,
+    "SUCCESSFUL",
+    message || "Successful"
+  );
 }
+
 async function markCommandFailed({ reference, message }) {
   return updateCommand(
     reference,

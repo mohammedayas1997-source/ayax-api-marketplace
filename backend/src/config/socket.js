@@ -24,7 +24,7 @@ exports.initSocket = (server) => {
       socket.join(deviceId);
 
       try {
-        await prisma.gatewayDevice.updateMany({
+        await prisma.gsmDevice.updateMany({
           where: {
             id: deviceId,
             secretKey,
@@ -36,9 +36,9 @@ exports.initSocket = (server) => {
           },
         });
 
-        console.log("Gateway ONLINE:", deviceId);
+        console.log("GSM Device ONLINE:", deviceId);
       } catch (e) {
-        console.log(e.message);
+        console.log("Socket connection DB error:", e.message);
       }
     }
 
@@ -54,7 +54,7 @@ exports.initSocket = (server) => {
         socket.join(deviceId);
 
         try {
-          await prisma.gatewayDevice.update({
+          await prisma.gsmDevice.update({
             where: {
               id: deviceId,
             },
@@ -64,15 +64,19 @@ exports.initSocket = (server) => {
               lastSeen: new Date(),
             },
           });
-        } catch {}
+        } catch (e) {
+          console.log("Device online error:", e.message);
+        }
       }
     );
 
     socket.on(
       "gateway-heartbeat",
       async ({ deviceId }) => {
+        if (!deviceId) return;
+
         try {
-          await prisma.gatewayDevice.update({
+          await prisma.gsmDevice.update({
             where: {
               id: deviceId,
             },
@@ -81,7 +85,9 @@ exports.initSocket = (server) => {
               status: "ONLINE",
             },
           });
-        } catch {}
+        } catch (e) {
+          console.log("Heartbeat error:", e.message);
+        }
       }
     );
 
@@ -113,7 +119,7 @@ exports.initSocket = (server) => {
 
       if (deviceId) {
         try {
-          await prisma.gatewayDevice.update({
+          await prisma.gsmDevice.update({
             where: {
               id: deviceId,
             },
@@ -123,7 +129,10 @@ exports.initSocket = (server) => {
               lastSeen: new Date(),
             },
           });
-        } catch {}
+          console.log("GSM Device OFFLINE:", deviceId);
+        } catch (e) {
+          console.log("Disconnect DB error:", e.message);
+        }
       }
     });
   });

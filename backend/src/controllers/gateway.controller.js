@@ -31,6 +31,11 @@ const MONTHS = {
 const parseExpiryToDate = (value) => {
   if (!value) return null;
 
+  // Idan value din da aka bashi riga yayi daidai kuma Date object ne, sai a dawo dashi kai tsaye
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
   const text = String(value).trim();
 
   const dayFirstNumeric = text.match(

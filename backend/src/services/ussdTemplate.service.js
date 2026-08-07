@@ -5,29 +5,38 @@ exports.buildUssd = async ({
     service,
     phone,
     amount,
+    pin,
 }) => {
-
-    const template =
-    await prisma.ussdTemplate.findFirst({
-
-        where:{
-            network,
-            service,
-            enabled:true,
-        }
-
+    // Binciken USSD Template daga Database bisa ga Network da Service
+    const templateRecord = await prisma.ussdTemplate.findFirst({
+        where: {
+            network: String(network).toUpperCase(),
+            service: String(service).toUpperCase(),
+            enabled: true,
+        },
     });
 
-    if(!template){
-
+    if (!templateRecord || !templateRecord.template) {
         throw new Error(
-            "USSD template not configured."
+            `USSD template not configured for network: ${network} and service: ${service}`
         );
-
     }
 
-    return template.template
-        .replace("{phone}", phone)
-        .replace("{amount}", amount);
+    let ussdString = templateRecord.template;
 
+    // Maye gurbin wuraren da aka sanya alamomi (Placeholders)
+    if (phone) {
+        ussdString = ussdString.replace(/\{phone\}/g, phone);
+    }
+
+    if (amount !== undefined && amount !== null) {
+        ussdString = ussdString.replace(/\{amount\}/g, String(amount));
+    }
+
+    if (pin) {
+        ussdString = ussdString.replace(/\{pin\}/g, pin);
+    }
+
+    // Tace sakon karshe domin cire duk wani agurbin da bai dace ba
+    return ussdString.trim();
 };

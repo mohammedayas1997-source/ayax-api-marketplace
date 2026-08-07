@@ -86,9 +86,12 @@ function parseAirtimeBalance(message = "") {
     /you\s+have\s+(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)\s*(?:NGN|Naira)?\s*(?:airtime|credit|remaining|left|available)/i,
     /(?:₦|NGN|\bN)\s*([\d\s,]+(?:\.\d+)?)\s*(?:airtime|credit|remaining|left|available)/i,
     /([\d\s,]+(?:\.\d+)?)\s*(?:NGN|Naira)\s*(?:airtime\s+)?(?:balance|credit|remaining|available)/i,
-    // Sabbin da aka kara domin kama sauran sakonni masu sauki:
-    /(?:balance\s*(?:is)?)\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
-    /bal\s*(?:is|[:=-])?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
+    // Kararin sabbin tsare-tsare (Universal fallback patterns)
+    /(?:bal(?:ance)?|acct|account)\s*(?:is|[:=-])?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
+    /(?:amt|amount|value)\s*(?:is|[:=-])?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
+    /(?:₦|NGN|\bN)\s*([\d\s,]+(?:\.\d+)?)/i,
+    // Duk wani lamba da ke zuwa bayan kalmar "is" ko ":" a sakon USSD
+    /\b(?:is|[:=-])\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)\b/i,
   ];
 
   for (const pattern of priorityPatterns) {
@@ -131,8 +134,10 @@ function parseAirtimeBalance(message = "") {
     }
   }
 
+  // Idan har dukka wadancan sun gaza, amma sakon yana da alamar kudi ko kuma akwai kalmar fassarar airtime,
+  // za mu zakulo duk wata lamba da ta zo tare da alamar kudi (₦, NGN, N) ko a kusa da ita.
   const hasAirtimeContext =
-    /\b(?:balance|airtime|account|credit|remaining|available|main|primary|bal)\b/i.test(
+    /\b(?:balance|airtime|account|credit|remaining|available|main|primary|bal|acct)\b/i.test(
       text
     );
 
@@ -140,6 +145,7 @@ function parseAirtimeBalance(message = "") {
     const currencyPatterns = [
       /(?:₦|NGN|\bN)\s*([\d\s,]+(?:\.\d+)?)/gi,
       /([\d\s,]+(?:\.\d+)?)\s*(?:NGN|Naira)\b/gi,
+      /\b(?:is|[:=-])\s*([\d\s,]+(?:\.\d+)?)\b/gi,
     ];
 
     for (const pattern of currencyPatterns) {

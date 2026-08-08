@@ -70,13 +70,23 @@ function parseAirtimeBalance(message = "") {
     return amount;
   };
 
-  const priorityPatterns = [
-    // Gyaran da zai gane suna kafin account ko balance (Misali: BetaGist main account: N80.97 ko Account: N80.97)
+  // Tsarin da zai gane kai tsaye ko da akwai suna a gaba (misali: BetaGist main account: N80.97)
+  const directPatterns = [
     /(?:[A-Za-z0-9\-_]+\s+)?(?:main|primary|principal|regular|normal|acct|account)?\s*(?:account|balance|credit)?\s*(?:is|equals?|=|:|-)?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
-    /(?:pulse\s+)?(?:main|primary|principal|regular|normal)\s+(?:airtime\s+)?(?:account|balance|credit)\s*(?:balance)?\s*(?:is|equals?|=|:|-)?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
-    /(?:main|primary|principal|regular|normal)\s+(?:airtime\s+)?(?:balance|credit)\s*(?:is|equals?|=|:|-)?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
-    /(?:your\s+)?(?:main|primary|principal)\s+(?:airtime\s+)?account\s*(?:is|equals?|=|:|-)?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
+    /(?:₦|NGN|\bN)\s*([\d\s,]+(?:\.\d+)?)/i,
+    /account[:\s]*(?:₦|NGN|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
+    /balance[:\s]*(?:₦|NGN|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
   ];
+
+  for (const pattern of directPatterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
+      const amount = parseMoneyValue(match[1]);
+      if (amount !== null) {
+        return amount;
+      }
+    }
+  }
 
   const generalPatterns = [
     /(?:your\s+)?airtime\s+(?:account\s+)?(?:balance|credit)\s*(?:is|equals?|=|:|-)?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
@@ -86,37 +96,13 @@ function parseAirtimeBalance(message = "") {
     /(?:your\s+)?balance\s*(?:is|equals?|=|:|-)?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)\s*(?:NGN|Naira)?/i,
     /(?:credit\s+balance|airtime|credit)\s*(?:is|equals?|=|:|-)?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
     /you\s+have\s+(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)\s*(?:NGN|Naira)?\s*(?:airtime|credit|remaining|left|available)/i,
-    /(?:₦|NGN|\bN)\s*([\d\s,]+(?:\.\d+)?)\s*(?:airtime|credit|remaining|left|available)/i,
-    /([\d\s,]+(?:\.\d+)?)\s*(?:NGN|Naira)\s*(?:airtime\s+)?(?:balance|credit|remaining|available)/i,
-    /(?:bal(?:ance)?|acct|account)\s*(?:is|[:=-])?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
-    /(?:amt|amount|value)\s*(?:is|[:=-])?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
-    /(?:₦|NGN|\bN)\s*([\d\s,]+(?:\.\d+)?)/i,
-    /\b(?:is|[:=-])\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)\b/i,
   ];
-
-  for (const pattern of priorityPatterns) {
-    const match = text.match(pattern);
-
-    if (!match?.[1]) {
-      continue;
-    }
-
-    const amount = parseMoneyValue(match[1]);
-
-    if (amount !== null) {
-      return amount;
-    }
-  }
 
   for (const pattern of generalPatterns) {
     const match = text.match(pattern);
-
-    if (!match?.[1]) {
-      continue;
-    }
+    if (!match?.[1]) continue;
 
     const matchedText = match[0] || "";
-
     if (
       dataUnitPattern.test(matchedText) ||
       percentagePattern.test(matchedText) ||
@@ -128,46 +114,8 @@ function parseAirtimeBalance(message = "") {
     }
 
     const amount = parseMoneyValue(match[1]);
-
     if (amount !== null) {
       return amount;
-    }
-  }
-
-  const hasAirtimeContext =
-    /\b(?:balance|airtime|account|credit|remaining|available|main|primary|bal|acct)\b/i.test(
-      text
-    );
-
-  if (hasAirtimeContext) {
-    const currencyPatterns = [
-      /(?:₦|NGN|\bN)\s*([\d\s,]+(?:\.\d+)?)/gi,
-      /([\d\s,]+(?:\.\d+)?)\s*(?:NGN|Naira)\b/gi,
-      /\b(?:is|[:=-])\s*([\d\s,]+(?:\.\d+)?)\b/gi,
-    ];
-
-    for (const pattern of currencyPatterns) {
-      const matches = [...text.matchAll(pattern)];
-
-      for (const match of matches) {
-        const matchedText = match[0] || "";
-
-        if (
-          dataUnitPattern.test(matchedText) ||
-          percentagePattern.test(matchedText) ||
-          phoneNumberPattern.test(matchedText) ||
-          datePattern.test(matchedText) ||
-          timePattern.test(matchedText)
-        ) {
-          continue;
-        }
-
-        const amount = parseMoneyValue(match[1]);
-
-        if (amount !== null) {
-          return amount;
-        }
-      }
     }
   }
 
@@ -187,6 +135,20 @@ exports.parseDataBalance = (message = "") => {
     return "0MB";
   }
 
+  // Idan sakon yana dauke da tsarin "Your data balances: InstaTop: N0. ..." ko makamancin haka
+  if (/data\s*balances?/i.test(text)) {
+    const dataMatches = [...text.matchAll(/([A-Za-z0-9\-_]+)[:\s]*(?:₦|NGN|N)?\s*([0-9]+(?:\.[0-9]+)?\s*(?:TB|GB|MB|KB)?)/gi)];
+    // Idan akwai takamaiman adadin data a ciki
+    const unitCheck = text.match(/([0-9]+(?:\.[0-9]+)?)\s*(TB|GB|GIGS?|G|MB|MEGS?|M|KB|K)\b/i);
+    if (!unitCheck) {
+      // Idan babu sassan data na zahiri amma akwai sakon data balance
+      const matchZero = text.match(/:\s*(?:N|₦)?0(?:\.00)?/);
+      if (matchZero && /InstaTop|Social|Video/i.test(text)) {
+        // Zai iya dawo da 0MB ko ci gaba da neman sauran
+      }
+    }
+  }
+
   const matches = [
     ...text.matchAll(
       /([0-9]+(?:\.[0-9]+)?)\s*(TB|GB|GIGS?|G|MB|MEGS?|M|KB|K)\b/gi
@@ -194,6 +156,10 @@ exports.parseDataBalance = (message = "") => {
   ];
 
   if (matches.length === 0) {
+    // Tabbatar da cewa idan akwai tsarin data da ba a samu da unit ba amma yana nuna bayani
+    if (/data\s*balance/i.test(text)) {
+      return "0MB";
+    }
     return null;
   }
 

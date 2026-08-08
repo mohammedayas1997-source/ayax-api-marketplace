@@ -1136,6 +1136,32 @@ exports.receiveCommandResult = async (req, res) => {
       const hasAirtimeBalance = airtimeBalance !== null && airtimeBalance !== undefined && !Number.isNaN(Number(airtimeBalance));
       const hasDataBalance = dataBalance !== null && dataBalance !== undefined && String(dataBalance).trim() !== "";
 
+      // TSARO NA MUSAMMAN: Idan balance command ne kuma babu ainihin balance a ciki, kada a sanya shi FAILED ko SUCCESS da wuri, a bar shi a PROCESSING!
+      if (isBalanceCommand && !hasAirtimeBalance && !hasDataBalance && !isInvalidUssdMessage && !failedStates.includes(normalizedStatus)) {
+        command = await markCommandProcessing({
+          reference,
+          message: finalMessage || "Waiting for final balance response",
+        });
+
+        await prisma.gsmUssdLog.create({
+          data: {
+            id: crypto.randomUUID(),
+            deviceId,
+            reference,
+            response: finalMessage,
+            status: normalizedStatus,
+          },
+        });
+
+        return res.json({
+          success: true,
+          pending: true,
+          waiting: true,
+          message: "Waiting for valid balance payload",
+          command,
+        });
+      }
+
       if (isBalanceCommand && !hasAirtimeBalance && !hasDataBalance) {
         command = await markCommandFailed({
           reference,

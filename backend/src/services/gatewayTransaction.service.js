@@ -2,10 +2,21 @@ const prisma = require("../config/prisma");
 const { emitEvent } = require("../config/socket");
 
 async function updateCommand(reference, status, response = null) {
+  let finalStatus = status;
+  let finalResponse = response;
+
+  // GWADA GWADE (Condition): Idan sakon farko ne na farawa, kada a bari ya zama SUCCESSFUL da wuri
+  if (finalStatus === "SUCCESSFUL" && finalResponse) {
+    const lowerMsg = String(finalResponse).toLowerCase();
+    if (lowerMsg.includes("ussd command started") || lowerMsg.includes("initiated successfully") || lowerMsg.includes("processing")) {
+      finalStatus = "PROCESSING";
+    }
+  }
+
   const isCompleted =
-    status === "SUCCESSFUL" ||
-    status === "FAILED" ||
-    status === "CANCELLED";
+    finalStatus === "SUCCESSFUL" ||
+    finalStatus === "FAILED" ||
+    finalStatus === "CANCELLED";
 
   const command = await prisma.gsmCommand.findUnique({
     where: { reference },
@@ -18,8 +29,8 @@ async function updateCommand(reference, status, response = null) {
   const updated = await prisma.gsmCommand.update({
     where: { reference },
     data: {
-      status,
-      response,
+      status: finalStatus,
+      response: finalResponse,
       completedAt: isCompleted ? new Date() : command.completedAt,
     },
   });

@@ -31,7 +31,6 @@ const MONTHS = {
 const parseExpiryToDate = (value) => {
   if (!value) return null;
 
-  // Idan value din da aka bashi riga yayi daidai kuma Date object ne, sai a dawo dashi kai tsaye
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? null : value;
   }
@@ -1008,9 +1007,11 @@ exports.receiveCommandResult = async (req, res) => {
     let command = existingCommand;
     let updatedSim = null;
 
+    // Idan dai har sakon yana cikin halin jiran rubutu (WAITING/PROCESSING) kuma yana da alamun wucin gadi
     if (
       isBalanceCommand &&
-      (waitingStates.includes(normalizedStatus) || isTemporaryMessage || finalMessage.length < 5)
+      (waitingStates.includes(normalizedStatus) || isTemporaryMessage) &&
+      !successStates.includes(normalizedStatus)
     ) {
       command = await markCommandProcessing({
         reference,
@@ -1075,7 +1076,7 @@ exports.receiveCommandResult = async (req, res) => {
       });
     }
 
-    if (isBalanceCommand && isInvalidUssdMessage) {
+    if (isBalanceCommand && isInvalidUssdMessage && !successStates.includes(normalizedStatus)) {
       command = await markCommandFailed({
         reference,
         message: finalMessage || "Network rejected USSD request",
@@ -1106,11 +1107,15 @@ exports.receiveCommandResult = async (req, res) => {
     }
 
     if (normalizedStatus === "WAITING" || waitingStates.includes(normalizedStatus) || normalizedStatus === "SENT") {
-      command = await markCommandProcessing({
-        reference,
-        message: finalMessage || "Command is being processed",
-      });
-    } else if (successStates.includes(normalizedStatus)) {
+      if (!successStates.includes(normalizedStatus) && !isTemporaryMessage) {
+        command = await markCommandProcessing({
+          reference,
+          message: finalMessage || "Command is being processed",
+        });
+      }
+    } 
+
+    if (successStates.includes(normalizedStatus) || (!waitingStates.includes(normalizedStatus) && !isTemporaryMessage)) {
       let airtimeBalance = null;
       let dataBalance = null;
       let expiryValue = null;

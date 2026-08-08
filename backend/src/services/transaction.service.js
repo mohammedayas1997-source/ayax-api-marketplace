@@ -23,16 +23,19 @@ exports.createTransaction = async ({
   });
 };
 
+// An kara 'response' ko kuma amfani da 'description' don rike ainihin sakon USSD din
 exports.updateTransactionStatus = async ({
   reference,
   status,
   description,
+  response,
 }) => {
   return prisma.transaction.update({
     where: { reference },
     data: {
       status,
-      description,
+      // Idan akwai response ko message daga app, mu ajiye shi a matsayin description ko response
+      description: response || description, 
     },
   });
 };

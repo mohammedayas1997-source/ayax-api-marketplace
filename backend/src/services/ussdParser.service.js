@@ -71,6 +71,8 @@ function parseAirtimeBalance(message = "") {
   };
 
   const priorityPatterns = [
+    // Gyaran da zai gane suna kafin account ko balance (Misali: BetaGist main account: N80.97 ko Account: N80.97)
+    /(?:[A-Za-z0-9\-_]+\s+)?(?:main|primary|principal|regular|normal|acct|account)?\s*(?:account|balance|credit)?\s*(?:is|equals?|=|:|-)?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
     /(?:pulse\s+)?(?:main|primary|principal|regular|normal)\s+(?:airtime\s+)?(?:account|balance|credit)\s*(?:balance)?\s*(?:is|equals?|=|:|-)?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
     /(?:main|primary|principal|regular|normal)\s+(?:airtime\s+)?(?:balance|credit)\s*(?:is|equals?|=|:|-)?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
     /(?:your\s+)?(?:main|primary|principal)\s+(?:airtime\s+)?account\s*(?:is|equals?|=|:|-)?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
@@ -86,11 +88,9 @@ function parseAirtimeBalance(message = "") {
     /you\s+have\s+(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)\s*(?:NGN|Naira)?\s*(?:airtime|credit|remaining|left|available)/i,
     /(?:₦|NGN|\bN)\s*([\d\s,]+(?:\.\d+)?)\s*(?:airtime|credit|remaining|left|available)/i,
     /([\d\s,]+(?:\.\d+)?)\s*(?:NGN|Naira)\s*(?:airtime\s+)?(?:balance|credit|remaining|available)/i,
-    // Kararin sabbin tsare-tsare (Universal fallback patterns)
     /(?:bal(?:ance)?|acct|account)\s*(?:is|[:=-])?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
     /(?:amt|amount|value)\s*(?:is|[:=-])?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
     /(?:₦|NGN|\bN)\s*([\d\s,]+(?:\.\d+)?)/i,
-    // Duk wani lamba da ke zuwa bayan kalmar "is" ko ":" a sakon USSD
     /\b(?:is|[:=-])\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)\b/i,
   ];
 
@@ -134,8 +134,6 @@ function parseAirtimeBalance(message = "") {
     }
   }
 
-  // Idan har dukka wadancan sun gaza, amma sakon yana da alamar kudi ko kuma akwai kalmar fassarar airtime,
-  // za mu zakulo duk wata lamba da ta zo tare da alamar kudi (₦, NGN, N) ko a kusa da ita.
   const hasAirtimeContext =
     /\b(?:balance|airtime|account|credit|remaining|available|main|primary|bal|acct)\b/i.test(
       text
@@ -183,6 +181,11 @@ exports.parseAirtimeBalance = parseAirtimeBalance;
  */
 exports.parseDataBalance = (message = "") => {
   const text = normalize(message);
+
+  // Idan sakon yana nuna rashin data ko babu ita a jiki
+  if (/don't have any active data bundle|no active data|expired/i.test(text)) {
+    return "0MB";
+  }
 
   const matches = [
     ...text.matchAll(

@@ -70,15 +70,14 @@ function parseAirtimeBalance(message = "") {
     return amount;
   };
 
-  // Tsarin da zai gane kai tsaye ko da akwai suna a gaba (misali: BetaGist main account: N80.97)
-  const directPatterns = [
-    /(?:[A-Za-z0-9\-_]+\s+)?(?:main|primary|principal|regular|normal|acct|account)?\s*(?:account|balance|credit)?\s*(?:is|equals?|=|:|-)?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
+  // 1. Gwada kamo duk wata lamba da ke zuwa bayan alamar kudi ko kalmar account/balance kai tsaye
+  const exactPatterns = [
+    /(?:main\s*account|account|balance|bal|credit|main|pulse)[:\s]*(?:₦|NGN|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
     /(?:₦|NGN|\bN)\s*([\d\s,]+(?:\.\d+)?)/i,
-    /account[:\s]*(?:₦|NGN|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
-    /balance[:\s]*(?:₦|NGN|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
+    /is[:\s]*(?:₦|NGN|N)?\s*([\d\s,]+(?:\.\d+)?)/i
   ];
 
-  for (const pattern of directPatterns) {
+  for (const pattern of exactPatterns) {
     const match = text.match(pattern);
     if (match && match[1]) {
       const amount = parseMoneyValue(match[1]);
@@ -88,21 +87,12 @@ function parseAirtimeBalance(message = "") {
     }
   }
 
-  const generalPatterns = [
-    /(?:your\s+)?airtime\s+(?:account\s+)?(?:balance|credit)\s*(?:is|equals?|=|:|-)?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
-    /(?:your\s+)?account\s+(?:balance|credit)\s*(?:is|equals?|=|:|-)?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
-    /available\s+(?:airtime\s+)?(?:balance|credit|amount)\s*(?:is|equals?|=|:|-)?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
-    /(?:current|remaining|usable)\s+(?:airtime\s+)?(?:balance|credit|amount)\s*(?:is|equals?|=|:|-)?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
-    /(?:your\s+)?balance\s*(?:is|equals?|=|:|-)?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)\s*(?:NGN|Naira)?/i,
-    /(?:credit\s+balance|airtime|credit)\s*(?:is|equals?|=|:|-)?\s*(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
-    /you\s+have\s+(?:₦|NGN|Naira|N)?\s*([\d\s,]+(?:\.\d+)?)\s*(?:NGN|Naira)?\s*(?:airtime|credit|remaining|left|available)/i,
-  ];
-
-  for (const pattern of generalPatterns) {
-    const match = text.match(pattern);
-    if (!match?.[1]) continue;
-
+  // 2. Duba ko akwai duk wata lamba da ta dace da tsarin kudi a cikin sakon idan har akwai alamar cewa na airtime ne
+  const allMatches = [...text.matchAll(/(?:₦|NGN|\bN)?\s*([0-9]+(?:\.[0-9]{2})?)/gi)];
+  for (const match of allMatches) {
     const matchedText = match[0] || "";
+    
+    // Tabbatar cewa ba data bane ko lamba mai alaka da date/phone
     if (
       dataUnitPattern.test(matchedText) ||
       percentagePattern.test(matchedText) ||
@@ -191,26 +181,28 @@ exports.parseDataBalance = (message = "") => {
 
 exports.parseExpiryDate = (message = "") => {
   const text = normalize(message);
-  const sep = "[\\s\\/\\-]+";
+  const sep = "[\\s\\/\\-\\.]+";
 
   const patterns = [
+    // 1. Kalmomi masu nuna expiry tare da kwanan wata (misali: expires on 12/08/2026 ko valid till 12-Aug-26)
     new RegExp(
-      `(?:valid\\s+(?:until|till)|expires?\\s+(?:on)?|expiry(?:\\s+date)?)\\s*(?:is|:|-)?\\s*` +
-        `(\\d{1,2}${sep}\\d{1,2}${sep}\\d{2,4}|\\d{4}${sep}\\d{1,2}${sep}\\d{1,2})`,
+      `(?:valid\\s+(?:until|till|to)|expires?\\s+(?:on)?|expiry(?:\\s+date)?|validity)\\s*(?:is|:|-)?\\s*` +
+        `(\\d{1,2}${sep}(?:\\d{1,2}|[A-Za-z]{3,9})${sep}\\d{2,4})`,
       "i"
     ),
+    // 2. Kwanan wata da ke zuwa bayan kalmomi irin su "till", "on", ko "date"
     new RegExp(
-      `(?:valid\\s+(?:until|till)|expires?\\s+(?:on)?|expiry(?:\\s+date)?)\\s*(?:is|:|-)?\\s*` +
-        `(\\d{1,2}${sep}[A-Za-z]{3,9}${sep}\\d{2,4})`,
+      `(?:on|till|until|date)\\s*[:\\-]?\\s*` +
+        `(\\d{1,2}${sep}(?:\\d{1,2}|[A-Za-z]{3,9})${sep}\\d{2,4})`,
       "i"
     ),
-    new RegExp(
-      `(?:valid\\s+(?:until|till)|expires?\\s+(?:on)?|expiry(?:\\s+date)?)\\s*(?:is|:|-)?\\s*` +
-        `([A-Za-z]{3,9}${sep}\\d{1,2}${sep}\\d{2,4})`,
-      "i"
-    ),
-    /\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/,
-    /\b\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}\b/,
+    // 3. Tsarin lamba kawai ko wata da harafi (misali: 12/08/2026 ko 12-Aug-2026)
+    new RegExp(`\\b(\\d{1,2}${sep}[A-Za-z]{3,9}${sep}\\d{2,4})`, "i"),
+    new RegExp(`\\b(\\d{4}${sep}\\d{1,2}${sep}\\d{1,2})`, "i"),
+    new RegExp(`\\b(\\d{1,2}${sep}\\d{1,2}${sep}\\d{2,4})`, "i"),
+    // 4. Duk wani tsari na kwanan wata da aka samu a cikin sakon ko da babu dogon bayani a gaba
+    /\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}\b/,
+    /\b\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}\b/,
     /\b\d{1,2}[\s\-]+[A-Za-z]{3,9}[\s\-]+\d{2,4}\b/,
     /\b[A-Za-z]{3,9}[\s\-]+\d{1,2}[\s\-,]+\d{2,4}\b/,
   ];

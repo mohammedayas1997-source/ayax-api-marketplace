@@ -28,7 +28,10 @@ const normalizeUnit = (unit = "") => {
  * UNIVERSAL AIRTIME BALANCE PARSER
  */
 function parseAirtimeBalance(message = "") {
+  console.log("RAW USSD MESSAGE:", message);
   const text = normalize(message);
+  console.log("NORMALIZED TEXT:", text);
+ 
 
   if (!text) {
     return null;
@@ -81,6 +84,7 @@ function parseAirtimeBalance(message = "") {
     const match = text.match(pattern);
     if (match && match[1]) {
       const amount = parseMoneyValue(match[1]);
+      console.log("MATCHED AIRTIME AMOUNT:", amount);
       if (amount !== null) {
         return amount;
       }

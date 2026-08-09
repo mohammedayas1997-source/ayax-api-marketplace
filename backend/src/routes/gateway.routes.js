@@ -63,7 +63,7 @@ router.post("/location", updateLocation);
 router.post("/security-alert", receiveSecurityAlert);
 router.get("/security-alerts", getSecurityAlerts);
 router.patch("/security-alerts/:id/resolve", resolveSecurityAlert);
-router.get("/analytics", getGsmAnalytics);
+router.get("/analytics", gatewayController.getGsmAnalytics);
 
 // =========================
 // Remote Device Commands

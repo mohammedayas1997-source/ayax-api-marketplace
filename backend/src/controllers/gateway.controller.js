@@ -1292,7 +1292,7 @@ exports.updateSimNumber = async (req, res) => {
     });
   }
 };
-// 23. getGsmAnalytics
+// 23. getGsmAnalytics (Gyara anan)
 exports.getGsmAnalytics = async (req, res) => {
   try {
     const totalDevices = await prisma.gsmDevice.count();
@@ -1302,8 +1302,15 @@ exports.getGsmAnalytics = async (req, res) => {
     const totalSims = await prisma.gsmSim.count();
     const totalSms = await prisma.smsInbox.count();
     const totalCommands = await prisma.gsmCommand.count();
-    const successfulCommands = await prisma.gsmCommand.count({ where: { status: { in: ["SUCCESS", "SUCCESSFUL", "COMPLETED"] } } });
-    const failedCommands = await prisma.gsmCommand.count({ where: { status: { in: ["FAILED", "FAILURE", "ERROR"] } } });
+    
+    // Ka tabbata ka yi amfani da madaidaicin matsayi (status) ɗin da ke cikin schema ɗinka kawai:
+    const successfulCommands = await prisma.gsmCommand.count({ 
+      where: { status: "SUCCESS" } // Ko kuma duk abin da enum ɗinka ya amince da shi misali "COMPLETED"
+    });
+    
+    const failedCommands = await prisma.gsmCommand.count({ 
+      where: { status: "FAILED" } 
+    });
 
     return res.json({
       success: true,

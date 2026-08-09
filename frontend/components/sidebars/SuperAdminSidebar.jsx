@@ -275,7 +275,7 @@ export default function SuperAdminSidebar({
   };
 
   return (
-    <aside className="flex h-screen w-80 flex-col border-r border-slate-800 bg-slate-900 p-6">
+  <aside className="flex h-screen w-72 min-w-[280px] flex-col border-r border-slate-800 bg-slate-900 p-6">
       <Link
         href="/super-admin"
         className="mb-8"

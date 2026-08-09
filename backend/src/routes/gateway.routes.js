@@ -33,7 +33,6 @@ router.post("/pair", pairDevice);
 router.post("/heartbeat", heartbeat);
 router.post("/result", receiveCommandResult);
 
-// Wannan ne kawai GET /devices
 router.get("/devices", getGatewayDevices);
 
 router.patch("/devices/:id/rename", renameDevice);
@@ -63,7 +62,9 @@ router.post("/location", updateLocation);
 router.post("/security-alert", receiveSecurityAlert);
 router.get("/security-alerts", getSecurityAlerts);
 router.patch("/security-alerts/:id/resolve", resolveSecurityAlert);
-router.get("/analytics", gatewayController.getGsmAnalytics);
+
+// GSM Analytics
+router.get("/analytics", getGsmAnalytics);
 
 // =========================
 // Remote Device Commands

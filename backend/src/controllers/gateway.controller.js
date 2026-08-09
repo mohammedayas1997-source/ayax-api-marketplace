@@ -415,6 +415,13 @@ exports.receiveIncomingSms = async (req, res) => {
               },
               data: updateData,
             });
+            const parsedExpiry = parseExpiryDate(message);
+          if (parsedExpiry) {
+            const formattedDate = parseExpiryToDate(parsedExpiry);
+            if (formattedDate) {
+              updateData.expiryDate = formattedDate;
+            }
+          }
 
             emitEvent("gsm-sims-synced", {
               deviceId,
@@ -1197,7 +1204,7 @@ exports.receiveCommandResult = async (req, res) => {
         }
 
         if (expiryValue) {
-          simUpdateData.dataExpiresAt = parseExpiryToDate(expiryValue);
+          simUpdateData.expiryDate = parseExpiryToDate(expiryValue); // An gyara daga dataExpiresAt zuwa expiryDate
         }
 
         updatedSim = await prisma.gsmSim.update({
@@ -1216,7 +1223,7 @@ exports.receiveCommandResult = async (req, res) => {
           slotIndex: updatedSim.slotIndex,
           airtimeBalance: updatedSim.airtimeBalance,
           dataBalance: updatedSim.dataBalance,
-          dataExpiresAt: updatedSim.dataExpiresAt,
+          expiryDate: updatedSim.expiryDate, // An gyara anan ma
           sim: updatedSim,
         });
       }

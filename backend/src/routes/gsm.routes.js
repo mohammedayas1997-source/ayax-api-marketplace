@@ -39,5 +39,6 @@ router.post(
   role("ADMIN", "SUPER_ADMIN"),
   buyWithGatewaySim
 );
+router.get("/analytics", getGsmAnalytics);
 
 module.exports = router;

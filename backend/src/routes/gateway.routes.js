@@ -23,7 +23,6 @@ const {
   stopDeviceAlarm,
   lockGatewayDevice,
   updateSimNumber,
-  getGsmAnalytics,
 } = require("../controllers/gateway.controller");
 
 // =========================
@@ -63,8 +62,6 @@ router.post("/security-alert", receiveSecurityAlert);
 router.get("/security-alerts", getSecurityAlerts);
 router.patch("/security-alerts/:id/resolve", resolveSecurityAlert);
 
-// GSM Analytics
-router.get("/analytics", getGsmAnalytics);
 
 // =========================
 // Remote Device Commands

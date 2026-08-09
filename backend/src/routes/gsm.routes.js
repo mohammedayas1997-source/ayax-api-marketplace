@@ -11,6 +11,11 @@ const {
   autoSelectSim,
   buyWithGatewaySim,
 } = require("../controllers/gsm.controller");
+const {
+  getGsmAnalytics,
+} = require("../controllers/gateway.controller");
+
+router.get("/analytics", getGsmAnalytics);
 
 router.post(
   "/seed",

@@ -1292,3 +1292,37 @@ exports.updateSimNumber = async (req, res) => {
     });
   }
 };
+// 23. getGsmAnalytics
+exports.getGsmAnalytics = async (req, res) => {
+  try {
+    const totalDevices = await prisma.gsmDevice.count();
+    const onlineDevices = await prisma.gsmDevice.count({ where: { status: "ONLINE" } });
+    const offlineDevices = await prisma.gsmDevice.count({ where: { status: "OFFLINE" } });
+    
+    const totalSims = await prisma.gsmSim.count();
+    const totalSms = await prisma.smsInbox.count();
+    const totalCommands = await prisma.gsmCommand.count();
+    const successfulCommands = await prisma.gsmCommand.count({ where: { status: { in: ["SUCCESS", "SUCCESSFUL", "COMPLETED"] } } });
+    const failedCommands = await prisma.gsmCommand.count({ where: { status: { in: ["FAILED", "FAILURE", "ERROR"] } } });
+
+    return res.json({
+      success: true,
+      analytics: {
+        totalDevices,
+        onlineDevices,
+        offlineDevices,
+        totalSims,
+        totalSms,
+        totalCommands,
+        successfulCommands,
+        failedCommands,
+      },
+    });
+  } catch (error) {
+    console.error("getGsmAnalytics error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};

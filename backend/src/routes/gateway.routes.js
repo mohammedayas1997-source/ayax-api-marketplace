@@ -22,6 +22,7 @@ const {
   startDeviceAlarm,
   stopDeviceAlarm,
   lockGatewayDevice,
+  updateSimNumber,
 } = require("../controllers/gateway.controller");
 
 // =========================
@@ -44,6 +45,7 @@ router.delete("/devices/:id", deleteDevice);
 router.post("/sims/sync", syncSims);
 router.post("/sims/refresh-balance", refreshSimBalance);
 router.get("/devices/:deviceId/sims", getDeviceSims);
+router.put("/sims/:simId/number", updateSimNumber);
 
 // =========================
 // Incoming SMS

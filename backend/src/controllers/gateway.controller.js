@@ -1251,3 +1251,44 @@ exports.receiveCommandResult = async (req, res) => {
     });
   }
 };
+// 22. updateSimNumber
+exports.updateSimNumber = async (req, res) => {
+  try {
+    const { simId } = req.params;
+    const { phoneNumber } = req.body;
+
+    if (!phoneNumber) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number is required",
+      });
+    }
+
+    const updatedSim = await prisma.gsmSim.update({
+      where: { id: simId },
+      data: { 
+        phoneNumber: String(phoneNumber).trim(),
+        lastSyncAt: new Date(),
+      },
+    });
+
+    emitEvent("gsm-sim-number-updated", {
+      simId: updatedSim.id,
+      deviceId: updatedSim.deviceId,
+      phoneNumber: updatedSim.phoneNumber,
+      sim: updatedSim,
+    });
+
+    return res.json({
+      success: true,
+      message: "SIM phone number updated successfully",
+      sim: updatedSim,
+    });
+  } catch (error) {
+    console.error("updateSimNumber error:", error);
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};

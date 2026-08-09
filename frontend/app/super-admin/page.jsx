@@ -22,6 +22,8 @@ import {
   Database,
   Wifi,
   BellRing,
+  WifiHigh,
+  PhoneCall,
 } from "lucide-react";
 
 import useGatewaySocket from "@/hooks/useGatewaySocket";
@@ -374,6 +376,18 @@ export default function SuperAdminDashboard() {
         value: formatNaira(stats.companyWallet),
         icon: Wallet,
         tone: "green",
+      },
+      {
+        title: "Total Data Sales", // An ƙara Yawan Data
+        value: formatNumber(stats.totalDataSales || stats.dataSalesCount || stats.totalData),
+        icon: WifiHigh,
+        tone: "indigo",
+      },
+      {
+        title: "Total Airtime Sales", // An ƙara Yawan Airtime
+        value: formatNaira(stats.totalAirtimeSales || stats.totalAirtime),
+        icon: PhoneCall,
+        tone: "cyan",
       },
       {
         title: "Pending Funding",

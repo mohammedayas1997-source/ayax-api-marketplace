@@ -24,6 +24,8 @@ import {
   BellRing,
   WifiHigh,
   PhoneCall,
+  PieChart,
+  CircleDollarSign,
 } from "lucide-react";
 
 import useGatewaySocket from "@/hooks/useGatewaySocket";
@@ -378,13 +380,25 @@ export default function SuperAdminDashboard() {
         tone: "green",
       },
       {
-        title: "Total Data Sales", // An ƙara Yawan Data
-        value: formatNumber(stats.totalDataSales || stats.dataSalesCount || stats.totalData),
-        icon: WifiHigh,
+        title: "Available Data Balance", // Ragowar Data a SIM (Live)
+        value: stats.availableDataBalance || stats.dataBalance || "0 MB",
+        icon: PieChart,
         tone: "indigo",
       },
       {
-        title: "Total Airtime Sales", // An ƙara Yawan Airtime
+        title: "Available Airtime Balance", // Ragowar Kuɗin Airtime a SIM (Live)
+        value: formatNaira(stats.availableAirtimeBalance || stats.airtimeBalance || 0),
+        icon: CircleDollarSign,
+        tone: "green",
+      },
+      {
+        title: "Total Data Sales",
+        value: formatNumber(stats.totalDataSales || stats.dataSalesCount || stats.totalData),
+        icon: WifiHigh,
+        tone: "blue",
+      },
+      {
+        title: "Total Airtime Sales",
         value: formatNaira(stats.totalAirtimeSales || stats.totalAirtime),
         icon: PhoneCall,
         tone: "cyan",

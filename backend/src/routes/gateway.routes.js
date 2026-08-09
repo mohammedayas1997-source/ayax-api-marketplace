@@ -45,6 +45,7 @@ router.delete("/devices/:id", deleteDevice);
 router.post("/sims/sync", syncSims);
 router.post("/sims/refresh-balance", refreshSimBalance);
 router.get("/devices/:deviceId/sims", getDeviceSims);
+router.patch("/sims/:simId/number", updateSimNumber);
 router.put("/sims/:simId/number", updateSimNumber);
 
 // =========================

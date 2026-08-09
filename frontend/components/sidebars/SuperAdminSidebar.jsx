@@ -247,21 +247,21 @@ const links = [
 ];
 
 export default function SuperAdminSidebar({
-  onClose,
+  onClose = () => {}, // Mun sanya default empty function idan ba a tura onClose ba
 }) {
   const pathname = usePathname();
 
   const logout = () => {
-  localStorage.removeItem("token");
-  localStorage.removeItem("user");
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
 
-  sessionStorage.removeItem("token");
-  sessionStorage.removeItem("user");
-  sessionStorage.removeItem("loginOtpSession");
-  sessionStorage.removeItem("developmentLoginOtp");
+    sessionStorage.removeItem("token");
+    sessionStorage.removeItem("user");
+    sessionStorage.removeItem("loginOtpSession");
+    sessionStorage.removeItem("developmentLoginOtp");
 
-  window.location.replace("/login");
-};
+    window.location.replace("/login");
+  };
 
   const isLinkActive = (href) => {
     if (href === "/super-admin") {
@@ -279,7 +279,7 @@ export default function SuperAdminSidebar({
       <Link
         href="/super-admin"
         className="mb-8"
-        onClick={onClose}
+        onClick={() => typeof onClose === "function" && onClose()}
       >
         <h2 className="text-2xl font-extrabold text-white">
           Ayax{" "}
@@ -316,7 +316,7 @@ export default function SuperAdminSidebar({
             <Link
               key={item.href}
               href={item.href}
-              onClick={onClose}
+              onClick={() => typeof onClose === "function" && onClose()}
               className={`flex items-center gap-3 rounded-xl px-4 py-3 transition ${
                 active
                   ? "bg-blue-600 text-white"

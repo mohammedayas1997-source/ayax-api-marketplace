@@ -404,9 +404,18 @@ exports.receiveIncomingSms = async (req, res) => {
             updateData.airtimeBalance = Number(parsedAirtimeBalance);
           }
 
+          const parsedExpiry = parseExpiryDate(message);
+          if (parsedExpiry) {
+            const formattedDate = parseExpiryToDate(parsedExpiry);
+            if (formattedDate) {
+              updateData.expiryDate = formattedDate;
+            }
+          }
+
           const hasBalance =
             Object.prototype.hasOwnProperty.call(updateData, "dataBalance") ||
-            Object.prototype.hasOwnProperty.call(updateData, "airtimeBalance");
+            Object.prototype.hasOwnProperty.call(updateData, "airtimeBalance") ||
+            Object.prototype.hasOwnProperty.call(updateData, "expiryDate");
 
           if (hasBalance) {
             updatedSim = await prisma.gsmSim.update({
@@ -415,13 +424,6 @@ exports.receiveIncomingSms = async (req, res) => {
               },
               data: updateData,
             });
-            const parsedExpiry = parseExpiryDate(message);
-          if (parsedExpiry) {
-            const formattedDate = parseExpiryToDate(parsedExpiry);
-            if (formattedDate) {
-              updateData.expiryDate = formattedDate;
-            }
-          }
 
             emitEvent("gsm-sims-synced", {
               deviceId,
@@ -434,6 +436,7 @@ exports.receiveIncomingSms = async (req, res) => {
               slotIndex: normalizedSlot,
               airtimeBalance: updatedSim.airtimeBalance,
               dataBalance: updatedSim.dataBalance,
+              expiryDate: updatedSim.expiryDate,
               sim: updatedSim,
             });
           }
@@ -1014,7 +1017,6 @@ exports.receiveCommandResult = async (req, res) => {
     let command = existingCommand;
     let updatedSim = null;
 
-    // Idan dai har sakon yana cikin halin jiran rubutu (WAITING/PROCESSING) kuma yana da alamun wucin gadi
     if (
       isBalanceCommand &&
       (waitingStates.includes(normalizedStatus) || isTemporaryMessage) &&
@@ -1143,7 +1145,6 @@ exports.receiveCommandResult = async (req, res) => {
       const hasAirtimeBalance = airtimeBalance !== null && airtimeBalance !== undefined && !Number.isNaN(Number(airtimeBalance));
       const hasDataBalance = dataBalance !== null && dataBalance !== undefined && String(dataBalance).trim() !== "";
 
-      // TSARO NA MUSAMMAN: Idan balance command ne kuma babu ainihin balance a ciki, kada a sanya shi FAILED ko SUCCESS da wuri, a bar shi a PROCESSING!
       if (isBalanceCommand && !hasAirtimeBalance && !hasDataBalance && !isInvalidUssdMessage && !failedStates.includes(normalizedStatus)) {
         command = await markCommandProcessing({
           reference,
@@ -1204,7 +1205,10 @@ exports.receiveCommandResult = async (req, res) => {
         }
 
         if (expiryValue) {
-          simUpdateData.expiryDate = parseExpiryToDate(expiryValue); // An gyara daga dataExpiresAt zuwa expiryDate
+          const formattedExpiry = parseExpiryToDate(expiryValue);
+          if (formattedExpiry) {
+            simUpdateData.expiryDate = formattedExpiry;
+          }
         }
 
         updatedSim = await prisma.gsmSim.update({
@@ -1223,7 +1227,7 @@ exports.receiveCommandResult = async (req, res) => {
           slotIndex: updatedSim.slotIndex,
           airtimeBalance: updatedSim.airtimeBalance,
           dataBalance: updatedSim.dataBalance,
-          expiryDate: updatedSim.expiryDate, // An gyara anan ma
+          expiryDate: updatedSim.expiryDate,
           sim: updatedSim,
         });
       }

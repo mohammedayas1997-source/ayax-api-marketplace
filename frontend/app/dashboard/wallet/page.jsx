@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import {
   Wallet,
   PlusCircle,
@@ -58,6 +59,10 @@ const getStatusClasses = (status) => {
 };
 
 export default function WalletPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const paymentReference = searchParams.get("reference");
+
   const [wallet, setWallet] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const socket = useSocket();
@@ -66,6 +71,7 @@ export default function WalletPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [verifying, setVerifying] = useState(false);
 
   const [fundModalOpen, setFundModalOpen] = useState(false);
   const [amount, setAmount] = useState("");
@@ -76,7 +82,6 @@ export default function WalletPage() {
 
   const fetchWallet = useCallback(async () => {
     const response = await api.get("/wallet");
-
     const walletData =
       response.data?.wallet ||
       response.data?.data?.wallet ||
@@ -84,13 +89,11 @@ export default function WalletPage() {
       null;
 
     setWallet(walletData);
-
     return walletData;
   }, []);
 
   const fetchTransactions = useCallback(async () => {
     const response = await api.get("/wallet/transactions");
-
     const list =
       response.data?.transactions ||
       response.data?.data?.transactions ||
@@ -98,7 +101,6 @@ export default function WalletPage() {
       [];
 
     setTransactions(Array.isArray(list) ? list : []);
-
     return list;
   }, []);
 
@@ -110,8 +112,6 @@ export default function WalletPage() {
         } else {
           setLoading(true);
         }
-
-        setMessage("");
 
         const results = await Promise.allSettled([
           fetchWallet(),
@@ -139,14 +139,48 @@ export default function WalletPage() {
     [fetchWallet, fetchTransactions]
   );
 
+  // Tabbatar da biyan kudin Paystack idan an dawo daga payment gateway
+  useEffect(() => {
+    if (!paymentReference) return;
+
+    const verifyPayment = async () => {
+      try {
+        setVerifying(true);
+        setMessageType("info");
+        setMessage("Verifying your payment, please wait...");
+
+        const response = await api.get(
+          `/wallet/paystack/verify/${paymentReference}`
+        );
+
+        setMessageType("success");
+        setMessage(
+          response.data?.message || "Wallet funded successfully!"
+        );
+
+        // Tsabtace URL bayan an gama verify don kada ya sake loop
+        router.replace("/dashboard/wallet", { scroll: false });
+        await loadWalletPage({ silent: true });
+      } catch (error) {
+        setMessageType("error");
+        setMessage(
+          getErrorMessage(error, "Payment verification failed.")
+        );
+      } finally {
+        setVerifying(false);
+      }
+    };
+
+    verifyPayment();
+  }, [paymentReference, router, loadWalletPage]);
+
   useEffect(() => {
     loadWalletPage();
   }, [loadWalletPage]);
 
+  // Real-time Socket listeners
   useEffect(() => {
-    if (!socket || !connected) {
-      return undefined;
-    }
+    if (!socket || !connected) return undefined;
 
     const refreshWallet = () => {
       loadWalletPage({ silent: true }).catch((error) => {
@@ -162,7 +196,6 @@ export default function WalletPage() {
           updatedAt: payload.updatedAt || new Date().toISOString(),
         }));
       }
-
       refreshWallet();
     };
 
@@ -182,26 +215,18 @@ export default function WalletPage() {
       refreshWallet();
     };
 
-    const handleTransactionUpdated = () => {
-      refreshWallet();
-    };
-
-    const handlePurchaseSuccessful = () => {
-      refreshWallet();
-    };
-
     socket.on("wallet:updated", handleWalletUpdated);
     socket.on("funding-approved", handleFundingApproved);
     socket.on("funding-rejected", handleFundingRejected);
-    socket.on("transaction-updated", handleTransactionUpdated);
-    socket.on("purchase-successful", handlePurchaseSuccessful);
+    socket.on("transaction-updated", refreshWallet);
+    socket.on("purchase-successful", refreshWallet);
 
     return () => {
       socket.off("wallet:updated", handleWalletUpdated);
       socket.off("funding-approved", handleFundingApproved);
       socket.off("funding-rejected", handleFundingRejected);
-      socket.off("transaction-updated", handleTransactionUpdated);
-      socket.off("purchase-successful", handlePurchaseSuccessful);
+      socket.off("transaction-updated", refreshWallet);
+      socket.off("purchase-successful", refreshWallet);
     };
   }, [socket, connected, loadWalletPage]);
 
@@ -221,10 +246,7 @@ export default function WalletPage() {
 
         return result;
       },
-      {
-        totalCredit: 0,
-        totalDebit: 0,
-      }
+      { totalCredit: 0, totalDebit: 0 }
     );
   }, [transactions]);
 
@@ -236,7 +258,6 @@ export default function WalletPage() {
 
   const closeFundingModal = () => {
     if (submitting) return;
-
     setFundModalOpen(false);
     setAmount("");
     setChannel("BANK_TRANSFER");
@@ -257,7 +278,25 @@ export default function WalletPage() {
       setSubmitting(true);
       setMessage("");
 
-      const response = await api.post("/wallet/funding", {
+      // Idan zabin channel din CARD ne ko PAYSTACK, zai kira route din Paystack Initialization
+      if (channel === "CARD" || channel === "PAYSTACK") {
+        const response = await api.post("/wallet/paystack/initialize", {
+          amount: numericAmount,
+        });
+
+        const authUrl =
+          response.data?.authorizationUrl ||
+          response.data?.data?.authorizationUrl;
+
+        if (authUrl) {
+          // Tura mai amfani zuwa shafin biyan kudi na Paystack
+          window.location.href = authUrl;
+          return;
+        }
+      }
+
+      // Idan kuma bank transfer ne ko manual funding zai bi wannan hanyar
+      const response = await api.post("/wallet/fund", {
         amount: numericAmount,
         channel,
       });
@@ -271,14 +310,13 @@ export default function WalletPage() {
       setFundModalOpen(false);
       setAmount("");
       setChannel("BANK_TRANSFER");
-
       await loadWalletPage({ silent: true });
     } catch (error) {
       setMessageType("error");
       setMessage(
         getErrorMessage(
           error,
-          "Unable to create wallet funding request."
+          "Unable to initialize payment or create funding request."
         )
       );
     } finally {
@@ -291,7 +329,7 @@ export default function WalletPage() {
       title="Wallet"
       description="Fund your wallet and monitor all API deductions."
     >
-      {message && (
+      {(message || verifying) && (
         <div
           className={`mb-6 flex items-start gap-3 rounded-2xl border px-5 py-4 ${
             messageType === "success"
@@ -301,12 +339,13 @@ export default function WalletPage() {
               : "border-blue-500/30 bg-blue-500/10 text-blue-300"
           }`}
         >
-          {messageType === "success" ? (
+          {verifying || messageType === "info" ? (
+            <LoaderCircle size={20} className="mt-0.5 shrink-0 animate-spin" />
+          ) : messageType === "success" ? (
             <CheckCircle2 size={20} className="mt-0.5 shrink-0" />
           ) : (
             <AlertCircle size={20} className="mt-0.5 shrink-0" />
           )}
-
           <span>{message}</span>
         </div>
       )}
@@ -348,9 +387,7 @@ export default function WalletPage() {
             <div className="rounded-3xl border border-blue-500 bg-gradient-to-br from-blue-600 to-slate-900 p-8 lg:col-span-2">
               <div className="flex items-center gap-3">
                 <Wallet size={32} />
-                <span className="font-semibold">
-                  Available Balance
-                </span>
+                <span className="font-semibold">Available Balance</span>
               </div>
 
               <h2 className="mt-8 break-all text-4xl font-extrabold sm:text-5xl">
@@ -358,8 +395,8 @@ export default function WalletPage() {
               </h2>
 
               <p className="mt-4 text-blue-100">
-                This balance is automatically deducted when your API
-                requests are processed.
+                This balance is automatically deducted when your API requests are
+                processed.
               </p>
 
               {wallet?.updatedAt && (
@@ -371,9 +408,7 @@ export default function WalletPage() {
             </div>
 
             <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
-              <h3 className="mb-5 text-xl font-bold">
-                Quick Funding
-              </h3>
+              <h3 className="mb-5 text-xl font-bold">Quick Funding</h3>
 
               <div className="space-y-3">
                 {QUICK_AMOUNTS.map((quickAmount) => (
@@ -397,7 +432,7 @@ export default function WalletPage() {
                 className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 font-semibold hover:bg-blue-700"
               >
                 <CreditCard size={18} />
-                Fund Wallet
+                Fund via Card
               </button>
             </div>
           </section>
@@ -408,7 +443,6 @@ export default function WalletPage() {
               value={formatNaira(totals.totalCredit)}
               type="credit"
             />
-
             <SummaryCard
               title="Total Debit"
               value={formatNaira(totals.totalDebit)}
@@ -417,9 +451,7 @@ export default function WalletPage() {
           </section>
 
           <section className="mt-8 rounded-3xl border border-slate-800 bg-slate-900 p-6">
-            <h2 className="mb-5 text-xl font-bold">
-              Wallet History
-            </h2>
+            <h2 className="mb-5 text-xl font-bold">Wallet History</h2>
 
             <div className="space-y-4">
               {transactions.length === 0 ? (
@@ -428,13 +460,10 @@ export default function WalletPage() {
                 </div>
               ) : (
                 transactions.map((item) => {
-                  const type = String(
-                    item?.type || "DEBIT"
-                  ).toUpperCase();
-
+                  const type = String(item?.type || "DEBIT").toUpperCase();
                   const status = String(
                     item?.status ||
-                      (type === "CREDIT" || type === "REFUND" || type === "REVERSAL"
+                      (["CREDIT", "REFUND", "REVERSAL"].includes(type)
                         ? "SUCCESSFUL"
                         : "COMPLETED")
                   ).toUpperCase();
@@ -465,9 +494,7 @@ export default function WalletPage() {
                           <h3 className="font-semibold">
                             {item.description ||
                               item.service ||
-                              (isCredit
-                                ? "Wallet Credit"
-                                : "Wallet Debit")}
+                              (isCredit ? "Wallet Credit" : "Wallet Debit")}
                           </h3>
 
                           <p className="text-sm text-slate-500">
@@ -476,9 +503,7 @@ export default function WalletPage() {
 
                           <p className="mt-1 text-xs text-slate-600">
                             {item.createdAt
-                              ? new Date(
-                                  item.createdAt
-                                ).toLocaleString()
+                              ? new Date(item.createdAt).toLocaleString()
                               : "-"}
                           </p>
                         </div>
@@ -487,9 +512,7 @@ export default function WalletPage() {
                       <div className="flex flex-wrap items-center gap-4">
                         <span
                           className={`font-bold ${
-                            isCredit
-                              ? "text-green-400"
-                              : "text-slate-100"
+                            isCredit ? "text-green-400" : "text-slate-100"
                           }`}
                         >
                           {isCredit ? "+" : "-"}
@@ -518,10 +541,7 @@ export default function WalletPage() {
           <div className="w-full max-w-lg rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
             <div className="mb-6 flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-2xl font-bold">
-                  Fund Wallet
-                </h2>
-
+                <h2 className="text-2xl font-bold">Fund Wallet</h2>
                 <p className="mt-2 text-sm text-slate-400">
                   Enter the amount you want to add to your wallet.
                 </p>
@@ -537,23 +557,15 @@ export default function WalletPage() {
               </button>
             </div>
 
-            <form
-              onSubmit={submitFundingRequest}
-              className="space-y-5"
-            >
+            <form onSubmit={submitFundingRequest} className="space-y-5">
               <div>
-                <label className="text-sm text-slate-400">
-                  Amount
-                </label>
-
+                <label className="text-sm text-slate-400">Amount (₦)</label>
                 <input
                   type="number"
                   min="100"
                   step="1"
                   value={amount}
-                  onChange={(event) =>
-                    setAmount(event.target.value)
-                  }
+                  onChange={(event) => setAmount(event.target.value)}
                   placeholder="5000"
                   required
                   className="mt-2 w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 text-lg outline-none focus:border-blue-500"
@@ -561,32 +573,20 @@ export default function WalletPage() {
               </div>
 
               <div>
-                <label className="text-sm text-slate-400">
-                  Funding Method
-                </label>
-
+                <label className="text-sm text-slate-400">Funding Method</label>
                 <select
                   value={channel}
-                  onChange={(event) =>
-                    setChannel(event.target.value)
-                  }
+                  onChange={(event) => setChannel(event.target.value)}
                   className="mt-2 w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 outline-none focus:border-blue-500"
                 >
-                  <option value="BANK_TRANSFER">
-                    Bank Transfer
-                  </option>
-                  <option value="CARD">
-                    Debit Card
-                  </option>
-                  <option value="MANUAL">
-                    Manual Funding
-                  </option>
+                  <option value="CARD">Paystack / Debit Card</option>
+                  <option value="BANK_TRANSFER">Bank Transfer</option>
+                  <option value="MANUAL">Manual Funding Request</option>
                 </select>
               </div>
 
               <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-4 text-sm text-blue-200">
-                Requested amount:{" "}
-                <strong>{formatNaira(amount)}</strong>
+                Requested amount: <strong>{formatNaira(amount)}</strong>
               </div>
 
               <button
@@ -596,16 +596,13 @@ export default function WalletPage() {
               >
                 {submitting ? (
                   <>
-                    <LoaderCircle
-                      size={18}
-                      className="animate-spin"
-                    />
-                    Processing...
+                    <LoaderCircle size={18} className="animate-spin" />
+                    Processing Payment...
                   </>
                 ) : (
                   <>
                     <CreditCard size={18} />
-                    Continue Funding
+                    Continue to Payment
                   </>
                 )}
               </button>
@@ -630,11 +627,7 @@ function SummaryCard({ title, value, type }) {
               : "bg-red-500/10 text-red-400"
           }`}
         >
-          {isCredit ? (
-            <ArrowDownLeft size={22} />
-          ) : (
-            <ArrowUpRight size={22} />
-          )}
+          {isCredit ? <ArrowDownLeft size={22} /> : <ArrowUpRight size={22} />}
         </div>
 
         <div>

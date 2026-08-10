@@ -1,47 +1,28 @@
 "use client";
 
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
-
-import Link from "next/link";
-
-import {
-  Activity,
-  AlertCircle,
-  ArrowUpRight,
-  BarChart3,
-  Cable,
-  ChevronDown,
-  ChevronUp,
-  CircleDollarSign,
-  Copy,
-  FileText,
-  Fingerprint,
-  KeyRound,
-  Lightbulb,
-  MessageSquareText,
-  PlusCircle,
-  RefreshCcw,
-  Search,
-  ShieldCheck,
-  Signal,
-  Smartphone,
   Wallet,
-  Wifi,
-  Zap,
+  PlusCircle,
+  ArrowDownLeft,
+  ArrowUpRight,
+  CreditCard,
+  RefreshCcw,
+  X,
+  LoaderCircle,
+  AlertCircle,
+  CheckCircle2,
+  ShieldCheck,
+  Building2,
+  FileText,
 } from "lucide-react";
 
-import { socket } from "@/lib/socket";
-import api from "@/lib/api";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
+import api from "@/lib/api";
+import { useSocket } from "@/context/SocketContext";
 
-/* ======================================================
-   FORMATTERS
-====================================================== */
+const QUICK_AMOUNTS = [5000, 10000, 20000, 50000, 100000];
 
 const formatNaira = (amount) =>
   `₦${Number(amount || 0).toLocaleString("en-NG", {
@@ -49,526 +30,84 @@ const formatNaira = (amount) =>
     maximumFractionDigits: 2,
   })}`;
 
-const formatCompactNaira = (amount) =>
-  `₦${Number(amount || 0).toLocaleString("en-NG", {
-    maximumFractionDigits: 2,
-  })}`;
-
 const getErrorMessage = (error, fallback) =>
   error?.response?.data?.message ||
-  error?.userMessage ||
   error?.message ||
   fallback;
 
-/* ======================================================
-   USAGE API FALLBACK
-====================================================== */
+const getStatusClasses = (status) => {
+  const normalizedStatus = String(status || "").toUpperCase();
 
-const fetchFirstAvailable = async (paths) => {
-  let lastError = null;
-
-  for (const path of paths) {
-    try {
-      return await api.get(path);
-    } catch (error) {
-      lastError = error;
-
-      if (error?.response?.status !== 404) {
-        throw error;
-      }
-    }
-  }
-
-  throw (
-    lastError ||
-    new Error("Usage endpoint was not found.")
-  );
-};
-
-/* ======================================================
-   SERVICE DISPLAY CONFIGURATION
-====================================================== */
-
-const SERVICE_CONFIG = {
-  DATA: {
-    title: "Data Plans",
-    subtitle: "Current internet bundle prices",
-    icon: Wifi,
-    href: "/dashboard/data",
-  },
-
-  AIRTIME: {
-    title: "Airtime Rates",
-    subtitle: "Current airtime API prices",
-    icon: Smartphone,
-    href: "/dashboard/airtime",
-  },
-
-  BVN: {
-    title: "BVN Services",
-    subtitle: "BVN verification and printing prices",
-    icon: ShieldCheck,
-    href: "/dashboard/bvn",
-  },
-
-  NIN: {
-    title: "NIN Services",
-    subtitle: "NIN verification and printing prices",
-    icon: Fingerprint,
-    href: "/dashboard/nin",
-  },
-
-  CABLE: {
-    title: "Cable Packages",
-    subtitle: "Current television subscription prices",
-    icon: Cable,
-    href: "/dashboard/cable",
-  },
-
-  ELECTRICITY: {
-    title: "Electricity Services",
-    subtitle: "Current electricity API charges",
-    icon: Lightbulb,
-    href: "/dashboard/electricity",
-  },
-
-  PRINTING: {
-    title: "Printing Services",
-    subtitle: "Current document-printing prices",
-    icon: FileText,
-    href: "/dashboard/printing",
-  },
-
-  SMS: {
-    title: "SMS Services",
-    subtitle: "Current messaging API prices",
-    icon: MessageSquareText,
-    href: "/dashboard/sms",
-  },
-
-  GSM: {
-    title: "GSM Gateway",
-    subtitle: "Current gateway service prices",
-    icon: Signal,
-    href: "/dashboard/gateway",
-  },
-
-  DEFAULT: {
-    title: "Digital Services",
-    subtitle: "Current service plans and prices",
-    icon: Zap,
-    href: "/dashboard",
-  },
-};
-
-/* ======================================================
-   PRICING NORMALIZATION
-====================================================== */
-
-const normalizePricingPlan = (item = {}) => ({
-  id:
-    item.id ||
-    item.serviceCode ||
-    item.code,
-
-  serviceCode:
-    item.serviceCode ||
-    item.code ||
-    "",
-
-  serviceName:
-    item.serviceName ||
-    item.name ||
-    "Service Plan",
-
-  category: String(
-    item.category ||
-      item.service?.category ||
-      "OTHER"
-  ).toUpperCase(),
-
-  tier: String(
-    item.tier ||
-      item.packageType ||
-      "REGULAR"
-  ).toUpperCase(),
-
-  costPrice: Number(
-    item.costPrice || 0
-  ),
-
-  sellingPrice: Number(
-    item.sellingPrice ||
-      item.price ||
-      item.amount ||
-      0
-  ),
-
-  currency:
-    item.currency || "NGN",
-
-  enabled:
-    item.enabled !== false &&
-    item.status !== "DISABLED",
-
-  features:
-    item.features &&
-    typeof item.features === "object"
-      ? item.features
-      : {},
-
-  metadata:
-    item.metadata &&
-    typeof item.metadata === "object"
-      ? item.metadata
-      : {},
-
-  updatedAt:
-    item.updatedAt ||
-    item.createdAt ||
-    null,
-});
-
-const buildPricingCategories = (
-  responseData
-) => {
   if (
-    Array.isArray(
-      responseData?.categories
-    )
+    normalizedStatus === "SUCCESSFUL" ||
+    normalizedStatus === "APPROVED" ||
+    normalizedStatus === "COMPLETED"
   ) {
-    return responseData.categories.map(
-      (categoryItem) => ({
-        category: String(
-          categoryItem.category ||
-            "OTHER"
-        ).toUpperCase(),
-
-        title:
-          categoryItem.title ||
-          categoryItem.category,
-
-        plans: Array.isArray(
-          categoryItem.plans
-        )
-          ? categoryItem.plans
-              .map(normalizePricingPlan)
-              .filter(
-                (plan) => plan.enabled
-              )
-          : [],
-      })
-    );
+    return "bg-green-500/10 text-green-400 border border-green-500/20";
   }
 
   if (
-    responseData?.groupedPricing &&
-    typeof responseData.groupedPricing ===
-      "object"
+    normalizedStatus === "FAILED" ||
+    normalizedStatus === "REJECTED" ||
+    normalizedStatus === "CANCELLED"
   ) {
-    return Object.entries(
-      responseData.groupedPricing
-    ).map(
-      ([category, plans]) => ({
-        category:
-          String(category).toUpperCase(),
-
-        title: category,
-
-        plans: Array.isArray(plans)
-          ? plans
-              .map(normalizePricingPlan)
-              .filter(
-                (plan) => plan.enabled
-              )
-          : [],
-      })
-    );
+    return "bg-red-500/10 text-red-400 border border-red-500/20";
   }
 
-  const rawPlans =
-    responseData?.pricing ||
-    responseData?.plans ||
-    responseData?.data?.pricing ||
-    responseData?.data?.plans ||
-    responseData?.data ||
-    [];
+  if (normalizedStatus === "PROCESSING") {
+    return "bg-blue-500/10 text-blue-400 border border-blue-500/20";
+  }
 
-  const normalizedPlans =
-    Array.isArray(rawPlans)
-      ? rawPlans
-          .map(normalizePricingPlan)
-          .filter(
-            (plan) => plan.enabled
-          )
-      : [];
-
-  const categoryMap =
-    normalizedPlans.reduce(
-      (groups, plan) => {
-        if (
-          !groups[plan.category]
-        ) {
-          groups[plan.category] = [];
-        }
-
-        groups[
-          plan.category
-        ].push(plan);
-
-        return groups;
-      },
-      {}
-    );
-
-  return Object.entries(
-    categoryMap
-  ).map(([category, plans]) => ({
-    category,
-    title: category,
-    plans,
-  }));
+  return "bg-yellow-500/10 text-yellow-400 border border-yellow-500/20";
 };
 
-/* ======================================================
-   DASHBOARD
-====================================================== */
+export default function WalletPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const paymentReference = searchParams.get("reference");
 
-export default function DashboardPage() {
-  const [wallet, setWallet] =
-    useState(null);
+  const [wallet, setWallet] = useState(null);
+  const [transactions, setTransactions] = useState([]);
+  const socket = useSocket();
+  const connected = Boolean(socket?.connected);
 
-  const [apiKeys, setApiKeys] =
-    useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [verifying, setVerifying] = useState(false);
 
-  const [
-    transactions,
-    setTransactions,
-  ] = useState([]);
+  const [fundModalOpen, setFundModalOpen] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [channel, setChannel] = useState("CARD");
 
-  const [usageLogs, setUsageLogs] =
-    useState([]);
+  const [message, setMessage] = useState("");
+  const [messageType, setMessageType] = useState("info");
 
-  const [
-    pricingCategories,
-    setPricingCategories,
-  ] = useState([]);
+  const fetchWallet = useCallback(async () => {
+    const response = await api.get("/wallet");
+    const walletData =
+      response.data?.wallet ||
+      response.data?.data?.wallet ||
+      response.data?.data ||
+      null;
 
-  const [
-    pricingSearch,
-    setPricingSearch,
-  ] = useState("");
+    setWallet(walletData);
+    return walletData;
+  }, []);
 
-  const [
-    selectedTier,
-    setSelectedTier,
-  ] = useState("ALL");
+  const fetchTransactions = useCallback(async () => {
+    const response = await api.get("/wallet/transactions");
+    const list =
+      response.data?.transactions ||
+      response.data?.data?.transactions ||
+      response.data?.data ||
+      [];
 
-  const [
-    expandedPricing,
-    setExpandedPricing,
-  ] = useState({});
+    setTransactions(Array.isArray(list) ? list : []);
+    return list;
+  }, []);
 
-  const [loading, setLoading] =
-    useState(true);
-
-  const [
-    refreshing,
-    setRefreshing,
-  ] = useState(false);
-
-  const [message, setMessage] =
-    useState("");
-
-  /* ====================================================
-     FETCH WALLET
-  ==================================================== */
-
-  const fetchWallet =
-    useCallback(async () => {
-      try {
-        const response =
-          await api.get("/wallet");
-
-        const walletData =
-          response.data?.wallet ||
-          response.data?.data?.wallet ||
-          response.data?.data ||
-          null;
-
-        setWallet(walletData);
-
-        return walletData;
-      } catch (error) {
-        console.error(
-          "Wallet load error:",
-          error
-        );
-
-        throw error;
-      }
-    }, []);
-
-  /* ====================================================
-     FETCH API KEYS
-  ==================================================== */
-
-  const fetchApiKeys =
-    useCallback(async () => {
-      try {
-        const response =
-          await api.get("/api-keys");
-
-        const keys =
-          response.data?.keys ||
-          response.data?.apiKeys ||
-          response.data?.data?.keys ||
-          response.data?.data ||
-          [];
-
-        const safeKeys =
-          Array.isArray(keys)
-            ? keys
-            : [];
-
-        setApiKeys(safeKeys);
-
-        return safeKeys;
-      } catch (error) {
-        console.error(
-          "API keys load error:",
-          error
-        );
-
-        throw error;
-      }
-    }, []);
-
-  /* ====================================================
-     FETCH TRANSACTIONS
-  ==================================================== */
-
-  const fetchTransactions =
-    useCallback(async () => {
-      try {
-        const response =
-          await api.get(
-            "/wallet/transactions"
-          );
-
-        const list =
-          response.data?.transactions ||
-          response.data?.history ||
-          response.data?.data
-            ?.transactions ||
-          response.data?.data ||
-          [];
-
-        const safeList =
-          Array.isArray(list)
-            ? list
-            : [];
-
-        setTransactions(safeList);
-
-        return safeList;
-      } catch (error) {
-        console.error(
-          "Transactions load error:",
-          error
-        );
-
-        throw error;
-      }
-    }, []);
-
-  /* ====================================================
-     FETCH USAGE LOGS
-  ==================================================== */
-
-  const fetchUsageLogs =
-    useCallback(async () => {
-      try {
-        const response =
-          await fetchFirstAvailable([
-            "/api-usage/history?limit=100",
-            "/api-usage/requests?limit=100",
-            "/api-usage?limit=100",
-          ]);
-
-        const logs =
-          response.data?.usages ||
-          response.data?.requests ||
-          response.data
-            ?.recentRequests ||
-          response.data?.usageLogs ||
-          response.data?.logs ||
-          response.data?.data
-            ?.usages ||
-          response.data?.data ||
-          [];
-
-        const safeLogs =
-          Array.isArray(logs)
-            ? logs
-            : [];
-
-        setUsageLogs(safeLogs);
-
-        return safeLogs;
-      } catch (error) {
-        console.warn(
-          "Usage logs not available:",
-          error
-        );
-
-        setUsageLogs([]);
-
-        return [];
-      }
-    }, []);
-
-  /* ====================================================
-     FETCH SERVICE PRICING
-  ==================================================== */
-
-  const fetchServicePricing =
-    useCallback(async () => {
-      try {
-        const response =
-          await api.get(
-            "/service-pricing"
-          );
-
-        const categories =
-          buildPricingCategories(
-            response.data
-          ).filter(
-            (category) =>
-              category.plans.length > 0
-          );
-
-        setPricingCategories(
-          categories
-        );
-
-        return categories;
-      } catch (error) {
-        console.warn(
-          "Service pricing load error:",
-          error
-        );
-
-        setPricingCategories([]);
-
-        return [];
-      }
-    }, []);
-      /* ====================================================
-     LOAD DASHBOARD
-  ==================================================== */
-
-  const loadDashboard = useCallback(
+  const loadWalletPage = useCallback(
     async ({ silent = false } = {}) => {
       try {
         if (silent) {
@@ -577,27 +116,21 @@ export default function DashboardPage() {
           setLoading(true);
         }
 
-        setMessage("");
-
         const results = await Promise.allSettled([
           fetchWallet(),
-          fetchApiKeys(),
           fetchTransactions(),
-          fetchUsageLogs(),
-          fetchServicePricing(),
         ]);
 
-        const failedResults = results.filter(
+        const failedResult = results.find(
           (result) => result.status === "rejected"
         );
 
-        if (failedResults.length > 0) {
-          const firstError = failedResults[0]?.reason;
-
+        if (failedResult) {
+          setMessageType("error");
           setMessage(
             getErrorMessage(
-              firstError,
-              "Some dashboard information could not be loaded."
+              failedResult.reason,
+              "Some wallet information could not be loaded."
             )
           );
         }
@@ -606,873 +139,566 @@ export default function DashboardPage() {
         setRefreshing(false);
       }
     },
-    [
-      fetchWallet,
-      fetchApiKeys,
-      fetchTransactions,
-      fetchUsageLogs,
-      fetchServicePricing,
-    ]
+    [fetchWallet, fetchTransactions]
   );
 
-  /* ====================================================
-     SOCKET EVENTS
-  ==================================================== */
+  // Tabbatar da biyan kudin Paystack lokacin da aka dawo daga payment gateway
+  useEffect(() => {
+    if (!paymentReference) return;
+
+    const verifyPayment = async () => {
+      try {
+        setVerifying(true);
+        setMessageType("info");
+        setMessage("Verifying your payment, please wait...");
+
+        const response = await api.get(
+          `/wallet/paystack/verify/${paymentReference}`
+        );
+
+        setMessageType("success");
+        setMessage(
+          response.data?.message || "Wallet funded successfully!"
+        );
+
+        router.replace("/dashboard/wallet", { scroll: false });
+        await loadWalletPage({ silent: true });
+      } catch (error) {
+        setMessageType("error");
+        setMessage(
+          getErrorMessage(error, "Payment verification failed.")
+        );
+      } finally {
+        setVerifying(false);
+      }
+    };
+
+    verifyPayment();
+  }, [paymentReference, router, loadWalletPage]);
 
   useEffect(() => {
-    loadDashboard();
+    loadWalletPage();
+  }, [loadWalletPage]);
 
-    const token = localStorage.getItem("token");
+  // Real-time Socket listeners
+  useEffect(() => {
+    if (!socket || !connected) return undefined;
 
-    if (token) {
-      socket.auth = {
-        token,
-      };
-    }
-
-    if (!socket.connected) {
-      socket.connect();
-    }
-
-    const handleWalletUpdated = () => {
-      fetchWallet().catch(console.error);
-      fetchTransactions().catch(console.error);
+    const refreshWallet = () => {
+      loadWalletPage({ silent: true }).catch((error) => {
+        console.error("Real-time wallet refresh error:", error);
+      });
     };
 
-    const handleApiKeyChanged = () => {
-      fetchApiKeys().catch(console.error);
+    const handleWalletUpdated = (payload) => {
+      if (payload?.balance !== undefined) {
+        setWallet((currentWallet) => ({
+          ...(currentWallet || {}),
+          balance: Number(payload.balance || 0),
+          updatedAt: payload.updatedAt || new Date().toISOString(),
+        }));
+      }
+      refreshWallet();
     };
 
-    const handleTransactionChanged = () => {
-      fetchTransactions().catch(console.error);
-      fetchWallet().catch(console.error);
-      fetchUsageLogs().catch(console.error);
+    const handleFundingApproved = () => {
+      setMessageType("success");
+      setMessage("Your wallet funding has been approved.");
+      refreshWallet();
     };
 
-    const handleUsageUpdated = () => {
-      fetchUsageLogs().catch(console.error);
+    const handleFundingRejected = (payload) => {
+      setMessageType("error");
+      setMessage(
+        payload?.message ||
+          payload?.reason ||
+          "Your wallet funding request was rejected."
+      );
+      refreshWallet();
     };
 
-    const handlePricingUpdated = () => {
-      fetchServicePricing().catch(console.error);
-    };
-
-    socket.on(
-      "wallet-updated",
-      handleWalletUpdated
-    );
-
-    socket.on(
-      "api-key-created",
-      handleApiKeyChanged
-    );
-
-    socket.on(
-      "api-key-updated",
-      handleApiKeyChanged
-    );
-
-    socket.on(
-      "api-key-revoked",
-      handleApiKeyChanged
-    );
-
-    socket.on(
-      "purchase-successful",
-      handleTransactionChanged
-    );
-
-    socket.on(
-      "transaction-updated",
-      handleTransactionChanged
-    );
-
-    socket.on(
-      "api-usage-created",
-      handleUsageUpdated
-    );
-
-    socket.on(
-      "usage-updated",
-      handleUsageUpdated
-    );
-
-    socket.on(
-      "service-pricing-created",
-      handlePricingUpdated
-    );
-
-    socket.on(
-      "service-pricing-updated",
-      handlePricingUpdated
-    );
-
-    socket.on(
-      "service-pricing-deleted",
-      handlePricingUpdated
-    );
-
-    socket.on(
-      "service-pricing-status-changed",
-      handlePricingUpdated
-    );
+    socket.on("wallet:updated", handleWalletUpdated);
+    socket.on("funding-approved", handleFundingApproved);
+    socket.on("funding-rejected", handleFundingRejected);
+    socket.on("transaction-updated", refreshWallet);
+    socket.on("purchase-successful", refreshWallet);
 
     return () => {
-      socket.off(
-        "wallet-updated",
-        handleWalletUpdated
-      );
-
-      socket.off(
-        "api-key-created",
-        handleApiKeyChanged
-      );
-
-      socket.off(
-        "api-key-updated",
-        handleApiKeyChanged
-      );
-
-      socket.off(
-        "api-key-revoked",
-        handleApiKeyChanged
-      );
-
-      socket.off(
-        "purchase-successful",
-        handleTransactionChanged
-      );
-
-      socket.off(
-        "transaction-updated",
-        handleTransactionChanged
-      );
-
-      socket.off(
-        "api-usage-created",
-        handleUsageUpdated
-      );
-
-      socket.off(
-        "usage-updated",
-        handleUsageUpdated
-      );
-
-      socket.off(
-        "service-pricing-created",
-        handlePricingUpdated
-      );
-
-      socket.off(
-        "service-pricing-updated",
-        handlePricingUpdated
-      );
-
-      socket.off(
-        "service-pricing-deleted",
-        handlePricingUpdated
-      );
-
-      socket.off(
-        "service-pricing-status-changed",
-        handlePricingUpdated
-      );
+      socket.off("wallet:updated", handleWalletUpdated);
+      socket.off("funding-approved", handleFundingApproved);
+      socket.off("funding-rejected", handleFundingRejected);
+      socket.off("transaction-updated", refreshWallet);
+      socket.off("purchase-successful", refreshWallet);
     };
-  }, [
-    loadDashboard,
-    fetchWallet,
-    fetchApiKeys,
-    fetchTransactions,
-    fetchUsageLogs,
-    fetchServicePricing,
-  ]);
+  }, [socket, connected, loadWalletPage]);
 
-  /* ====================================================
-     COMPUTED VALUES
-  ==================================================== */
+  const totals = useMemo(() => {
+    return transactions.reduce(
+      (result, transaction) => {
+        const type = String(transaction?.type || "").toUpperCase();
+        const transactionAmount = Number(transaction?.amount || 0);
 
-  const activeApiKeys = useMemo(
-    () =>
-      apiKeys.filter(
-        (key) =>
-          String(
-            key?.status || ""
-          ).toUpperCase() ===
-          "ACTIVE"
-      ),
-    [apiKeys]
-  );
+        if (["CREDIT", "REFUND", "REVERSAL"].includes(type)) {
+          result.totalCredit += transactionAmount;
+        }
 
-  const liveKey =
-    activeApiKeys[0]?.key || "";
+        if (["DEBIT", "ADJUSTMENT"].includes(type)) {
+          result.totalDebit += transactionAmount;
+        }
 
-  const totalSpend = useMemo(
-    () =>
-      transactions
-        .filter((transaction) => {
-          const type = String(
-            transaction?.type || ""
-          ).toUpperCase();
+        return result;
+      },
+      { totalCredit: 0, totalDebit: 0 }
+    );
+  }, [transactions]);
 
-          return type === "DEBIT";
-        })
-        .reduce(
-          (sum, transaction) =>
-            sum +
-            Number(
-              transaction?.amount || 0
-            ),
-          0
-        ),
-    [transactions]
-  );
+  const openFundingModal = (selectedAmount = "") => {
+    setAmount(selectedAmount ? String(selectedAmount) : "");
+    setMessage("");
+    setFundModalOpen(true);
+  };
 
-  const filteredPricingCategories =
-    useMemo(() => {
-      const search = pricingSearch
-        .trim()
-        .toLowerCase();
+  const closeFundingModal = () => {
+    if (submitting) return;
+    setFundModalOpen(false);
+    setAmount("");
+    setChannel("CARD");
+  };
 
-      return pricingCategories
-        .map((category) => {
-          const plans =
-            category.plans.filter(
-              (plan) => {
-                const matchesTier =
-                  selectedTier === "ALL" ||
-                  plan.tier === selectedTier;
+  const submitFundingRequest = async (event) => {
+    event.preventDefault();
 
-                const matchesSearch =
-                  !search ||
-                  plan.serviceName
-                    .toLowerCase()
-                    .includes(search) ||
-                  plan.serviceCode
-                    .toLowerCase()
-                    .includes(search) ||
-                  category.category
-                    .toLowerCase()
-                    .includes(search);
+    const numericAmount = Number(amount);
 
-                return (
-                  matchesTier &&
-                  matchesSearch
-                );
-              }
-            );
-
-          return {
-            ...category,
-            plans,
-          };
-        })
-        .filter(
-          (category) =>
-            category.plans.length > 0
-        );
-    }, [
-      pricingCategories,
-      pricingSearch,
-      selectedTier,
-    ]);
-
-  const stats = [
-    {
-      title: "Wallet Balance",
-      value: formatNaira(
-        wallet?.balance || 0
-      ),
-      icon: <Wallet size={24} />,
-    },
-    {
-      title: "API Calls",
-      value:
-        usageLogs.length.toLocaleString(
-          "en-US"
-        ),
-      icon: <Activity size={24} />,
-    },
-    {
-      title: "Active API Keys",
-      value: activeApiKeys.length,
-      icon: <KeyRound size={24} />,
-    },
-    {
-      title: "Total Spend",
-      value: formatNaira(totalSpend),
-      icon: <BarChart3 size={24} />,
-    },
-  ];
-
-  /* ====================================================
-     ACTIONS
-  ==================================================== */
-
-  const copyApiKey = async () => {
-    if (!liveKey) {
+    if (!Number.isFinite(numericAmount) || numericAmount < 100) {
+      setMessageType("error");
+      setMessage("Enter a valid funding amount of at least ₦100.");
       return;
     }
 
     try {
-      await navigator.clipboard.writeText(
-        liveKey
+      setSubmitting(true);
+      setMessage("");
+
+      if (channel === "CARD" || channel === "PAYSTACK") {
+        const response = await api.post("/wallet/paystack/initialize", {
+          amount: numericAmount,
+        });
+
+        const authUrl =
+          response.data?.authorizationUrl ||
+          response.data?.data?.authorizationUrl;
+
+        if (authUrl) {
+          window.location.href = authUrl;
+          return;
+        }
+      }
+
+      const response = await api.post("/wallet/fund", {
+        amount: numericAmount,
+        channel,
+      });
+
+      setMessageType("success");
+      setMessage(
+        response.data?.message ||
+          "Wallet funding request created successfully."
       );
 
+      setFundModalOpen(false);
+      setAmount("");
+      setChannel("CARD");
+      await loadWalletPage({ silent: true });
+    } catch (error) {
+      setMessageType("error");
       setMessage(
-        "API key copied successfully."
+        getErrorMessage(
+          error,
+          "Unable to initialize payment or create funding request."
+        )
       );
-    } catch {
-      setMessage(
-        "Unable to copy API key."
-      );
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  const togglePricingCategory = (
-    category
-  ) => {
-    setExpandedPricing((current) => ({
-      ...current,
-      [category]:
-        !current[category],
-    }));
-  };
-
-  /* ====================================================
-     UI
-  ==================================================== */
-
   return (
     <DashboardLayout
-      title="Developer Dashboard"
-      description="Manage wallet, API keys, usage logs and live transactions."
+      title="Wallet"
+      description="Fund your wallet securely and monitor all API or service deductions."
     >
-      {message && (
-        <div className="mb-6 flex items-start gap-3 rounded-2xl border border-blue-500/30 bg-blue-500/10 px-5 py-4 text-blue-300">
-          <AlertCircle
-            size={20}
-            className="mt-0.5 shrink-0"
-          />
-
+      {(message || verifying) && (
+        <div
+          className={`mb-6 flex items-start gap-3 rounded-2xl border px-5 py-4 ${
+            messageType === "success"
+              ? "border-green-500/30 bg-green-500/10 text-green-300"
+              : messageType === "error"
+              ? "border-red-500/30 bg-red-500/10 text-red-300"
+              : "border-blue-500/30 bg-blue-500/10 text-blue-300"
+          }`}
+        >
+          {verifying || messageType === "info" ? (
+            <LoaderCircle size={20} className="mt-0.5 shrink-0 animate-spin" />
+          ) : messageType === "success" ? (
+            <CheckCircle2 size={20} className="mt-0.5 shrink-0" />
+          ) : (
+            <AlertCircle size={20} className="mt-0.5 shrink-0" />
+          )}
           <span>{message}</span>
         </div>
       )}
 
-      <div className="mb-10 flex flex-wrap justify-end gap-3">
+      <div className="mb-10 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-end">
         <button
           type="button"
-          onClick={() =>
-            loadDashboard({
-              silent: true,
-            })
-          }
+          onClick={() => loadWalletPage({ silent: true })}
           disabled={refreshing}
-          className="flex items-center gap-2 rounded-xl bg-slate-800 px-5 py-3 font-semibold hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+          className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-5 py-3 font-semibold text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60 transition-all"
         >
           <RefreshCcw
             size={18}
-            className={
-              refreshing
-                ? "animate-spin"
-                : ""
-            }
+            className={refreshing ? "animate-spin" : ""}
           />
-
-          {refreshing
-            ? "Refreshing..."
-            : "Refresh"}
+          {refreshing ? "Refreshing..." : "Refresh"}
         </button>
 
-        <Link
-          href="/dashboard/wallet"
-          className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 font-semibold hover:bg-blue-700"
+        <button
+          type="button"
+          onClick={() => openFundingModal()}
+          className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-3 font-semibold text-white hover:bg-blue-500 shadow-lg shadow-blue-600/20 transition-all"
         >
           <PlusCircle size={18} />
           Fund Wallet
-        </Link>
+        </button>
       </div>
 
       {loading ? (
         <div className="rounded-3xl border border-slate-800 bg-slate-900 p-8 text-slate-400">
-          Loading live dashboard...
+          <div className="flex items-center gap-3">
+            <LoaderCircle size={22} className="animate-spin text-blue-500" />
+            Loading wallet information...
+          </div>
         </div>
       ) : (
         <>
-          <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
-            {stats.map((item) => (
-              <div
-                key={item.title}
-                className="rounded-3xl border border-slate-800 bg-slate-900 p-6"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-600/10 text-blue-400">
-                    {item.icon}
-                  </div>
+          <section className="grid gap-6 lg:grid-cols-3">
+            <div className="rounded-3xl border border-blue-500/40 bg-gradient-to-br from-blue-600 via-blue-700 to-slate-900 p-8 lg:col-span-2 shadow-xl shadow-blue-950/40 relative overflow-hidden">
+              <div className="absolute right-[-20px] bottom-[-20px] opacity-10 pointer-events-none">
+                <Wallet size={200} />
+              </div>
+              <div className="flex items-center gap-3 text-blue-100">
+                <Wallet size={28} />
+                <span className="font-medium uppercase tracking-wider text-sm">
+                  Available Balance
+                </span>
+              </div>
 
-                  <ArrowUpRight
-                    size={18}
-                    className="text-slate-500"
-                  />
-                </div>
+              <h2 className="mt-6 break-all text-4xl font-extrabold text-white sm:text-5xl">
+                {formatNaira(wallet?.balance)}
+              </h2>
 
-                <p className="mt-5 text-slate-400">
-                  {item.title}
+              <p className="mt-4 text-blue-100/90 max-w-xl text-sm sm:text-base leading-relaxed">
+                Your wallet balance is automatically debited when processing API
+                requests or automated service executions.
+              </p>
+
+              {wallet?.updatedAt && (
+                <p className="mt-6 text-xs text-blue-200/70">
+                  Last updated:{" "}
+                  {new Date(wallet.updatedAt).toLocaleString()}
+                </p>
+              )}
+            </div>
+
+            <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6 flex flex-col justify-between">
+              <div>
+                <h3 className="text-xl font-bold text-white mb-2">
+                  Quick Funding
+                </h3>
+                <p className="text-sm text-slate-400 mb-4">
+                  Choose a preset amount for quick deposit:
                 </p>
 
-                <h2 className="mt-2 text-3xl font-extrabold">
-                  {item.value}
-                </h2>
-              </div>
-            ))}
-          </div>
-
-          <section className="mt-8 overflow-hidden rounded-3xl border border-slate-800 bg-slate-900">
-            <div className="border-b border-slate-800 bg-gradient-to-br from-blue-600/15 via-slate-900 to-slate-900 p-6 sm:p-8">
-              <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-                <div>
-                  <div className="inline-flex items-center gap-2 rounded-full border border-blue-500/20 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-300">
-                    <CircleDollarSign
-                      size={17}
-                    />
-
-                    Ayax Live Service Prices
-                  </div>
-
-                  <h2 className="mt-4 text-2xl font-extrabold">
-                    Current API Plans & Prices
-                  </h2>
-
-                  <p className="mt-3 max-w-3xl text-slate-400">
-                    Prices added by the
-                    administrator for Data,
-                    Airtime, BVN, NIN, Cable,
-                    Electricity and other
-                    services.
-                  </p>
-                </div>
-
-                <div className="flex gap-3">
-                  <div className="rounded-2xl border border-slate-800 bg-slate-950 px-5 py-4">
-                    <p className="text-xs text-slate-500">
-                      Services
-                    </p>
-
-                    <p className="mt-1 text-xl font-bold">
-                      {
-                        pricingCategories.length
-                      }
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-800 bg-slate-950 px-5 py-4">
-                    <p className="text-xs text-slate-500">
-                      Status
-                    </p>
-
-                    <p className="mt-1 flex items-center gap-2 text-xl font-bold text-green-400">
-                      <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-green-400" />
-                      LIVE
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                <div className="relative w-full lg:max-w-md">
-                  <Search
-                    size={18}
-                    className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500"
-                  />
-
-                  <input
-                    type="search"
-                    value={pricingSearch}
-                    onChange={(event) =>
-                      setPricingSearch(
-                        event.target.value
-                      )
-                    }
-                    placeholder="Search plans or services..."
-                    className="w-full rounded-2xl border border-slate-800 bg-slate-950 py-3.5 pl-12 pr-4 outline-none focus:border-blue-500"
-                  />
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    "ALL",
-                    "REGULAR",
-                    "STANDARD",
-                    "PREMIUM",
-                  ].map((tier) => (
+                <div className="grid grid-cols-2 gap-3">
+                  {QUICK_AMOUNTS.slice(0, 4).map((quickAmount) => (
                     <button
-                      key={tier}
+                      key={quickAmount}
                       type="button"
-                      onClick={() =>
-                        setSelectedTier(
-                          tier
-                        )
-                      }
-                      className={`rounded-xl px-4 py-3 text-xs font-bold ${
-                        selectedTier ===
-                        tier
-                          ? "bg-blue-600 text-white"
-                          : "border border-slate-800 bg-slate-950 text-slate-400"
-                      }`}
+                      onClick={() => openFundingModal(quickAmount)}
+                      className="rounded-xl border border-slate-800 bg-slate-950 py-3 px-3 font-semibold text-slate-200 hover:border-blue-500 hover:bg-slate-900 transition-all text-sm"
                     >
-                      {tier}
+                      {formatNaira(quickAmount)}
                     </button>
                   ))}
                 </div>
               </div>
-            </div>
 
-            <div className="p-6 sm:p-8">
-              {filteredPricingCategories.length ===
-              0 ? (
-                <div className="rounded-3xl border border-dashed border-slate-700 bg-slate-950 p-10 text-center">
-                  <CircleDollarSign
-                    size={42}
-                    className="mx-auto text-slate-600"
-                  />
-
-                  <h3 className="mt-4 text-xl font-bold">
-                    No pricing plans
-                    available
-                  </h3>
-
-                  <p className="mt-2 text-slate-500">
-                    Plans added by the
-                    administrator will
-                    appear here.
-                  </p>
-                </div>
-              ) : (
-                <div className="grid gap-6 xl:grid-cols-2">
-                  {filteredPricingCategories.map(
-                    (category) => (
-                      <ServicePriceCard
-                        key={
-                          category.category
-                        }
-                        category={
-                          category
-                        }
-                        expanded={
-                          expandedPricing[
-                            category
-                              .category
-                          ]
-                        }
-                        onToggle={() =>
-                          togglePricingCategory(
-                            category.category
-                          )
-                        }
-                      />
-                    )
-                  )}
-                </div>
-              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setChannel("CARD");
+                  openFundingModal();
+                }}
+                className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-3.5 font-semibold text-white hover:bg-blue-500 transition-all shadow-md shadow-blue-600/20"
+              >
+                <CreditCard size={18} />
+                Fund via Paystack
+              </button>
             </div>
           </section>
 
-                    <div className="mt-8 grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-            <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
-              <div className="mb-5 flex items-center justify-between gap-4">
-                <h2 className="text-xl font-bold">
-                  Recent Transactions
-                </h2>
+          <section className="mt-8 grid gap-5 sm:grid-cols-2">
+            <SummaryCard
+              title="Total Credit"
+              value={formatNaira(totals.totalCredit)}
+              type="credit"
+            />
+            <SummaryCard
+              title="Total Debit"
+              value={formatNaira(totals.totalDebit)}
+              type="debit"
+            />
+          </section>
 
-                <Link
-                  href="/dashboard/transactions"
-                  className="text-sm font-semibold text-blue-400 hover:text-blue-300"
-                >
-                  View all
-                </Link>
-              </div>
+          <section className="mt-8 rounded-3xl border border-slate-800 bg-slate-900 p-6">
+            <h2 className="mb-5 text-xl font-bold text-white">
+              Wallet History
+            </h2>
 
-              <div className="space-y-4">
-                {transactions.length === 0 ? (
-                  <p className="text-slate-500">
-                    No transactions yet.
-                  </p>
-                ) : (
-                  transactions
-                    .slice(0, 5)
-                    .map((transaction) => {
-                      const transactionStatus =
-                        String(
-                          transaction?.status ||
-                            "PENDING"
-                        ).toUpperCase();
+            <div className="space-y-4">
+              {transactions.length === 0 ? (
+                <div className="rounded-2xl border border-slate-800 bg-slate-950 p-8 text-center text-slate-500">
+                  No wallet transactions yet.
+                </div>
+              ) : (
+                transactions.map((item) => {
+                  const type = String(item?.type || "DEBIT").toUpperCase();
+                  const status = String(
+                    item?.status ||
+                      (["CREDIT", "REFUND", "REVERSAL"].includes(type)
+                        ? "SUCCESSFUL"
+                        : "COMPLETED")
+                  ).toUpperCase();
 
-                      return (
+                  const isCredit = type === "CREDIT";
+
+                  return (
+                    <div
+                      key={item.id || item.reference}
+                      className="flex flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-950 p-4 md:flex-row md:items-center md:justify-between transition-all hover:border-slate-700"
+                    >
+                      <div className="flex items-center gap-4">
                         <div
-                          key={
-                            transaction.id ||
-                            transaction.reference
-                          }
-                          className="flex flex-col gap-3 rounded-2xl border border-slate-800 bg-slate-950 p-4 md:flex-row md:items-center md:justify-between"
+                          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
+                            isCredit
+                              ? "bg-green-500/10 text-green-400"
+                              : "bg-red-500/10 text-red-400"
+                          }`}
                         >
-                          <div>
-                            <h3 className="font-semibold">
-                              {transaction.service ||
-                                transaction.description ||
-                                "Transaction"}
-                            </h3>
-
-                            <p className="text-sm text-slate-500">
-                              {transaction.reference ||
-                                "-"}
-                            </p>
-
-                            {transaction.createdAt && (
-                              <p className="mt-1 text-xs text-slate-600">
-                                {new Date(
-                                  transaction.createdAt
-                                ).toLocaleString()}
-                              </p>
-                            )}
-                          </div>
-
-                          <div className="flex items-center gap-4">
-                            <span className="font-bold">
-                              {formatNaira(
-                                transaction.amount
-                              )}
-                            </span>
-
-                            <span
-                              className={`rounded-full px-3 py-1 text-xs ${
-                                transactionStatus ===
-                                "SUCCESSFUL"
-                                  ? "bg-green-500/10 text-green-400"
-                                  : transactionStatus ===
-                                      "FAILED"
-                                    ? "bg-red-500/10 text-red-400"
-                                    : transactionStatus ===
-                                        "PROCESSING"
-                                      ? "bg-blue-500/10 text-blue-400"
-                                      : "bg-yellow-500/10 text-yellow-400"
-                              }`}
-                            >
-                              {transactionStatus}
-                            </span>
-                          </div>
+                          {isCredit ? (
+                            <ArrowDownLeft size={20} />
+                          ) : (
+                            <ArrowUpRight size={20} />
+                          )}
                         </div>
-                      );
-                    })
-                )}
-              </div>
+
+                        <div>
+                          <h3 className="font-semibold text-white">
+                            {item.description ||
+                              item.service ||
+                              (isCredit ? "Wallet Credit" : "Wallet Debit")}
+                          </h3>
+
+                          <p className="text-sm text-slate-400">
+                            {item.reference || "-"}
+                          </p>
+
+                          <p className="mt-1 text-xs text-slate-500">
+                            {item.createdAt
+                              ? new Date(item.createdAt).toLocaleString()
+                              : "-"}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between md:justify-end gap-4">
+                        <span
+                          className={`font-bold text-base ${
+                            isCredit ? "text-green-400" : "text-white"
+                          }`}
+                        >
+                          {isCredit ? "+" : "-"}
+                          {formatNaira(item.amount)}
+                        </span>
+
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-medium ${getStatusClasses(
+                            status
+                          )}`}
+                        >
+                          {status}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
+          </section>
+        </>
+      )}
 
-            <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
-              <h2 className="mb-5 text-xl font-bold">
-                Live API Key
-              </h2>
-
-              <p className="mb-4 text-sm text-slate-400">
-                Use this key in your request header as{" "}
-                <code className="text-blue-400">
-                  x-api-key
-                </code>
-                .
-              </p>
-
-              <div className="break-all rounded-2xl border border-slate-800 bg-slate-950 p-4 font-mono text-sm text-slate-300">
-                {liveKey ||
-                  "No active API key found"}
+      {/* World-Class Funding Modal */}
+      {fundModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900 p-6 sm:p-8 shadow-2xl">
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-white">Fund Wallet</h2>
+                <p className="mt-1 text-sm text-slate-400">
+                  Select payment channel and amount to proceed.
+                </p>
               </div>
 
               <button
                 type="button"
-                onClick={copyApiKey}
-                disabled={!liveKey}
-                className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-slate-800 py-3 font-semibold hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={closeFundingModal}
+                disabled={submitting}
+                className="rounded-xl bg-slate-800 p-2 text-slate-300 hover:bg-slate-700 transition-colors"
               >
-                <Copy size={18} />
-                Copy API Key
+                <X size={20} />
               </button>
-
-              <Link
-                href="/dashboard/api-keys"
-                className="mt-4 block text-center font-semibold text-blue-400 hover:text-blue-300"
-              >
-                Manage API Keys
-              </Link>
             </div>
+
+            <form onSubmit={submitFundingRequest} className="space-y-6">
+              {/* Channel Selector Cards */}
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">
+                  Payment Method
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setChannel("CARD")}
+                    className={`flex flex-col items-center justify-center p-4 rounded-2xl border transition-all ${
+                      channel === "CARD" || channel === "PAYSTACK"
+                        ? "border-blue-500 bg-blue-500/10 text-white"
+                        : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700"
+                    }`}
+                  >
+                    <CreditCard size={24} className="mb-2 text-blue-400" />
+                    <span className="text-sm font-medium">Paystack / Card</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setChannel("BANK_TRANSFER")}
+                    className={`flex flex-col items-center justify-center p-4 rounded-2xl border transition-all ${
+                      channel === "BANK_TRANSFER" || channel === "MANUAL"
+                        ? "border-blue-500 bg-blue-500/10 text-white"
+                        : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700"
+                    }`}
+                  >
+                    <Building2 size={24} className="mb-2 text-blue-400" />
+                    <span className="text-sm font-medium">Bank Transfer</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Amount Input */}
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                  Amount (NGN)
+                </label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 font-bold">
+                    ₦
+                  </span>
+                  <input
+                    type="number"
+                    min="100"
+                    step="1"
+                    value={amount}
+                    onChange={(event) => setAmount(event.target.value)}
+                    placeholder="10,000"
+                    required
+                    className="w-full rounded-2xl border border-slate-800 bg-slate-950 pl-10 pr-4 py-4 text-xl font-bold text-white outline-none focus:border-blue-500 transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Quick Chip Selector Inside Modal */}
+              <div className="flex flex-wrap gap-2">
+                {QUICK_AMOUNTS.slice(0, 3).map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setAmount(String(preset))}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                      Number(amount) === preset
+                        ? "bg-blue-600 border-blue-500 text-white"
+                        : "bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700"
+                    }`}
+                  >
+                    +{formatNaira(preset)}
+                  </button>
+                ))}
+              </div>
+
+              <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-4 flex items-center justify-between text-sm text-blue-200">
+                <span>Total Payable:</span>
+                <strong className="text-base text-white">
+                  {formatNaira(amount)}
+                </strong>
+              </div>
+
+              <button
+                type="submit"
+                disabled={submitting}
+                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 py-4 font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60 transition-all shadow-lg shadow-blue-600/20"
+              >
+                {submitting ? (
+                  <>
+                    <LoaderCircle size={18} className="animate-spin" />
+                    Initializing Payment...
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck size={18} />
+                    Proceed to Payment
+                  </>
+                )}
+              </button>
+            </form>
           </div>
-        </>
+        </div>
       )}
     </DashboardLayout>
   );
 }
-function ServicePriceCard({
-  category,
-  expanded,
-  onToggle,
-}) {
-  const categoryCode = String(
-    category.category || "DEFAULT"
-  ).toUpperCase();
 
-  const config =
-    SERVICE_CONFIG[categoryCode] ||
-    SERVICE_CONFIG.DEFAULT;
-
-  const Icon = config.icon;
-
-  const plans = [...category.plans].sort(
-    (first, second) =>
-      Number(first.sellingPrice || 0) -
-      Number(second.sellingPrice || 0)
-  );
-
-  const visiblePlans = expanded
-    ? plans
-    : plans.slice(0, 5);
+function SummaryCard({ title, value, type }) {
+  const isCredit = type === "credit";
 
   return (
-    <article className="overflow-hidden rounded-3xl border border-slate-800 bg-slate-950">
-      <div className="border-b border-slate-800 p-6">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-400">
-              <Icon size={24} />
-            </div>
-
-            <div>
-              <p className="text-xs font-bold uppercase tracking-widest text-blue-400">
-                {categoryCode}
-              </p>
-
-              <h3 className="mt-2 text-xl font-bold">
-                {config.title}
-              </h3>
-
-              <p className="mt-2 text-sm text-slate-500">
-                {config.subtitle}
-              </p>
-            </div>
-          </div>
-
-          <span className="rounded-full border border-green-500/20 bg-green-500/10 px-3 py-1 text-xs font-bold text-green-400">
-            LIVE
-          </span>
-        </div>
-      </div>
-
-      <div className="p-6">
-        <div className="space-y-3">
-          {visiblePlans.map(
-            (plan, index) => (
-              <div
-                key={
-                  plan.id ||
-                  `${plan.serviceCode}-${index}`
-                }
-                className="flex items-start justify-between gap-4 rounded-2xl border border-slate-800 bg-slate-900 p-4"
-              >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h4 className="font-semibold text-slate-200">
-                      {plan.serviceName}
-                    </h4>
-
-                    <span className="rounded-full border border-slate-700 bg-slate-800 px-2.5 py-1 text-[10px] font-bold text-slate-300">
-                      {plan.tier}
-                    </span>
-                  </div>
-
-                  {getPlanFeatureText(
-                    plan.features
-                  ) && (
-                    <p className="mt-2 text-xs leading-5 text-slate-500">
-                      {getPlanFeatureText(
-                        plan.features
-                      )}
-                    </p>
-                  )}
-
-                  {plan.serviceCode && (
-                    <p className="mt-2 truncate font-mono text-[11px] text-slate-600">
-                      {plan.serviceCode}
-                    </p>
-                  )}
-                </div>
-
-                <p className="shrink-0 text-lg font-extrabold text-white">
-                  {formatCompactNaira(
-                    plan.sellingPrice
-                  )}
-                </p>
-              </div>
-            )
-          )}
-        </div>
-
-        {plans.length > 5 && (
-          <button
-            type="button"
-            onClick={onToggle}
-            className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-800 bg-slate-900 py-3 font-semibold text-slate-300 hover:bg-slate-800"
-          >
-            {expanded ? (
-              <>
-                <ChevronUp size={17} />
-                Show fewer plans
-              </>
-            ) : (
-              <>
-                <ChevronDown size={17} />
-                View all {plans.length} plans
-              </>
-            )}
-          </button>
-        )}
-
-        <Link
-          href={config.href}
-          className="mt-5 flex items-center justify-end gap-2 border-t border-slate-800 pt-5 text-sm font-semibold text-blue-400 hover:text-blue-300"
+    <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-sm">
+      <div className="flex items-center gap-4">
+        <div
+          className={`flex h-12 w-12 items-center justify-center rounded-2xl ${
+            isCredit
+              ? "bg-green-500/10 text-green-400"
+              : "bg-red-500/10 text-red-400"
+          }`}
         >
-          Open service
-          <ArrowUpRight size={16} />
-        </Link>
+          {isCredit ? <ArrowDownLeft size={22} /> : <ArrowUpRight size={22} />}
+        </div>
+
+        <div>
+          <p className="text-sm text-slate-400">{title}</p>
+          <h3 className="mt-1 text-2xl font-bold text-white">{value}</h3>
+        </div>
       </div>
-    </article>
+    </div>
   );
-}
-
-function getPlanFeatureText(features) {
-  if (
-    !features ||
-    typeof features !== "object"
-  ) {
-    return "";
-  }
-
-  const preferredKeys = [
-    "network",
-    "dataSize",
-    "validity",
-    "provider",
-    "package",
-    "delivery",
-    "responseFormat",
-    "discount",
-    "description",
-  ];
-
-  return preferredKeys
-    .filter(
-      (key) =>
-        features[key] !== undefined &&
-        features[key] !== null &&
-        String(features[key]).trim() !== ""
-    )
-    .map((key) =>
-      String(features[key])
-    )
-    .slice(0, 4)
-    .join(" • ");
 }

@@ -42,6 +42,13 @@ router.get(
   getMyFundingRequests
 );
 
+// An gyara wannan layin daga verifyToken zuwa auth domin hana Server Error
+router.post(
+  "/funding",
+  auth,
+  initializePaystackFunding
+);
+
 router.post(
   "/paystack/initialize",
   auth,

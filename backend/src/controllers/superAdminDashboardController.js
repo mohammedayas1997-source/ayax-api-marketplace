@@ -20,6 +20,8 @@ exports.getSuperAdminDashboard = async (req, res) => {
       apiCalls,
       monthlyRevenue,
       lowSimBalance,
+      totalSimAirtime, // An ƙara jimillar Airtime a SIMs
+      totalSimData,    // An ƙara jimillar Data a SIMs (idan an adana su a matsayin lamba ko za mu yi summing)
       fundingRequests,
       refundRequests,
       activities,
@@ -81,12 +83,25 @@ exports.getSuperAdminDashboard = async (req, res) => {
         },
       }),
 
-      // FIXED
       prisma.gsmSim.count({
         where: {
           airtimeBalance: {
             lt: 1000,
           },
+        },
+      }),
+
+      // 1. Jimillar Airtime Balance a dukkan SIMs
+      prisma.gsmSim.aggregate({
+        _sum: {
+          airtimeBalance: true,
+        },
+      }),
+
+      // 2. Jimillar Data Balance a dukkan SIMs (Idan sunan filin dataBalance ne a DB ɗinka)
+      prisma.gsmSim.aggregate({
+        _sum: {
+          dataBalance: true, // Idan a string yake a DB, za mu iya sarrafa shi a kasa
         },
       }),
 
@@ -188,6 +203,15 @@ exports.getSuperAdminDashboard = async (req, res) => {
         companyWallet:
           companyWallet._sum.balance || 0,
 
+        // Sabbin bayanan balance da aka kawo:
+        availableAirtimeBalance:
+          totalSimAirtime._sum.airtimeBalance || 0,
+
+        availableDataBalance:
+          totalSimData._sum.dataBalance 
+            ? `${totalSimData._sum.dataBalance} MB` 
+            : "0 MB", // Zaka iya canza 'MB' zuwa 'GB' ko barinsa yadda kake so
+
         pendingFunding,
         pendingRefunds,
 
@@ -206,29 +230,20 @@ exports.getSuperAdminDashboard = async (req, res) => {
 
       system: {
         api: "Online",
-
         database: "Connected",
-
         socket: "Connected",
-
         gateway:
           onlineGatewayDevices > 0
             ? "Online"
             : "Offline",
-
         serverHealth,
-
         redis: redisMonitor,
-
         onlineGatewayDevices,
-
         totalGatewayDevices,
       },
 
       requests,
-
       activities: activityFeed,
-
       updatedAt: new Date(),
     });
   } catch (error) {

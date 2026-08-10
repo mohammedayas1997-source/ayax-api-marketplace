@@ -14,8 +14,6 @@ import {
   AlertCircle,
   CheckCircle2,
   ShieldCheck,
-  Building2,
-  FileText,
 } from "lucide-react";
 
 import DashboardLayout from "@/components/layouts/DashboardLayout";
@@ -78,7 +76,6 @@ export default function WalletPage() {
 
   const [fundModalOpen, setFundModalOpen] = useState(false);
   const [amount, setAmount] = useState("");
-  const [channel, setChannel] = useState("CARD");
 
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("info");
@@ -142,7 +139,6 @@ export default function WalletPage() {
     [fetchWallet, fetchTransactions]
   );
 
-  // Tabbatar da biyan kudin Paystack lokacin da aka dawo daga payment gateway
   useEffect(() => {
     if (!paymentReference) return;
 
@@ -180,7 +176,6 @@ export default function WalletPage() {
     loadWalletPage();
   }, [loadWalletPage]);
 
-  // Real-time Socket listeners
   useEffect(() => {
     if (!socket || !connected) return undefined;
 
@@ -262,7 +257,6 @@ export default function WalletPage() {
     if (submitting) return;
     setFundModalOpen(false);
     setAmount("");
-    setChannel("CARD");
   };
 
   const submitFundingRequest = async (event) => {
@@ -280,42 +274,27 @@ export default function WalletPage() {
       setSubmitting(true);
       setMessage("");
 
-      if (channel === "CARD" || channel === "PAYSTACK") {
-        const response = await api.post("/wallet/paystack/initialize", {
-          amount: numericAmount,
-        });
-
-        const authUrl =
-          response.data?.authorizationUrl ||
-          response.data?.data?.authorizationUrl;
-
-        if (authUrl) {
-          window.location.href = authUrl;
-          return;
-        }
-      }
-
-      const response = await api.post("/wallet/fund", {
+      const response = await api.post("/wallet/paystack/initialize", {
         amount: numericAmount,
-        channel,
       });
 
-      setMessageType("success");
-      setMessage(
-        response.data?.message ||
-          "Wallet funding request created successfully."
-      );
+      const authUrl =
+        response.data?.authorizationUrl ||
+        response.data?.data?.authorizationUrl;
 
-      setFundModalOpen(false);
-      setAmount("");
-      setChannel("CARD");
-      await loadWalletPage({ silent: true });
+      if (authUrl) {
+        window.location.href = authUrl;
+        return;
+      }
+
+      throw new Error("Could not retrieve payment authorization URL.");
     } catch (error) {
+      setFundModalOpen(false);
       setMessageType("error");
       setMessage(
         getErrorMessage(
           error,
-          "Unable to initialize payment or create funding request."
+          "Unable to initialize payment. Please try again."
         )
       );
     } finally {
@@ -436,10 +415,7 @@ export default function WalletPage() {
 
               <button
                 type="button"
-                onClick={() => {
-                  setChannel("CARD");
-                  openFundingModal();
-                }}
+                onClick={() => openFundingModal()}
                 className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-3.5 font-semibold text-white hover:bg-blue-500 transition-all shadow-md shadow-blue-600/20"
               >
                 <CreditCard size={18} />
@@ -549,7 +525,6 @@ export default function WalletPage() {
         </>
       )}
 
-      {/* World-Class Funding Modal */}
       {fundModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md animate-in fade-in duration-200">
           <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900 p-6 sm:p-8 shadow-2xl">
@@ -557,7 +532,7 @@ export default function WalletPage() {
               <div>
                 <h2 className="text-2xl font-bold text-white">Fund Wallet</h2>
                 <p className="mt-1 text-sm text-slate-400">
-                  Select payment channel and amount to proceed.
+                  Enter amount to proceed with Paystack.
                 </p>
               </div>
 
@@ -572,41 +547,6 @@ export default function WalletPage() {
             </div>
 
             <form onSubmit={submitFundingRequest} className="space-y-6">
-              {/* Channel Selector Cards */}
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">
-                  Payment Method
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setChannel("CARD")}
-                    className={`flex flex-col items-center justify-center p-4 rounded-2xl border transition-all ${
-                      channel === "CARD" || channel === "PAYSTACK"
-                        ? "border-blue-500 bg-blue-500/10 text-white"
-                        : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700"
-                    }`}
-                  >
-                    <CreditCard size={24} className="mb-2 text-blue-400" />
-                    <span className="text-sm font-medium">Paystack / Card</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setChannel("BANK_TRANSFER")}
-                    className={`flex flex-col items-center justify-center p-4 rounded-2xl border transition-all ${
-                      channel === "BANK_TRANSFER" || channel === "MANUAL"
-                        ? "border-blue-500 bg-blue-500/10 text-white"
-                        : "border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700"
-                    }`}
-                  >
-                    <Building2 size={24} className="mb-2 text-blue-400" />
-                    <span className="text-sm font-medium">Bank Transfer</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Amount Input */}
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
                   Amount (NGN)
@@ -628,7 +568,6 @@ export default function WalletPage() {
                 </div>
               </div>
 
-              {/* Quick Chip Selector Inside Modal */}
               <div className="flex flex-wrap gap-2">
                 {QUICK_AMOUNTS.slice(0, 3).map((preset) => (
                   <button

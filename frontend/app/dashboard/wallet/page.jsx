@@ -75,7 +75,6 @@ export default function WalletPage() {
 
   const [fundModalOpen, setFundModalOpen] = useState(false);
   const [amount, setAmount] = useState("");
-  const [channel, setChannel] = useState("BANK_TRANSFER");
 
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("info");
@@ -158,7 +157,6 @@ export default function WalletPage() {
           response.data?.message || "Wallet funded successfully!"
         );
 
-        // Tsabtace URL bayan an gama verify don kada ya sake loop
         router.replace("/dashboard/wallet", { scroll: false });
         await loadWalletPage({ silent: true });
       } catch (error) {
@@ -260,7 +258,6 @@ export default function WalletPage() {
     if (submitting) return;
     setFundModalOpen(false);
     setAmount("");
-    setChannel("BANK_TRANSFER");
   };
 
   const submitFundingRequest = async (event) => {
@@ -278,45 +275,29 @@ export default function WalletPage() {
       setSubmitting(true);
       setMessage("");
 
-      // Idan zabin channel din CARD ne ko PAYSTACK, zai kira route din Paystack Initialization
-      if (channel === "CARD" || channel === "PAYSTACK") {
-        const response = await api.post("/wallet/paystack/initialize", {
-          amount: numericAmount,
-        });
-
-        const authUrl =
-          response.data?.authorizationUrl ||
-          response.data?.data?.authorizationUrl;
-
-        if (authUrl) {
-          // Tura mai amfani zuwa shafin biyan kudi na Paystack
-          window.location.href = authUrl;
-          return;
-        }
-      }
-
-      // Idan kuma bank transfer ne ko manual funding zai bi wannan hanyar
-      const response = await api.post("/wallet/fund", {
+      // Aikewa da request zuwa Paystack initialization endpoint
+      const response = await api.post("/wallet/paystack/initialize", {
         amount: numericAmount,
-        channel,
       });
 
-      setMessageType("success");
-      setMessage(
-        response.data?.message ||
-          "Wallet funding request created successfully."
-      );
+      const authUrl =
+        response.data?.authorizationUrl ||
+        response.data?.data?.authorizationUrl;
 
-      setFundModalOpen(false);
-      setAmount("");
-      setChannel("BANK_TRANSFER");
-      await loadWalletPage({ silent: true });
+      if (authUrl) {
+        // Tura mai amfani kai tsaye zuwa shafin biyan kudi na Paystack
+        window.location.href = authUrl;
+        return;
+      } else {
+        throw new Error("Could not retrieve payment authorization URL.");
+      }
     } catch (error) {
+      setFundModalOpen(false);
       setMessageType("error");
       setMessage(
         getErrorMessage(
           error,
-          "Unable to initialize payment or create funding request."
+          "Unable to initialize payment. Please check your Paystack keys."
         )
       );
     } finally {
@@ -425,14 +406,11 @@ export default function WalletPage() {
 
               <button
                 type="button"
-                onClick={() => {
-                  setChannel("CARD");
-                  openFundingModal();
-                }}
+                onClick={() => openFundingModal()}
                 className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 font-semibold hover:bg-blue-700"
               >
                 <CreditCard size={18} />
-                Fund via Card
+                Fund via Paystack
               </button>
             </div>
           </section>
@@ -572,19 +550,6 @@ export default function WalletPage() {
                 />
               </div>
 
-              <div>
-                <label className="text-sm text-slate-400">Funding Method</label>
-                <select
-                  value={channel}
-                  onChange={(event) => setChannel(event.target.value)}
-                  className="mt-2 w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 outline-none focus:border-blue-500"
-                >
-                  <option value="CARD">Paystack / Debit Card</option>
-                  <option value="BANK_TRANSFER">Bank Transfer</option>
-                  <option value="MANUAL">Manual Funding Request</option>
-                </select>
-              </div>
-
               <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-4 text-sm text-blue-200">
                 Requested amount: <strong>{formatNaira(amount)}</strong>
               </div>
@@ -597,7 +562,7 @@ export default function WalletPage() {
                 {submitting ? (
                   <>
                     <LoaderCircle size={18} className="animate-spin" />
-                    Processing Payment...
+                    Connecting to Paystack...
                   </>
                 ) : (
                   <>

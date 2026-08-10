@@ -143,15 +143,35 @@ export default function SuperAdminDashboard() {
 
         setError("");
 
-        const response = await api.get(
-          "/super-admin/dashboard"
-        );
+       const [dashboardResponse, gatewayResponse] =
+  await Promise.all([
+    api.get("/super-admin/dashboard"),
+    api.get("/gateway/devices"),
+  ]);
 
-        const dashboard = normalizeDashboard(response);
+const dashboard =
+  normalizeDashboard(dashboardResponse);
+
+const gatewayDevices =
+  gatewayResponse?.data?.devices ||
+  gatewayResponse?.data?.data?.devices ||
+  [];
+
+const gatewayBalances =
+  calculateGatewayBalances(
+    gatewayDevices
+  );
 
         if (!mountedRef.current) return;
 
-        setStats(dashboard.stats);
+       setStats({
+  ...dashboard.stats,
+  availableDataBalance:
+    formatDataBalance(gatewayBalances.dataMB),
+  availableAirtimeBalance:
+    gatewayBalances.airtime,
+});
+        
         setSystem(dashboard.system);
 
         setRequests(
@@ -386,11 +406,13 @@ export default function SuperAdminDashboard() {
         tone: "indigo",
       },
       {
-        title: "Available Airtime Balance", // Ragowar Kuɗin Airtime a SIM (Live)
-        value: formatNaira(stats.availableAirtimeBalance || stats.airtimeBalance || 0),
-        icon: CircleDollarSign,
-        tone: "green",
-      },
+  title: "Available Airtime Balance",
+  value: formatNaira(
+    stats.availableAirtimeBalance || 0
+  ),
+  icon: CircleDollarSign,
+  tone: "green",
+},
       {
         title: "Total Data Sales",
         value: formatNumber(stats.totalDataSales || stats.dataSalesCount || stats.totalData),
@@ -457,6 +479,80 @@ export default function SuperAdminDashboard() {
     ],
     [stats, system]
   );
+
+  const parseAirtimeValue = (value) => {
+  if (value === null || value === undefined) {
+    return 0;
+  }
+
+  const cleaned = String(value)
+    .replace(/₦/g, "")
+    .replace(/,/g, "")
+    .trim();
+
+  const number = Number(cleaned);
+
+  return Number.isFinite(number) ? number : 0;
+};
+
+const parseDataToMB = (value) => {
+  if (value === null || value === undefined) {
+    return 0;
+  }
+
+  const text = String(value)
+    .trim()
+    .toUpperCase()
+    .replace(/,/g, "");
+
+  if (!text || text.includes("NO ACTIVE")) {
+    return 0;
+  }
+
+  const match = text.match(
+    /(\d+(?:\.\d+)?)\s*(KB|MB|GB|TB)?/
+  );
+
+  if (!match) {
+    return 0;
+  }
+
+  const amount = Number(match[1]);
+  const unit = match[2] || "MB";
+
+  if (!Number.isFinite(amount)) {
+    return 0;
+  }
+
+  switch (unit) {
+    case "KB":
+      return amount / 1024;
+
+    case "GB":
+      return amount * 1024;
+
+    case "TB":
+      return amount * 1024 * 1024;
+
+    case "MB":
+    default:
+      return amount;
+  }
+};
+
+const formatDataBalance = (mb) => {
+  const value = Number(mb || 0);
+
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0 MB";
+  }
+
+  if (value >= 1024) {
+    return `${(value / 1024).toFixed(2)} GB`;
+  }
+
+  return `${value.toFixed(2)} MB`;
+};
 
   const systemItems = useMemo(
     () => [

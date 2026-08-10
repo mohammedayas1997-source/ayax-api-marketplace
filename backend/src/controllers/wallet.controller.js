@@ -7,7 +7,7 @@ const PAYSTACK_SECRET_KEY =
 
 const FRONTEND_URL =
   process.env.FRONTEND_URL ||
-  "http://localhost:3000";
+  "https://www.ayaxapis.com";
 
 const PAYSTACK_BASE_URL =
   "https://api.paystack.co";
@@ -63,6 +63,7 @@ const parseAmount = (value) => {
     return null;
   }
 
+  // An bar shi ya karbi ko nawa ne (har da millions da biliyoyin Naira) ba tare da bango ko iyakancewa ba
   return Number(amount.toFixed(2));
 };
 
@@ -181,21 +182,16 @@ const creditWalletFromPaystack =
           );
         }
         const user = await tx.user.findUnique({
-  where: {
-    id: userId,
-  },
-  select: {
-    id: true,
-    name: true,
-    email: true,
-  },
-});
+          where: {
+            id: userId,
+          },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        });
 
-        /*
-         * Idempotency protection:
-         * Kada a sake credit wallet idan funding
-         * ya riga ya zama APPROVED.
-         */
         if (
           funding.status === "APPROVED"
         ) {
@@ -322,12 +318,6 @@ const creditWalletFromPaystack =
               "Wallet funded through Paystack",
           },
         }).catch((error) => {
-          /*
-           * Funding reference may already exist
-           * in Transaction table. Wallet credit
-           * should not fail because of duplicate
-           * transaction logging.
-           */
           if (
             error?.code !== "P2002"
           ) {
@@ -335,31 +325,29 @@ const creditWalletFromPaystack =
           }
         });
 
-      
         const walletPayload = {
-  userId,
-  balance: Number(updatedWallet.balance || 0),
-  fundedAmount: Number(amount),
-  reference: fundingReference,
-  transactionType: "CREDIT",
-  updatedAt: new Date(),
-};
+          userId,
+          balance: Number(updatedWallet.balance || 0),
+          fundedAmount: Number(amount),
+          reference: fundingReference,
+          transactionType: "CREDIT",
+          updatedAt: new Date(),
+        };
 
-       return {
-  alreadyProcessed: false,
-  wallet: updatedWallet,
-  funding: updatedFunding,
-  user,
-  previousBalance: balanceBefore,
-  newBalance: balanceAfter,
-  amount: Number(amount),
-  reference: fundingReference,
-  walletPayload,
-};
+        return {
+          alreadyProcessed: false,
+          wallet: updatedWallet,
+          funding: updatedFunding,
+          user,
+          previousBalance: balanceBefore,
+          newBalance: balanceAfter,
+          amount: Number(amount),
+          reference: fundingReference,
+          walletPayload,
+        };
       }
     );
   };
-
 
 /* ======================================================
    GET WALLET
@@ -573,7 +561,6 @@ exports.getWallet = async (
     });
   }
 };
-
 
 /* ======================================================
    WALLET TRANSACTIONS
@@ -855,12 +842,6 @@ exports.getWalletTransactions =
     }
   };
 
-
-/*
- * Compatibility da tsohon route:
- * getMyTransactions yana amfani da
- * getWalletTransactions ɗaya.
- */
 exports.getMyTransactions =
   exports.getWalletTransactions;
 
@@ -907,11 +888,11 @@ exports.createFundingRequest =
         });
       }
 
-      if (amount < 100) {
+      if (amount < 10000) {
         return res.status(400).json({
           success: false,
           message:
-            "Minimum funding amount is ₦100.",
+            "Minimum funding amount is ₦10,000.",
         });
       }
 
@@ -963,8 +944,6 @@ exports.createFundingRequest =
       });
     }
   };
-
-  
 
 /* ======================================================
    MY FUNDING REQUESTS
@@ -1116,11 +1095,11 @@ exports.initializePaystackFunding =
         });
       }
 
-      if (amount < 100) {
+      if (amount < 10000) {
         return res.status(400).json({
           success: false,
           message:
-            "Minimum Paystack funding amount is ₦100.",
+            "Minimum Paystack funding amount is ₦10,000.",
         });
       }
 
@@ -1440,45 +1419,39 @@ exports.verifyPaystackFunding =
           paymentReference:
             transactionData.reference,
         });
-       if (!credited.alreadyProcessed) {
-  await sendWalletFundedNotification({
-    user: credited.user,
-    amount: paidAmount,
-    balance: credited.wallet.balance,
-    reference: funding.reference,
-  });
 
-  sendWalletFundingEmail({
-    user: credited.user,
-    amount: credited.amount,
-    previousBalance:
-      credited.previousBalance,
-    newBalance:
-      credited.newBalance,
-    reference:
-      credited.reference,
-    paymentReference:
-      credited.funding.paymentReference,
-    channel:
-      credited.funding.channel ||
-      "PAYSTACK",
-    fundedAt:
-      credited.funding.approvedAt ||
-      new Date(),
-  }).catch((error) => {
-    console.error(
-      "Wallet funding email error:",
-      error.message
-    );
-  });
+      if (!credited.alreadyProcessed) {
+        await sendWalletFundedNotification({
+          user: credited.user,
+          amount: paidAmount,
+          balance: credited.wallet.balance,
+          reference: funding.reference,
+        });
 
-  emitEvent(
-    "wallet:updated",
-    credited.walletPayload,
-    `user-${credited.user.id}`
-  );
-}
-
+        sendWalletFundingEmail({
+          user: credited.user,
+          amount: credited.amount,
+          previousBalance:
+            credited.previousBalance,
+          newBalance:
+            credited.newBalance,
+          reference:
+            credited.reference,
+          paymentReference:
+            credited.funding.paymentReference,
+          channel:
+            credited.funding.channel ||
+            "PAYSTACK",
+          fundedAt:
+            credited.funding.approvedAt ||
+            new Date(),
+        }).catch((error) => {
+          console.error(
+            "Wallet funding email error:",
+            error.message
+          );
+        });
+      }
 
       await createAuditLog({
         req,
@@ -1516,104 +1489,10 @@ exports.verifyPaystackFunding =
         error
       );
 
-return res.status(500).json({
+      return res.status(500).json({
         success: false,
-        message: "Unable to verify Paystack payment.",
+        message:
+          "Unable to verify Paystack payment.",
       });
     }
   };
-
-/* ======================================================
-   PAYSTACK WEBHOOK
-   POST /api/v1/wallet/paystack/webhook
-====================================================== */
-
-exports.paystackWebhook = async (req, res) => {
-  try {
-    const paystackSignature = req.headers["x-paystack-signature"];
-
-    if (!paystackSignature || !PAYSTACK_SECRET_KEY) {
-      return res.sendStatus(400);
-    }
-
-    const hash = crypto
-      .createHmac("sha512", PAYSTACK_SECRET_KEY)
-      .update(JSON.stringify(req.body))
-      .digest("hex");
-
-    if (hash !== paystackSignature) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid webhook signature.",
-      });
-    }
-
-    const event = req.body;
-
-    if (event.event === "charge.success") {
-      const transactionData = event.data;
-      const metadata = transactionData.metadata || {};
-      const fundingReference = metadata.fundingReference || transactionData.reference;
-      const userId = metadata.userId;
-
-      if (!userId || !fundingReference) {
-        return res.sendStatus(200);
-      }
-
-      const funding = await prisma.walletFunding.findUnique({
-        where: {
-          reference: fundingReference,
-        },
-      });
-
-      if (!funding || funding.status === "APPROVED") {
-        return res.sendStatus(200);
-      }
-
-      const paidAmount = Number(transactionData.amount) / 100;
-
-      const credited = await creditWalletFromPaystack({
-        userId,
-        amount: paidAmount,
-        fundingReference: funding.reference,
-        paymentReference: transactionData.reference,
-      });
-
-      if (!credited.alreadyProcessed) {
-        await sendWalletFundedNotification({
-          user: credited.user,
-          amount: paidAmount,
-          balance: credited.wallet.balance,
-          reference: funding.reference,
-        });
-
-        sendWalletFundingEmail({
-          user: credited.user,
-          amount: credited.amount,
-          previousBalance: credited.previousBalance,
-          newBalance: credited.newBalance,
-          reference: credited.reference,
-          paymentReference: credited.funding.paymentReference,
-          channel: credited.funding.channel || "PAYSTACK",
-          fundedAt: credited.funding.approvedAt || new Date(),
-        }).catch((error) => {
-          console.error(
-            "Wallet funding webhook email error:",
-            error.message
-          );
-        });
-
-        emitEvent(
-          "wallet:updated",
-          credited.walletPayload,
-          `user-${credited.user.id}`
-        );
-      }
-    }
-
-    return res.sendStatus(200);
-  } catch (error) {
-    console.error("Paystack webhook error:", error);
-    return res.sendStatus(500);
-  }
-};

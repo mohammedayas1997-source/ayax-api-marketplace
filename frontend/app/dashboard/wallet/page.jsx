@@ -19,7 +19,7 @@ import DashboardLayout from "@/components/layouts/DashboardLayout";
 import api from "@/lib/api";
 import { useSocket } from "@/context/SocketContext";
 
-const QUICK_AMOUNTS = [5000, 10000, 50000];
+const QUICK_AMOUNTS = [10000, 50000, 100000, 500000, 1000000, 5000000, 10000000];
 
 const formatNaira = (amount) =>
   `₦${Number(amount || 0).toLocaleString("en-NG", {
@@ -265,9 +265,9 @@ export default function WalletPage() {
 
     const numericAmount = Number(amount);
 
-    if (!Number.isFinite(numericAmount) || numericAmount < 100) {
+    if (!Number.isFinite(numericAmount) || numericAmount < 10000) {
       setMessageType("error");
-      setMessage("Enter a valid funding amount of at least ₦100.");
+      setMessage("Enter a valid funding amount of at least ₦10,000.");
       return;
     }
 
@@ -391,7 +391,7 @@ export default function WalletPage() {
             <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
               <h3 className="mb-5 text-xl font-bold">Quick Funding</h3>
 
-              <div className="space-y-3">
+              <div className="max-h-[320px] space-y-3 overflow-y-auto pr-1">
                 {QUICK_AMOUNTS.map((quickAmount) => (
                   <button
                     key={quickAmount}
@@ -540,13 +540,13 @@ export default function WalletPage() {
                 <label className="text-sm text-slate-400">Amount (₦)</label>
                 <input
                   type="number"
-                  min="100"
+                  min="10000"
                   step="1"
                   value={amount}
                   onChange={(event) => setAmount(event.target.value)}
-                  placeholder="5000"
+                  placeholder="100000"
                   required
-                  className="mt-2 w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 text-lg outline-none focus:border-blue-500"
+                  className="mt-2 w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 text-xl font-bold tracking-wider outline-none focus:border-blue-500"
                 />
               </div>
 

@@ -7,7 +7,7 @@ const PAYSTACK_SECRET_KEY =
 
 const FRONTEND_URL =
   process.env.FRONTEND_URL ||
-  "http://localhost:3000";
+  "https://www.ayaxapis.com";
 
 const PAYSTACK_BASE_URL =
   "https://api.paystack.co";

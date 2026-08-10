@@ -69,8 +69,6 @@ const airtimeRoutes = require(
   "./routes/airtime.routes"
 );
 
-const walletRoutes = require("./routes/wallet.routes");
-
 const apiPlanRoutes = require(
   "./routes/apiPlan.routes"
 );
@@ -203,11 +201,6 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin(origin, callback) {
-    /*
-     * Postman, mobile apps, curl da
-     * server-to-server requests ba sa
-     * turo Origin header.
-     */
     if (!origin) {
       return callback(null, true);
     }
@@ -223,9 +216,6 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    /*
-     * A development, a bari local origins.
-     */
     if (!isProduction) {
       return callback(null, true);
     }
@@ -350,8 +340,6 @@ app.use(
 
 /* ======================================================
    REQUEST ID
-
-   Dole ya zo kafin routes da rate limiters.
 ====================================================== */
 
 app.use((req, res, next) => {
@@ -397,9 +385,6 @@ if (
   "true"
 ) {
   app.use((req, res, next) => {
-    /*
-     * Health endpoint ya ci gaba da aiki.
-     */
     if (
       req.originalUrl.startsWith(
         "/api/v1/health"
@@ -425,8 +410,6 @@ if (
 
 /* ======================================================
    PAYSTACK WEBHOOK RAW BODY
-
-   Dole wannan ya zo kafin express.json().
 ====================================================== */
 
 app.use(
@@ -457,11 +440,6 @@ app.use(
   })
 );
 
-/*
- * HTTP Parameter Pollution protection.
- * Ya zo bayan body parsers domin ya iya
- * ganin req.body da req.query.
- */
 app.use(hpp());
 
 /* ======================================================
@@ -693,7 +671,7 @@ app.use(
 );
 
 /* ======================================================
-   DEVELOPER WALLET
+   DEVELOPER WALLET (An daura sabon module wallet anan)
 ====================================================== */
 
 app.use(
@@ -706,7 +684,8 @@ app.use(
   paymentLimiter
 );
 
-app.use("/api/v1/wallet", walletRoutes);
+// Mun maye gurbin tsohuwar walletRoutes da sabuwar walletModuleRoutes
+app.use("/api/v1/wallet", walletModuleRoutes);
 
 /* ======================================================
    TRANSACTIONS AND FINANCE
@@ -912,9 +891,6 @@ app.use(
       });
     }
 
-    /*
-     * CORS errors.
-     */
     if (
       error?.code ===
         "CORS_ORIGIN_BLOCKED" ||

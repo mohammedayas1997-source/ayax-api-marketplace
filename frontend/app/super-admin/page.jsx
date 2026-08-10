@@ -62,12 +62,8 @@ const normalizeDashboard = (response) => {
 
   return {
     stats: data.stats || {},
-    requests: Array.isArray(data.requests)
-      ? data.requests
-      : [],
-    activities: Array.isArray(data.activities)
-      ? data.activities
-      : [],
+    requests: Array.isArray(data.requests) ? data.requests : [],
+    activities: Array.isArray(data.activities) ? data.activities : [],
     system: data.system || data.health || {},
     updatedAt: data.updatedAt || new Date().toISOString(),
   };
@@ -116,6 +112,71 @@ const normalizeActivity = (activity = {}) => ({
     new Date().toISOString(),
 });
 
+// Karin Ayyuka don lissafta Balance daga Gateway Devices
+const parseAirtimeValue = (value) => {
+  if (value === null || value === undefined) return 0;
+  const cleaned = String(value).replace(/₦/g, "").replace(/,/g, "").trim();
+  const number = Number(cleaned);
+  return Number.isFinite(number) ? number : 0;
+};
+
+const parseDataToMB = (value) => {
+  if (value === null || value === undefined) return 0;
+  const text = String(value).trim().toUpperCase().replace(/,/g, "");
+  if (!text || text.includes("NO ACTIVE")) return 0;
+
+  const match = text.match(/(\d+(?:\.\d+)?)\s*(KB|MB|GB|TB)?/);
+  if (!match) return 0;
+
+  const amount = Number(match[1]);
+  const unit = match[2] || "MB";
+
+  if (!Number.isFinite(amount)) return 0;
+
+  switch (unit) {
+    case "KB": return amount / 1024;
+    case "GB": return amount * 1024;
+    case "TB": return amount * 1024 * 1024;
+    case "MB":
+    default: return amount;
+  }
+};
+
+const formatDataBalance = (mb) => {
+  const value = Number(mb || 0);
+  if (!Number.isFinite(value) || value <= 0) return "0 MB";
+  if (value >= 1024) return `${(value / 1024).toFixed(2)} GB`;
+  return `${value.toFixed(2)} MB`;
+};
+
+const calculateGatewayBalances = (devices) => {
+  let totalAirtime = 0;
+  let totalDataMB = 0;
+
+  if (Array.isArray(devices)) {
+    devices.forEach((device) => {
+      // Duba ko na'urar tana da SIMs ko airtime balance a ciki
+      if (device.airtimeBalance) {
+        totalAirtime += parseAirtimeValue(device.airtimeBalance);
+      }
+      if (device.dataBalance) {
+        totalDataMB += parseDataToMB(device.dataBalance);
+      }
+      if (Array.isArray(device.sims)) {
+        device.sims.forEach((sim) => {
+          totalAirtime += parseAirtimeValue(sim.airtimeBalance || sim.balance);
+          totalDataMB += parseDataToMB(sim.dataBalance || sim.data);
+        });
+      }
+    });
+  }
+
+  return {
+    airtime: totalAirtime,
+    dataMB: totalDataMB,
+  };
+};
+
 export default function SuperAdminDashboard() {
   const [stats, setStats] = useState({});
   const [system, setSystem] = useState({});
@@ -143,34 +204,34 @@ export default function SuperAdminDashboard() {
 
         setError("");
 
-       const [dashboardResponse, gatewayResponse] =
-  await Promise.all([
-    api.get("/super-admin/dashboard"),
-    api.get("/gateway/devices"),
-  ]);
+        const [dashboardResponse, gatewayResponse] = await Promise.all([
+          api.get("/super-admin/dashboard"),
+          api.get("/gateway/devices").catch(() => ({ data: { devices: [] } })),
+        ]);
 
-const dashboard =
-  normalizeDashboard(dashboardResponse);
+        const dashboard = normalizeDashboard(dashboardResponse);
 
-const gatewayDevices =
-  gatewayResponse?.data?.devices ||
-  gatewayResponse?.data?.data?.devices ||
-  [];
+        const gatewayDevices =
+          gatewayResponse?.data?.devices ||
+          gatewayResponse?.data?.data?.devices ||
+          [];
 
-const gatewayBalances =
-  calculateGatewayBalances(
-    gatewayDevices
-  );
+        const gatewayBalances = calculateGatewayBalances(gatewayDevices);
 
         if (!mountedRef.current) return;
 
-       setStats({
-  ...dashboard.stats,
-  availableDataBalance:
-    formatDataBalance(gatewayBalances.dataMB),
-  availableAirtimeBalance:
-    gatewayBalances.airtime,
-});
+        setStats({
+          ...dashboard.stats,
+          availableDataBalance: formatDataBalance(
+            gatewayBalances.dataMB > 0
+              ? gatewayBalances.dataMB
+              : parseDataToMB(dashboard.stats.availableDataBalance)
+          ),
+          availableAirtimeBalance:
+            gatewayBalances.airtime > 0
+              ? gatewayBalances.airtime
+              : parseAirtimeValue(dashboard.stats.availableAirtimeBalance),
+        });
         
         setSystem(dashboard.system);
 
@@ -186,15 +247,14 @@ const gatewayBalances =
             .slice(0, MAX_LIVE_ACTIVITIES)
         );
 
-        setLastUpdated(
-          new Date(dashboard.updatedAt)
-        );
+        setLastUpdated(new Date(dashboard.updatedAt));
       } catch (requestError) {
         if (!mountedRef.current) return;
 
         const backendMessage =
           requestError.response?.data?.message ||
-          requestError.userMessage;
+          requestError.userMessage ||
+          requestError.message;
 
         setError(
           backendMessage && backendMessage.length < 220
@@ -249,9 +309,7 @@ const gatewayBalances =
 
     setActivities((current) => [
       activity,
-      ...current.filter(
-        (item) => item.id !== activity.id
-      ),
+      ...current.filter((item) => item.id !== activity.id),
     ].slice(0, MAX_LIVE_ACTIVITIES));
 
     setLastUpdated(new Date());
@@ -266,9 +324,7 @@ const gatewayBalances =
 
     setRequests((current) => [
       request,
-      ...current.filter(
-        (item) => item.id !== request.id
-      ),
+      ...current.filter((item) => item.id !== request.id),
     ].slice(0, MAX_REQUESTS));
 
     setLastUpdated(new Date());
@@ -321,21 +377,10 @@ const gatewayBalances =
     "dashboard:update": (payload) => {
       setLiveConnected(true);
 
-      if (payload?.stats) {
-        updateStats(payload.stats);
-      }
-
-      if (payload?.system || payload?.health) {
-        updateSystem(payload.system || payload.health);
-      }
-
-      if (payload?.activity) {
-        addActivity(payload.activity);
-      }
-
-      if (payload?.request) {
-        addRequest(payload.request);
-      }
+      if (payload?.stats) updateStats(payload.stats);
+      if (payload?.system || payload?.health) updateSystem(payload.system || payload.health);
+      if (payload?.activity) addActivity(payload.activity);
+      if (payload?.request) addRequest(payload.request);
 
       if (
         !payload?.stats &&
@@ -400,19 +445,17 @@ const gatewayBalances =
         tone: "green",
       },
       {
-        title: "Available Data Balance", // Ragowar Data a SIM (Live)
-        value: stats.availableDataBalance || stats.dataBalance || "0 MB",
+        title: "Available Data Balance",
+        value: stats.availableDataBalance || "0 MB",
         icon: PieChart,
         tone: "indigo",
       },
       {
-  title: "Available Airtime Balance",
-  value: formatNaira(
-    stats.availableAirtimeBalance || 0
-  ),
-  icon: CircleDollarSign,
-  tone: "green",
-},
+        title: "Available Airtime Balance",
+        value: formatNaira(stats.availableAirtimeBalance || 0),
+        icon: CircleDollarSign,
+        tone: "green",
+      },
       {
         title: "Total Data Sales",
         value: formatNumber(stats.totalDataSales || stats.dataSalesCount || stats.totalData),
@@ -463,10 +506,7 @@ const gatewayBalances =
       },
       {
         title: "System Health",
-        value:
-          stats.systemHealth ||
-          system.health ||
-          "Unknown",
+        value: stats.systemHealth || system.health || "Unknown",
         icon: Activity,
         tone: "purple",
       },
@@ -480,114 +520,26 @@ const gatewayBalances =
     [stats, system]
   );
 
-  const parseAirtimeValue = (value) => {
-  if (value === null || value === undefined) {
-    return 0;
-  }
-
-  const cleaned = String(value)
-    .replace(/₦/g, "")
-    .replace(/,/g, "")
-    .trim();
-
-  const number = Number(cleaned);
-
-  return Number.isFinite(number) ? number : 0;
-};
-
-const parseDataToMB = (value) => {
-  if (value === null || value === undefined) {
-    return 0;
-  }
-
-  const text = String(value)
-    .trim()
-    .toUpperCase()
-    .replace(/,/g, "");
-
-  if (!text || text.includes("NO ACTIVE")) {
-    return 0;
-  }
-
-  const match = text.match(
-    /(\d+(?:\.\d+)?)\s*(KB|MB|GB|TB)?/
-  );
-
-  if (!match) {
-    return 0;
-  }
-
-  const amount = Number(match[1]);
-  const unit = match[2] || "MB";
-
-  if (!Number.isFinite(amount)) {
-    return 0;
-  }
-
-  switch (unit) {
-    case "KB":
-      return amount / 1024;
-
-    case "GB":
-      return amount * 1024;
-
-    case "TB":
-      return amount * 1024 * 1024;
-
-    case "MB":
-    default:
-      return amount;
-  }
-};
-
-const formatDataBalance = (mb) => {
-  const value = Number(mb || 0);
-
-  if (!Number.isFinite(value) || value <= 0) {
-    return "0 MB";
-  }
-
-  if (value >= 1024) {
-    return `${(value / 1024).toFixed(2)} GB`;
-  }
-
-  return `${value.toFixed(2)} MB`;
-};
-
   const systemItems = useMemo(
     () => [
       {
         label: "API Server",
-        value:
-          system.api ||
-          system.apiStatus ||
-          "Unknown",
+        value: system.api || system.apiStatus || "Unknown",
         icon: Server,
       },
       {
         label: "Database",
-        value:
-          system.database ||
-          system.databaseStatus ||
-          "Unknown",
+        value: system.database || system.databaseStatus || "Unknown",
         icon: Database,
       },
       {
         label: "Socket.IO",
-        value:
-          system.socket ||
-          system.socketStatus ||
-          (liveConnected
-            ? "Connected"
-            : "Disconnected"),
+        value: system.socket || system.socketStatus || (liveConnected ? "Connected" : "Disconnected"),
         icon: Wifi,
       },
       {
         label: "Gateway",
-        value:
-          system.gateway ||
-          system.gatewayStatus ||
-          "Unknown",
+        value: system.gateway || system.gatewayStatus || "Unknown",
         icon: Radio,
       },
     ],
@@ -627,22 +579,12 @@ const formatDataBalance = (mb) => {
                 : "bg-yellow-500/10 text-yellow-400"
             }`}
           >
-            {liveConnected ? (
-              <CheckCircle2 size={16} />
-            ) : (
-              <Clock3 size={16} />
-            )}
-
-            {liveConnected
-              ? "Live updates connected"
-              : "Waiting for live updates"}
+            {liveConnected ? <CheckCircle2 size={16} /> : <Clock3 size={16} />}
+            {liveConnected ? "Live updates connected" : "Waiting for live updates"}
           </span>
 
           <span className="text-sm text-slate-500">
-            Last updated:{" "}
-            {lastUpdated
-              ? lastUpdated.toLocaleString("en-US")
-              : "Never"}
+            Last updated: {lastUpdated ? lastUpdated.toLocaleString("en-US") : "Never"}
           </span>
         </div>
 
@@ -652,13 +594,7 @@ const formatDataBalance = (mb) => {
           onClick={handleManualRefresh}
           className="inline-flex items-center gap-2 rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3 font-semibold hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          <RefreshCcw
-            size={17}
-            className={
-              refreshing ? "animate-spin" : ""
-            }
-          />
-
+          <RefreshCcw size={17} className={refreshing ? "animate-spin" : ""} />
           {refreshing ? "Refreshing..." : "Refresh"}
         </button>
       </div>
@@ -666,11 +602,8 @@ const formatDataBalance = (mb) => {
       {error && (
         <div className="mb-6 flex items-start gap-3 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-red-300">
           <XCircle size={20} className="mt-0.5 shrink-0" />
-
           <div>
-            <p className="font-semibold">
-              Dashboard connection error
-            </p>
+            <p className="font-semibold">Dashboard connection error</p>
             <p className="mt-1 text-sm">{error}</p>
           </div>
         </div>
@@ -688,19 +621,13 @@ const formatDataBalance = (mb) => {
         <>
           <section className="mb-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
             {statCards.map((item) => (
-              <StatCard
-                key={item.title}
-                item={item}
-              />
+              <StatCard key={item.title} item={item} />
             ))}
           </section>
 
           <section className="mb-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
             {systemItems.map((item) => (
-              <SystemStatusCard
-                key={item.label}
-                item={item}
-              />
+              <SystemStatusCard key={item.label} item={item} />
             ))}
           </section>
 
@@ -708,15 +635,11 @@ const formatDataBalance = (mb) => {
             <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
               <div className="mb-5 flex items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-xl font-bold">
-                    Requests Center
-                  </h2>
+                  <h2 className="text-xl font-bold">Requests Center</h2>
                   <p className="mt-1 text-sm text-slate-500">
-                    Funding, refunds, alerts and approval
-                    requests.
+                    Funding, refunds, alerts and approval requests.
                   </p>
                 </div>
-
                 <span className="rounded-full bg-yellow-500/10 px-3 py-1 text-xs font-semibold text-yellow-400">
                   {pendingRequestCount} pending
                 </span>
@@ -730,12 +653,7 @@ const formatDataBalance = (mb) => {
                     description="New requests will appear here automatically."
                   />
                 ) : (
-                  requests.map((item) => (
-                    <RequestCard
-                      key={item.id}
-                      item={item}
-                    />
-                  ))
+                  requests.map((item) => <RequestCard key={item.id} item={item} />)
                 )}
               </div>
             </div>
@@ -743,17 +661,13 @@ const formatDataBalance = (mb) => {
             <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
               <div className="mb-5 flex items-center justify-between gap-4">
                 <div>
-                  <h2 className="text-xl font-bold">
-                    Live Activity Feed
-                  </h2>
+                  <h2 className="text-xl font-bold">Live Activity Feed</h2>
                   <p className="mt-1 text-sm text-slate-500">
                     Real-time platform and gateway events.
                   </p>
                 </div>
-
                 <span className="inline-flex items-center gap-2 rounded-full bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-400">
-                  <Activity size={13} />
-                  Live
+                  <Activity size={13} /> Live
                 </span>
               </div>
 
@@ -765,12 +679,7 @@ const formatDataBalance = (mb) => {
                     description="Live system events will appear here."
                   />
                 ) : (
-                  activities.map((item) => (
-                    <ActivityCard
-                      key={item.id}
-                      item={item}
-                    />
-                  ))
+                  activities.map((item) => <ActivityCard key={item.id} item={item} />)
                 )}
               </div>
             </div>
@@ -797,22 +706,11 @@ function StatCard({ item }) {
 
   return (
     <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6 transition hover:border-slate-700">
-      <div
-        className={`mb-5 flex h-12 w-12 items-center justify-center rounded-2xl ${
-          toneClasses[item.tone] ||
-          toneClasses.blue
-        }`}
-      >
+      <div className={`mb-5 flex h-12 w-12 items-center justify-center rounded-2xl ${toneClasses[item.tone] || toneClasses.blue}`}>
         <Icon size={24} />
       </div>
-
-      <p className="text-sm text-slate-400">
-        {item.title}
-      </p>
-
-      <h2 className="mt-2 break-words text-3xl font-extrabold">
-        {item.value}
-      </h2>
+      <p className="text-sm text-slate-400">{item.title}</p>
+      <h2 className="mt-2 break-words text-3xl font-extrabold">{item.value}</h2>
     </div>
   );
 }
@@ -840,8 +738,8 @@ function SystemStatusCard({ item }) {
   const badgeClass = healthy
     ? "bg-green-500/10 text-green-400"
     : unhealthy
-      ? "bg-red-500/10 text-red-400"
-      : "bg-yellow-500/10 text-yellow-400";
+    ? "bg-red-500/10 text-red-400"
+    : "bg-yellow-500/10 text-yellow-400";
 
   return (
     <div className="rounded-3xl border border-slate-800 bg-slate-900 p-5">
@@ -850,20 +748,12 @@ function SystemStatusCard({ item }) {
           <div className="rounded-2xl bg-slate-800 p-3 text-blue-400">
             <Icon size={21} />
           </div>
-
           <div>
-            <p className="text-sm text-slate-500">
-              {item.label}
-            </p>
-            <p className="mt-1 font-semibold">
-              {status}
-            </p>
+            <p className="text-sm text-slate-500">{item.label}</p>
+            <p className="mt-1 font-semibold">{status}</p>
           </div>
         </div>
-
-        <span
-          className={`h-3 w-3 rounded-full ${badgeClass}`}
-        />
+        <span className={`h-3 w-3 rounded-full ${badgeClass}`} />
       </div>
     </div>
   );
@@ -874,38 +764,21 @@ function RequestCard({ item }) {
   const normalized = status.toUpperCase();
 
   const statusClass =
-    normalized === "ALERT" ||
-    normalized === "URGENT" ||
-    normalized === "FAILED"
+    normalized === "ALERT" || normalized === "URGENT" || normalized === "FAILED"
       ? "bg-red-500/10 text-red-400"
-      : normalized === "APPROVED" ||
-          normalized === "COMPLETED" ||
-          normalized === "RESOLVED"
-        ? "bg-green-500/10 text-green-400"
-        : "bg-yellow-500/10 text-yellow-400";
+      : normalized === "APPROVED" || normalized === "COMPLETED" || normalized === "RESOLVED"
+      ? "bg-green-500/10 text-green-400"
+      : "bg-yellow-500/10 text-yellow-400";
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-950 p-5">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="font-bold">
-            {item.title}
-          </h3>
-
-          <p className="mt-1 text-sm leading-6 text-slate-500">
-            {item.desc}
-          </p>
-
-          <p className="mt-3 text-xs text-slate-600">
-            {formatDateTime(item.createdAt)}
-          </p>
+          <h3 className="font-bold">{item.title}</h3>
+          <p className="mt-1 text-sm leading-6 text-slate-500">{item.desc}</p>
+          <p className="mt-3 text-xs text-slate-600">{formatDateTime(item.createdAt)}</p>
         </div>
-
-        <span
-          className={`shrink-0 rounded-full px-3 py-1 text-xs ${statusClass}`}
-        >
-          {status}
-        </span>
+        <span className={`shrink-0 rounded-full px-3 py-1 text-xs ${statusClass}`}>{status}</span>
       </div>
     </div>
   );
@@ -915,59 +788,33 @@ function ActivityCard({ item }) {
   const type = String(item.type || "INFO").toUpperCase();
 
   const dotClass =
-    type.includes("FAILED") ||
-    type.includes("ALERT") ||
-    type.includes("ERROR")
+    type.includes("FAILED") || type.includes("ALERT") || type.includes("ERROR")
       ? "bg-red-400"
-      : type.includes("SUCCESS") ||
-          type.includes("ONLINE") ||
-          type.includes("COMPLETED")
-        ? "bg-green-400"
-        : type.includes("PENDING") ||
-            type.includes("WARNING")
-          ? "bg-yellow-400"
-          : "bg-blue-400";
+      : type.includes("SUCCESS") || type.includes("ONLINE") || type.includes("COMPLETED")
+      ? "bg-green-400"
+      : type.includes("PENDING") || type.includes("WARNING")
+      ? "bg-yellow-400"
+      : "bg-blue-400";
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
       <div className="flex items-start gap-3">
-        <span
-          className={`mt-2 h-2.5 w-2.5 shrink-0 rounded-full ${dotClass}`}
-        />
-
+        <span className={`mt-2 h-2.5 w-2.5 shrink-0 rounded-full ${dotClass}`} />
         <div className="min-w-0">
-          <p className="leading-6 text-slate-300">
-            {item.text}
-          </p>
-
-          <p className="mt-1 text-xs text-slate-500">
-            {formatDateTime(item.time)}
-          </p>
+          <p className="leading-6 text-slate-300">{item.text}</p>
+          <p className="mt-1 text-xs text-slate-500">{formatDateTime(item.time)}</p>
         </div>
       </div>
     </div>
   );
 }
 
-function EmptyState({
-  icon: Icon,
-  title,
-  description,
-}) {
+function EmptyState({ icon: Icon, title, description }) {
   return (
     <div className="rounded-2xl border border-dashed border-slate-800 p-10 text-center">
-      <Icon
-        size={34}
-        className="mx-auto text-slate-600"
-      />
-
-      <p className="mt-4 font-semibold text-slate-400">
-        {title}
-      </p>
-
-      <p className="mt-1 text-sm text-slate-600">
-        {description}
-      </p>
+      <Icon size={34} className="mx-auto text-slate-600" />
+      <p className="mt-4 font-semibold text-slate-400">{title}</p>
+      <p className="mt-1 text-sm text-slate-600">{description}</p>
     </div>
   );
 }
@@ -976,26 +823,16 @@ function DashboardSkeleton() {
   return (
     <div>
       <section className="mb-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 12 }).map(
-          (_, index) => (
-            <div
-              key={index}
-              className="h-40 animate-pulse rounded-3xl border border-slate-800 bg-slate-900"
-            />
-          )
-        )}
+        {Array.from({ length: 12 }).map((_, index) => (
+          <div key={index} className="h-40 animate-pulse rounded-3xl border border-slate-800 bg-slate-900" />
+        ))}
       </section>
-
       <section className="grid gap-8 xl:grid-cols-2">
         <div className="h-[480px] animate-pulse rounded-3xl border border-slate-800 bg-slate-900" />
         <div className="h-[480px] animate-pulse rounded-3xl border border-slate-800 bg-slate-900" />
       </section>
-
       <div className="mt-6 flex items-center gap-2 text-sm text-slate-500">
-        <LoaderCircle
-          size={16}
-          className="animate-spin"
-        />
+        <LoaderCircle size={16} className="animate-spin" />
         Loading live dashboard data...
       </div>
     </div>

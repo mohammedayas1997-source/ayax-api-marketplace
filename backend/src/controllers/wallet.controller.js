@@ -63,7 +63,6 @@ const parseAmount = (value) => {
     return null;
   }
 
-  // An bar shi ya karbi ko nawa ne (har da millions da biliyoyin Naira) ba tare da bango ko iyakancewa ba
   return Number(amount.toFixed(2));
 };
 
@@ -359,7 +358,10 @@ exports.getWallet = async (
   res
 ) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Unauthorized access." });
+    }
 
     const wallet =
       await getOrCreateWallet(userId);
@@ -570,7 +572,10 @@ exports.getWallet = async (
 exports.getWalletTransactions =
   async (req, res) => {
     try {
-      const userId = req.user.id;
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized access." });
+      }
 
       const page = Math.max(
         Number(req.query.page) || 1,
@@ -853,7 +858,10 @@ exports.getMyTransactions =
 exports.createFundingRequest =
   async (req, res) => {
     try {
-      const userId = req.user.id;
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized access." });
+      }
 
       const amount =
         parseAmount(req.body.amount);
@@ -918,7 +926,7 @@ exports.createFundingRequest =
         req,
         userId,
         userEmail:
-          req.user.email,
+          req.user?.email,
         action:
           "CREATE_FUNDING_REQUEST",
         description: `Created wallet funding request ${reference} for NGN ${amount}`,
@@ -953,7 +961,10 @@ exports.createFundingRequest =
 exports.getMyFundingRequests =
   async (req, res) => {
     try {
-      const userId = req.user.id;
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized access." });
+      }
 
       const page = Math.max(
         Number(req.query.page) || 1,
@@ -1082,7 +1093,10 @@ exports.initializePaystackFunding =
         });
       }
 
-      const userId = req.user.id;
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized access." });
+      }
 
       const amount =
         parseAmount(req.body.amount);
@@ -1284,7 +1298,10 @@ exports.verifyPaystackFunding =
         });
       }
 
-      const userId = req.user.id;
+      const userId = req.user?.id;
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Unauthorized access." });
+      }
 
       const reference =
         String(
@@ -1457,7 +1474,7 @@ exports.verifyPaystackFunding =
         req,
         userId,
         userEmail:
-          req.user.email,
+          req.user?.email,
         action:
           "VERIFY_PAYSTACK_FUNDING",
         description: `Verified and credited Paystack wallet funding ${funding.reference}`,

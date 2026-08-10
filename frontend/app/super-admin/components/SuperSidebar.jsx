@@ -43,7 +43,7 @@ const menu = [
   { name: "Settings", href: "/super-admin/settings", icon: Settings },
 ];
 
-export default function SuperSidebar() {
+export default function SuperSidebar({ onClose }) {
   const pathname = usePathname();
 
   const isActive = (href) => {
@@ -64,11 +64,11 @@ export default function SuperSidebar() {
   };
 
   return (
-    <aside className="fixed left-0 top-0 hidden h-screen w-80 flex-col border-r border-slate-800 bg-slate-900 lg:flex">
-
+    <aside className="flex h-full w-80 flex-col border-r border-slate-800 bg-slate-900">
       <div className="border-b border-slate-800 p-6">
         <Link
           href="/super-admin"
+          onClick={onClose}
           className="block"
         >
           <h1 className="text-2xl font-extrabold text-white">
@@ -88,13 +88,13 @@ export default function SuperSidebar() {
         <div className="space-y-2">
           {menu.map((item) => {
             const Icon = item.icon;
-
             const active = isActive(item.href);
 
             return (
               <Link
                 key={item.href}
                 href={item.href}
+                onClick={onClose}
                 className={`flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-all duration-200 ${
                   active
                     ? "bg-blue-600 text-white shadow-lg"

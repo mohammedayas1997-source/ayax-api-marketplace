@@ -1,4 +1,6 @@
 const prisma = require("../config/prisma");
+// Ka tabbatar ka shigo da gatewayService ɗinka anan idan yana wani file ɗin daban
+// const gatewayService = require("../services/gatewayService");
 
 exports.getSuperAdminDashboard = async (req, res) => {
   try {
@@ -7,6 +9,16 @@ exports.getSuperAdminDashboard = async (req, res) => {
       new Date().getMonth(),
       1
     );
+
+    // 1. Dauko live balance kai tsaye daga Gateway ta hanyar function
+    let liveGatewayData = { dataBalance: "0 MB", airtimeBalance: 0 };
+    try {
+      if (typeof gatewayService !== "undefined" && gatewayService.fetchLiveBalancesFromGateway) {
+        liveGatewayData = await gatewayService.fetchLiveBalancesFromGateway();
+      }
+    } catch (err) {
+      console.error("Gagara dauko bayani daga Gateway kai tsaye:", err.message);
+    }
 
     const [
       totalUsers,
@@ -20,8 +32,6 @@ exports.getSuperAdminDashboard = async (req, res) => {
       apiCalls,
       monthlyRevenue,
       lowSimBalance,
-      totalSimAirtime, // An ƙara jimillar Airtime a SIMs
-      totalSimData,    // An ƙara jimillar Data a SIMs (idan an adana su a matsayin lamba ko za mu yi summing)
       fundingRequests,
       refundRequests,
       activities,
@@ -88,20 +98,6 @@ exports.getSuperAdminDashboard = async (req, res) => {
           airtimeBalance: {
             lt: 1000,
           },
-        },
-      }),
-
-      // 1. Jimillar Airtime Balance a dukkan SIMs
-      prisma.gsmSim.aggregate({
-        _sum: {
-          airtimeBalance: true,
-        },
-      }),
-
-      // 2. Jimillar Data Balance a dukkan SIMs (Idan sunan filin dataBalance ne a DB ɗinka)
-      prisma.gsmSim.aggregate({
-        _sum: {
-          dataBalance: true, // Idan a string yake a DB, za mu iya sarrafa shi a kasa
         },
       }),
 
@@ -203,14 +199,9 @@ exports.getSuperAdminDashboard = async (req, res) => {
         companyWallet:
           companyWallet._sum.balance || 0,
 
-        // Sabbin bayanan balance da aka kawo:
-        availableAirtimeBalance:
-          totalSimAirtime._sum.airtimeBalance || 0,
-
-        availableDataBalance:
-          totalSimData._sum.dataBalance 
-            ? `${totalSimData._sum.dataBalance} MB` 
-            : "0 MB", // Zaka iya canza 'MB' zuwa 'GB' ko barinsa yadda kake so
+        // Anan muna amfani da ainihin live data da aka jawo kai tsaye daga Gateway
+        availableAirtimeBalance: liveGatewayData.airtimeBalance || 0,
+        availableDataBalance: liveGatewayData.dataBalance || "0 MB",
 
         pendingFunding,
         pendingRefunds,

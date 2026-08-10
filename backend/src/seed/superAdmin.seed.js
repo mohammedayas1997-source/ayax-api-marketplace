@@ -2,7 +2,7 @@ const bcrypt = require("bcryptjs");
 const prisma = require("../config/prisma");
 
 async function main() {
-  const email = "admin@ayaxdigital.solutions";
+  const email = "abdulrahman.ayas@ayaxapis.com";
 
   const existing = await prisma.user.findUnique({
     where: { email },
@@ -13,7 +13,7 @@ async function main() {
     return;
   }
 
-  const password = await bcrypt.hash("Admin@12345", 12);
+  const password = await bcrypt.hash("Abdulayasayaxpassword@2026", 12);
 
   const user = await prisma.user.create({
     data: {
@@ -32,7 +32,7 @@ async function main() {
 
   console.log("Super Admin created:");
   console.log("Email:", email);
-  console.log("Password: Admin@12345");
+  console.log("Password: Abdulayasayaxpassword@2026");
 }
 
 main()

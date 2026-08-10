@@ -43,16 +43,23 @@ const {
 /* ======================================================
    AUTHENTICATION
 
-   Duk routes na wannan admin wallet module
+   Duk routes na wannan wallet module
    suna buƙatar authenticated user.
 ====================================================== */
 
 router.use(auth);
 
 /* ======================================================
-   CURRENT USER WALLET
+   CURRENT USER WALLET (Root GET /api/v1/wallet)
+====================================================== */
 
-   GET /api/v1/admin/wallet/me
+router.get(
+  "/",
+  getMyWallet
+);
+
+/* ======================================================
+   CURRENT USER WALLET (GET /api/v1/admin/wallet/me)
 ====================================================== */
 
 router.get(
@@ -257,7 +264,7 @@ router.patch(
 router.patch(
   "/withdrawal/:id/reject",
   role("SUPER_ADMIN"),
-  validate(rejectWithdrawalSchema),
+  validate(rejectFundingSchema),
   rejectWithdrawal
 );
 

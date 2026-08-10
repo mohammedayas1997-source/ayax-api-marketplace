@@ -166,8 +166,8 @@ const getUserEmail = (req) =>
   "Unknown user";
 
 /* ======================================================
-   GET MY WALLET
-   GET /api/v1/admin/wallet/me
+   GET MY WALLET (General User & Admin)
+   GET /api/v1/wallet or GET /api/v1/admin/wallet/me
 ====================================================== */
 
 exports.getMyWallet = async (
@@ -235,7 +235,7 @@ exports.getWalletByUserId =
 
 /* ======================================================
    CREATE FUNDING REQUEST
-   POST /api/v1/admin/wallet/funding
+   POST /api/v1/wallet/funding or POST /api/v1/admin/wallet/funding
 ====================================================== */
 
 exports.createFundingRequest =
@@ -469,7 +469,7 @@ exports.rejectFunding = async (
 
 /* ======================================================
    CREATE WITHDRAWAL REQUEST
-   POST /api/v1/admin/wallet/withdrawal
+   POST /api/v1/wallet/withdrawal or POST /api/v1/admin/wallet/withdrawal
 ====================================================== */
 
 exports.createWithdrawalRequest =

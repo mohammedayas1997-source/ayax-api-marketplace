@@ -1,69 +1,25 @@
 const express = require("express");
-
 const router = express.Router();
-
-const auth = require(
-  "../middlewares/auth.middleware"
-);
 
 const {
   getWallet,
+  getWalletTransactions,
   createFundingRequest,
   getMyFundingRequests,
-  getWalletTransactions,
   initializePaystackFunding,
   verifyPaystackFunding,
-  paystackWebhook,
-} = require(
-  "../controllers/wallet.controller"
-);
+} = require("../controllers/wallet.controller");
 
-router.get(
-  "/",
-  auth,
-  getWallet
-);
+const { verifyToken } = require("../middlewares/auth.middleware"); // Ko da wani suna kake amfani da shi na auth middleware
 
-router.get(
-  "/transactions",
-  auth,
-  getWalletTransactions
-);
+// Duk waɗannan suna buƙatar mutum ya shiga (authenticated)
+router.use(verifyToken);
 
-router.post(
-  "/fund",
-  auth,
-  createFundingRequest
-);
-
-router.get(
-  "/funding-requests",
-  auth,
-  getMyFundingRequests
-);
-
-// An gyara wannan layin daga verifyToken zuwa auth domin hana Server Error
-router.post(
-  "/funding",
-  auth,
-  initializePaystackFunding
-);
-
-router.post(
-  "/paystack/initialize",
-  auth,
-  initializePaystackFunding
-);
-
-router.get(
-  "/paystack/verify/:reference",
-  auth,
-  verifyPaystackFunding
-);
-
-router.post(
-  "/paystack/webhook",
-  paystackWebhook
-);
+router.get("/", getWallet);
+router.get("/transactions", getWalletTransactions);
+router.post("/fund", createFundingRequest);
+router.get("/funding-requests", getMyFundingRequests);
+router.post("/paystack/initialize", initializePaystackFunding);
+router.get("/paystack/verify/:reference", verifyPaystackFunding);
 
 module.exports = router;

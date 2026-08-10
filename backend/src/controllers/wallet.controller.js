@@ -358,10 +358,7 @@ exports.getWallet = async (
   res
 ) => {
   try {
-    const userId = req.user?.id;
-    if (!userId) {
-      return res.status(401).json({ success: false, message: "Unauthorized access." });
-    }
+    const userId = req.user.id;
 
     const wallet =
       await getOrCreateWallet(userId);
@@ -572,10 +569,7 @@ exports.getWallet = async (
 exports.getWalletTransactions =
   async (req, res) => {
     try {
-      const userId = req.user?.id;
-      if (!userId) {
-        return res.status(401).json({ success: false, message: "Unauthorized access." });
-      }
+      const userId = req.user.id;
 
       const page = Math.max(
         Number(req.query.page) || 1,
@@ -858,10 +852,7 @@ exports.getMyTransactions =
 exports.createFundingRequest =
   async (req, res) => {
     try {
-      const userId = req.user?.id;
-      if (!userId) {
-        return res.status(401).json({ success: false, message: "Unauthorized access." });
-      }
+      const userId = req.user.id;
 
       const amount =
         parseAmount(req.body.amount);
@@ -961,10 +952,7 @@ exports.createFundingRequest =
 exports.getMyFundingRequests =
   async (req, res) => {
     try {
-      const userId = req.user?.id;
-      if (!userId) {
-        return res.status(401).json({ success: false, message: "Unauthorized access." });
-      }
+      const userId = req.user.id;
 
       const page = Math.max(
         Number(req.query.page) || 1,
@@ -1093,10 +1081,7 @@ exports.initializePaystackFunding =
         });
       }
 
-      const userId = req.user?.id;
-      if (!userId) {
-        return res.status(401).json({ success: false, message: "Unauthorized access." });
-      }
+      const userId = req.user.id;
 
       const amount =
         parseAmount(req.body.amount);
@@ -1298,10 +1283,7 @@ exports.verifyPaystackFunding =
         });
       }
 
-      const userId = req.user?.id;
-      if (!userId) {
-        return res.status(401).json({ success: false, message: "Unauthorized access." });
-      }
+      const userId = req.user.id;
 
       const reference =
         String(

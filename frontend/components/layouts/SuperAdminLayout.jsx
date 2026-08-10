@@ -10,7 +10,7 @@ export default function SuperAdminLayout({ children, title, description }) {
   return (
     <main className="min-h-screen bg-slate-950 text-white">
       <div className="flex">
-        <div className="hidden lg:block fixed left-0 top-0">
+        <div className="hidden lg:block fixed left-0 top-0 h-screen overflow-y-auto">
           <SuperAdminSidebar />
         </div>
 
@@ -21,7 +21,7 @@ export default function SuperAdminLayout({ children, title, description }) {
               onClick={() => setOpen(false)}
             />
 
-            <div className="relative w-80 max-w-[90%]">
+            <div className="relative w-80 max-w-[90%] h-full bg-slate-950 overflow-y-auto">
               <button
                 onClick={() => setOpen(false)}
                 className="absolute right-4 top-4 z-10 text-slate-400"
@@ -34,7 +34,7 @@ export default function SuperAdminLayout({ children, title, description }) {
           </div>
         )}
 
-        <section className="flex-1 lg:ml-80 min-h-screen">
+        <section className="flex-1 lg:ml-64 min-h-screen">
           <header className="sticky top-0 z-40 bg-slate-950/90 backdrop-blur border-b border-slate-800 px-5 lg:px-10 py-4">
             <div className="flex items-center justify-between gap-4">
               <button

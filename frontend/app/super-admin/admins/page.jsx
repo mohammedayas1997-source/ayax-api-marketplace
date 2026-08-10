@@ -24,8 +24,8 @@ const initialAdmins = [
   {
     id: "ADM-1001",
     name: "Main Admin",
-    email: "admin@ayaxdigital.solutions",
-    phone: "08161444444",
+    email: "abdulrahman.ayas@ayaxapis.com",
+    phone: "08163337772",
     role: "ADMIN",
     status: "Active",
     pinStatus: "Set",
@@ -35,7 +35,7 @@ const initialAdmins = [
   {
     id: "ADM-1002",
     name: "Finance Admin",
-    email: "finance@ayaxdigital.solutions",
+    email: "finance@ayaxapis.com",
     phone: "08012345678",
     role: "ADMIN",
     status: "Suspended",

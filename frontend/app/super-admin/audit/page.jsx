@@ -23,7 +23,7 @@ import SuperTopbar from "../components/SuperTopbar";
 const auditLogsData = [
   {
     id: "AUD-1001",
-    user: "admin@ayaxdigital.solutions",
+    user: "abdulrahman.ayas@ayaxapis.com",
     role: "ADMIN",
     action: "APPROVE_FUNDING",
     module: "WALLET",
@@ -34,7 +34,7 @@ const auditLogsData = [
   },
   {
     id: "AUD-1002",
-    user: "support@ayaxdigital.solutions",
+    user: "abdulrahman.ayas@ayaxapis.com",
     role: "CUSTOMER_SERVICE",
     action: "CREATE_REFUND_REQUEST",
     module: "REFUND",
@@ -45,7 +45,7 @@ const auditLogsData = [
   },
   {
     id: "AUD-1003",
-    user: "gsm@ayaxdigital.solutions",
+    user: "abdulrahman.ayas@ayaxapis.com",
     role: "STAFF_ADMIN",
     action: "RECHARGE_SIM",
     module: "GSM_GATEWAY",
@@ -56,7 +56,7 @@ const auditLogsData = [
   },
   {
     id: "AUD-1004",
-    user: "admin@ayaxdigital.solutions",
+    user: "abdulrahman.ayas@ayaxapis.com",
     role: "ADMIN",
     action: "INVALID_PIN",
     module: "SECURITY",
@@ -104,7 +104,7 @@ export default function SuperAuditPage() {
   const refreshLogs = () => {
     const newLog = {
       id: `AUD-${Date.now()}`,
-      user: "superadmin@ayaxdigital.solutions",
+      user: "abdulrahman.ayas@ayaxapis.com",
       role: "SUPER_ADMIN",
       action: "REFRESH_AUDIT_LOGS",
       module: "AUDIT",

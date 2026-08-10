@@ -74,19 +74,19 @@ export default function ContactPage() {
           <InfoCard
             icon={<Mail />}
             title="Email"
-            value="support@ayaxdigital.solutions"
+            value="support@ayaxapis.com"
           />
 
           <InfoCard
             icon={<Phone />}
             title="Phone"
-            value="+234 816 144 4444"
+            value="+234 816 333 7772"
           />
 
           <InfoCard
             icon={<MapPin />}
             title="Office"
-            value="Nigeria"
+            value="Block C, 13/14, Yam Musa Plaza, Hotoro ring road, Kano, state of Nigeria"
           />
 
           <InfoCard

@@ -24,9 +24,9 @@ export default function SuperSettingsPage() {
 
   const [company, setCompany] = useState({
     name: "Ayax Digital Solutions",
-    email: "info@ayaxdigital.solutions",
+    email: "abdulrahman.ayas@ayaxapis.com",
     phone: "+2348161444444",
-    website: "https://ayaxdigital.solutions",
+    website: "https://ayaxapis.com",
   });
 
   const [bank, setBank] = useState({

@@ -69,9 +69,7 @@ const airtimeRoutes = require(
   "./routes/airtime.routes"
 );
 
-const walletRoutes = require(
-  "./routes/wallet.routes"
-);
+const walletRoutes = require("./routes/wallet.routes");
 
 const apiPlanRoutes = require(
   "./routes/apiPlan.routes"
@@ -708,10 +706,7 @@ app.use(
   paymentLimiter
 );
 
-app.use(
-  "/api/v1/wallet",
-  walletRoutes
-);
+app.use("/api/v1/wallet", walletRoutes);
 
 /* ======================================================
    TRANSACTIONS AND FINANCE

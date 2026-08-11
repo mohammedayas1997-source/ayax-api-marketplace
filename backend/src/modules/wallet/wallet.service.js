@@ -91,33 +91,58 @@ exports.createFundingRequest = async (userId, data) => {
 /* ======================================================
    INITIALIZE PAYSTACK PAYMENT
 ====================================================== */
+const axios = require("axios"); // Tabbatar kana da axios ko ka shigar da shi (npm install axios)
+
 exports.initializePaystack = async ({ userId, email, amount }) => {
   await getOrCreateWallet(userId);
 
   const reference = generateReference("PAYSTACK");
   const numericAmount = Number(amount);
 
-  // Ajiye a matsayin PENDING funding request domin a iya gane shi idan an biya
-  const funding = await prisma.walletFunding.create({
-    data: {
-      userId,
-      amount: numericAmount,
-      reference,
-      channel: "PAYSTACK",
-      status: "PENDING",
-      note: "Paystack online funding initialization",
-    },
-  });
+  try {
+    // Tura buƙata zuwa Paystack API domin samun link ɗin biyan kuɗi
+    const response = await axios.post(
+      "https://api.paystack.co/transaction/initialize",
+      {
+        email: email,
+        amount: numericAmount * 100, // Paystack yana amfani da kobo ne, shi ya sa ake ninka adadin da 100
+        reference: reference,
+        callback_url: process.env.PAYSTACK_CALLBACK_URL || undefined, // Zaka iya saka inda zai dawo bayan biya
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
 
-  // A nan zaka iya haɗawa da Paystack API (misali axios) idan kana so ka jawo real authorization_url.
-  // Amma ga tsarin da zai dawo da reference da abin da frontend ke bukata:
-  return {
-    reference,
-    amount: numericAmount,
-    email,
-    funding,
-    // Idan kana amfani da wani SDK ko Axios zuwa Paystack API, zaka iya sanya authorization_url daga can.
-  };
+    const paystackData = response.data.data;
+
+    // Ajiye a matsayin PENDING funding request a database ɗinka
+    await prisma.walletFunding.create({
+      data: {
+        userId,
+        amount: numericAmount,
+        reference,
+        channel: "PAYSTACK",
+        status: "PENDING",
+        note: "Paystack online funding initialization",
+      },
+    });
+
+    // Dawo da authorization_url da reference ga frontend
+    return {
+      reference: paystackData.reference,
+      authorization_url: paystackData.authorization_url,
+      access_code: paystackData.access_code,
+      amount: numericAmount,
+      email,
+    };
+  } catch (error) {
+    const errorMsg = error.response?.data?.message || error.message || "Failed to initialize Paystack payment.";
+    throw new Error(errorMsg);
+  }
 };
 
 exports.getFundingRequests = async ({ status, search }) => {

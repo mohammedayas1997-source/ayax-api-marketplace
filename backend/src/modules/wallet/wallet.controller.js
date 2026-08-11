@@ -859,3 +859,49 @@ exports.statistics = async (
     );
   }
 };
+/* ======================================================
+   GET MY WALLET TRANSACTIONS (LEDGER)
+   GET /api/v1/wallet/transactions or GET /api/v1/admin/wallet/transactions
+====================================================== */
+
+exports.getWalletTransactions = async (req, res) => {
+  try {
+    const userId = ensureId(req.user?.id, "User ID");
+
+    // Idan Admin ne kuma yana son na wani user daban ko dukansu, zaka iya duba req.query ko req.params
+    const query = {
+      ...req.query,
+      userId: req.user?.role === "ADMIN" ? req.query.userId : userId,
+    };
+
+    const result = await walletService.getLedger(query);
+
+    if (Array.isArray(result)) {
+      return res.status(200).json({
+        success: true,
+        message: "Wallet transactions retrieved successfully.",
+        transactions: result,
+        count: result.length,
+      });
+    }
+
+    const transactions =
+      result?.transactions ||
+      result?.ledger ||
+      result?.data ||
+      [];
+
+    return res.status(200).json({
+      success: true,
+      message: "Wallet transactions retrieved successfully.",
+      ...result,
+      transactions,
+    });
+  } catch (error) {
+    return sendError(
+      res,
+      error,
+      "Unable to retrieve wallet transactions."
+    );
+  }
+};

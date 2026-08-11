@@ -113,7 +113,12 @@ const userModuleRoutes = require(
   "./modules/users/user.routes"
 );
 
-const walletModuleRoutes = require(
+// Raba su zuwa Admin Wallet da User Wallet domin gujewa rikici
+const adminWalletRoutes = require(
+  "./modules/wallet/wallet.routes"
+);
+
+const userWalletRoutes = require(
   "./modules/wallet/wallet.routes"
 );
 
@@ -658,7 +663,7 @@ app.use(
 app.use(
   "/api/v1/admin/wallet",
   adminLimiter,
-  walletModuleRoutes
+  adminWalletRoutes
 );
 
 /* ======================================================
@@ -671,7 +676,7 @@ app.use(
 );
 
 /* ======================================================
-   DEVELOPER WALLET (An daura sabon module wallet anan)
+   DEVELOPER WALLET
 ====================================================== */
 
 app.use(
@@ -684,8 +689,7 @@ app.use(
   paymentLimiter
 );
 
-// Mun maye gurbin tsohuwar walletRoutes da sabuwar walletModuleRoutes
-app.use("/api/v1/wallet", walletModuleRoutes);
+app.use("/api/v1/wallet", userWalletRoutes);
 
 /* ======================================================
    TRANSACTIONS AND FINANCE

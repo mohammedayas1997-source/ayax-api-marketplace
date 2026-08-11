@@ -55,7 +55,6 @@ router.post(
   safeHandler(walletController.createWithdrawalRequest, "createWithdrawalRequest missing")
 );
 
-router.get("/wallet/transactions", protect, walletController.getWalletTransactions);
 
 /* ======================================================
    ADMIN WALLET ROUTES

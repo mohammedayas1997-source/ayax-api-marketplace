@@ -20,136 +20,106 @@ const {
   manualAdjustmentSchema,
 } = require("./wallet.validator");
 
-const {
-  getMyWallet,
-  getWalletTransactions, // Wannan shine wanda ke kawo matsala idan babu shi
-  getWalletByUserId,
+const walletController = require("./wallet.controller");
 
-  createFundingRequest,
-  getFundingRequests,
-  approveFunding,
-  rejectFunding,
-
-  createWithdrawalRequest,
-  getWithdrawalRequests,
-  approveWithdrawal,
-  rejectWithdrawal,
-
-  manualAdjustment,
-  getLedger,
-  statistics,
-} = require("./wallet.controller");
+// Helper don tabbatar cewa function gaske ne kafin a miƙa wa Express
+const safeHandler = (fn, fallbackMessage = "Route not implemented") => {
+  if (typeof fn === "function") return fn;
+  return (req, res) => res.status(501).json({ success: false, message: fallbackMessage });
+};
 
 /* ======================================================
    AUTHENTICATION
-   Duk routes na wannan wallet module suna buƙatar authenticated user.
 ====================================================== */
-
 router.use(auth);
 
 /* ======================================================
-   USER WALLET ROUTES (/api/v1/wallet/...)
+   USER WALLET ROUTES
 ====================================================== */
+router.get("/", safeHandler(walletController.getMyWallet, "getMyWallet missing"));
 
-// 1. Samun bayanan wallet ɗin mai amfani
-router.get(
-  "/",
-  getMyWallet
-);
+router.get("/me", safeHandler(walletController.getMyWallet, "getMyWallet missing"));
 
-router.get(
-  "/me",
-  getMyWallet
-);
+router.get("/transactions", safeHandler(walletController.getWalletTransactions, "getWalletTransactions missing"));
 
-// 2. Samun lissafin transactions na mai amfani (Wannan shine babban abin da frontend ke nema)
-router.get(
-  "/transactions",
-  getWalletTransactions
-);
-
-// 3. Ƙirƙirar buƙatar ƙara kuɗi (Funding request)
 router.post(
   "/funding",
   validate(fundWalletSchema),
-  createFundingRequest
+  safeHandler(walletController.createFundingRequest, "createFundingRequest missing")
 );
 
-// 4. Ƙirƙirar buƙatar cire kuɗi (Withdrawal request)
 router.post(
   "/withdrawal",
   validate(withdrawWalletSchema),
-  createWithdrawalRequest
+  safeHandler(walletController.createWithdrawalRequest, "createWithdrawalRequest missing")
 );
 
-
 /* ======================================================
-   ADMIN WALLET ROUTES (/api/v1/admin/wallet/...)
+   ADMIN WALLET ROUTES
 ====================================================== */
-
 router.get(
   "/statistics",
   role("SUPER_ADMIN", "ADMIN"),
-  statistics
+  safeHandler(walletController.statistics, "statistics missing")
 );
 
 router.get(
   "/ledger",
   role("SUPER_ADMIN", "ADMIN"),
-  getLedger
+  safeHandler(walletController.getLedger, "getLedger missing")
 );
 
 router.get(
   "/user/:userId",
   role("SUPER_ADMIN", "ADMIN"),
-  getWalletByUserId
+  safeHandler(walletController.getWalletByUserId, "getWalletByUserId missing")
 );
 
 router.get(
   "/funding",
   role("SUPER_ADMIN", "ADMIN"),
-  getFundingRequests
+  safeHandler(walletController.getFundingRequests, "getFundingRequests missing")
 );
 
 router.patch(
   "/funding/:id/approve",
   role("SUPER_ADMIN"),
   validate(approveFundingSchema),
-  approveFunding
+  safeHandler(walletController.approveFunding, "approveFunding missing")
 );
 
 router.patch(
   "/funding/:id/reject",
   role("SUPER_ADMIN"),
   validate(rejectFundingSchema),
-  rejectFunding
+  safeHandler(walletController.rejectFunding, "rejectFunding missing")
 );
 
 router.get(
   "/withdrawal",
   role("SUPER_ADMIN", "ADMIN"),
-  getWithdrawalRequests
+  safeHandler(walletController.getWithdrawalRequests, "getWithdrawalRequests missing")
 );
 
 router.patch(
   "/withdrawal/:id/approve",
   role("SUPER_ADMIN"),
   validate(approveWithdrawalSchema),
-  approveWithdrawal
+  safeHandler(walletController.approveWithdrawal, "approveWithdrawal missing")
 );
 
 router.patch(
   "/withdrawal/:id/reject",
   role("SUPER_ADMIN"),
   validate(rejectFundingSchema),
-  rejectWithdrawal
+  safeHandler(walletController.rejectWithdrawal, "rejectWithdrawal missing")
 );
 
 router.post(
   "/adjust",
   role("SUPER_ADMIN"),
   validate(manualAdjustmentSchema),
-  manualAdjustment
+  safeHandler(walletController.manualAdjustment, "manualAdjustment missing")
 );
 
 module.exports = router;

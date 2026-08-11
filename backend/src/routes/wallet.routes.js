@@ -1,37 +1,119 @@
 const express = require("express");
 const router = express.Router();
 
+const auth = require(
+  "../../middlewares/auth.middleware"
+);
+
+const role = require(
+  "../../middlewares/role.middleware"
+);
+
 const {
-  getWallet,
-  getWalletTransactions,
-  createFundingRequest,
-  getMyFundingRequests,
-  initializePaystackFunding,
-  verifyPaystackFunding,
-  getLedger, // Tabbatar an kawo shi daga controller idan kana son amfani da shi
-} = require("../controllers/wallet.controller");
+  validate,
+  fundWalletSchema,
+  approveFundingSchema,
+  rejectFundingSchema,
+  withdrawWalletSchema,
+  approveWithdrawalSchema,
+  rejectWithdrawalSchema,
+  manualAdjustmentSchema,
+} = require("./wallet.validator");
 
-// Tabbatar an shigo da auth middleware daidai
-const { protect } = require("../middlewares/auth.middleware"); 
-
-const authMiddleware = protect || exports.verifyToken || ((req, res, next) => next());
-
-if (typeof authMiddleware === "function") {
-  router.use(authMiddleware);
-}
+const walletController = require("./wallet.controller");
 
 /* ======================================================
-   WALLET ROUTES
+   AUTHENTICATION
 ====================================================== */
+router.use(auth);
 
-router.get("/", getWallet);
+/* ======================================================
+   USER WALLET ROUTES
+====================================================== */
+router.get("/", walletController.getMyWallet);
 
-// Zabi daya tsakanin getWalletTransactions ko getLedger gwargwadon abin da kake so
-router.get("/transactions", getWalletTransactions); 
+router.get("/me", walletController.getMyWallet);
 
-router.post("/fund", createFundingRequest);
-router.get("/funding-requests", getMyFundingRequests);
-router.post("/paystack/initialize", initializePaystackFunding);
-router.get("/paystack/verify/:reference", verifyPaystackFunding);
+router.get("/transactions", walletController.getWalletTransactions || ((req, res) => res.status(501).json({ success: false, message: "Not implemented yet" })));
+
+router.post(
+  "/funding",
+  validate(fundWalletSchema),
+  walletController.createFundingRequest
+);
+
+router.post(
+  "/withdrawal",
+  validate(withdrawWalletSchema),
+  walletController.createWithdrawalRequest
+);
+
+/* ======================================================
+   ADMIN WALLET ROUTES
+====================================================== */
+router.get(
+  "/statistics",
+  role("SUPER_ADMIN", "ADMIN"),
+  walletController.statistics
+);
+
+router.get(
+  "/ledger",
+  role("SUPER_ADMIN", "ADMIN"),
+  walletController.getLedger
+);
+
+router.get(
+  "/user/:userId",
+  role("SUPER_ADMIN", "ADMIN"),
+  walletController.getWalletByUserId
+);
+
+router.get(
+  "/funding",
+  role("SUPER_ADMIN", "ADMIN"),
+  walletController.getFundingRequests
+);
+
+router.patch(
+  "/funding/:id/approve",
+  role("SUPER_ADMIN"),
+  validate(approveFundingSchema),
+  walletController.approveFunding
+);
+
+router.patch(
+  "/funding/:id/reject",
+  role("SUPER_ADMIN"),
+  validate(rejectFundingSchema),
+  walletController.rejectFunding
+);
+
+router.get(
+  "/withdrawal",
+  role("SUPER_ADMIN", "ADMIN"),
+  walletController.getWithdrawalRequests
+);
+
+router.patch(
+  "/withdrawal/:id/approve",
+  role("SUPER_ADMIN"),
+  validate(approveWithdrawalSchema),
+  walletController.approveWithdrawal
+);
+
+router.patch(
+  "/withdrawal/:id/reject",
+  role("SUPER_ADMIN"),
+  validate(rejectFundingSchema),
+  walletController.rejectWithdrawal
+);
+
+router.post(
+  "/adjust",
+  role("SUPER_ADMIN"),
+  validate(manualAdjustmentSchema),
+  walletController.manualAdjustment
+);
 
 module.exports = router;

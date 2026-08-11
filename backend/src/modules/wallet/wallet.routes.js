@@ -21,6 +21,7 @@ const {
 } = require("./wallet.validator");
 
 const walletController = require("./wallet.controller");
+const { protect } = require("../../middlewares/auth.middleware");
 
 // Helper don tabbatar cewa function gaske ne kafin a miƙa wa Express
 const safeHandler = (fn, fallbackMessage = "Route not implemented") => {

@@ -88,6 +88,38 @@ exports.createFundingRequest = async (userId, data) => {
   });
 };
 
+/* ======================================================
+   INITIALIZE PAYSTACK PAYMENT
+====================================================== */
+exports.initializePaystack = async ({ userId, email, amount }) => {
+  await getOrCreateWallet(userId);
+
+  const reference = generateReference("PAYSTACK");
+  const numericAmount = Number(amount);
+
+  // Ajiye a matsayin PENDING funding request domin a iya gane shi idan an biya
+  const funding = await prisma.walletFunding.create({
+    data: {
+      userId,
+      amount: numericAmount,
+      reference,
+      channel: "PAYSTACK",
+      status: "PENDING",
+      note: "Paystack online funding initialization",
+    },
+  });
+
+  // A nan zaka iya haɗawa da Paystack API (misali axios) idan kana so ka jawo real authorization_url.
+  // Amma ga tsarin da zai dawo da reference da abin da frontend ke bukata:
+  return {
+    reference,
+    amount: numericAmount,
+    email,
+    funding,
+    // Idan kana amfani da wani SDK ko Axios zuwa Paystack API, zaka iya sanya authorization_url daga can.
+  };
+};
+
 exports.getFundingRequests = async ({ status, search }) => {
   return prisma.walletFunding.findMany({
     where: {

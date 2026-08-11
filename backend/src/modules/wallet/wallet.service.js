@@ -91,7 +91,7 @@ exports.createFundingRequest = async (userId, data) => {
 /* ======================================================
    INITIALIZE PAYSTACK PAYMENT
 ====================================================== */
-const axios = require("axios"); // Tabbatar kana da axios ko ka shigar da shi (npm install axios)
+const axios = require("axios");
 
 exports.initializePaystack = async ({ userId, email, amount }) => {
   await getOrCreateWallet(userId);
@@ -100,14 +100,13 @@ exports.initializePaystack = async ({ userId, email, amount }) => {
   const numericAmount = Number(amount);
 
   try {
-    // Tura buƙata zuwa Paystack API domin samun link ɗin biyan kuɗi
+    // Tura buƙata kai tsaye zuwa Paystack API
     const response = await axios.post(
       "https://api.paystack.co/transaction/initialize",
       {
         email: email,
-        amount: numericAmount * 100, // Paystack yana amfani da kobo ne, shi ya sa ake ninka adadin da 100
+        amount: numericAmount * 100, // Paystack yana amfani da kobo ne
         reference: reference,
-        callback_url: process.env.PAYSTACK_CALLBACK_URL || undefined, // Zaka iya saka inda zai dawo bayan biya
       },
       {
         headers: {
@@ -131,7 +130,7 @@ exports.initializePaystack = async ({ userId, email, amount }) => {
       },
     });
 
-    // Dawo da authorization_url da reference ga frontend
+    // Dawo da link da reference ga controller da kuma frontend
     return {
       reference: paystackData.reference,
       authorization_url: paystackData.authorization_url,

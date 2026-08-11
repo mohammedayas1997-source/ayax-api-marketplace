@@ -21,6 +21,16 @@ if (typeof authMiddleware === "function") {
   router.use(authMiddleware);
 }
 
+/* ======================================================
+   GET USER WALLET TRANSACTIONS / LEDGER
+   GET /api/v1/wallet/transactions
+====================================================== */
+
+router.get(
+  "/transactions",
+  getLedger // Ko kuma wani function din da ke dawo da lissafin transaksiyon na mai amfani
+);
+
 router.get("/", getWallet);
 router.get("/transactions", getWalletTransactions);
 router.post("/fund", createFundingRequest);

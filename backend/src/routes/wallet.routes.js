@@ -8,31 +8,27 @@ const {
   getMyFundingRequests,
   initializePaystackFunding,
   verifyPaystackFunding,
+  getLedger, // Tabbatar an kawo shi daga controller idan kana son amfani da shi
 } = require("../controllers/wallet.controller");
 
-// Tabbatar an shigo da auth middleware daidai ta hanyar da ta dace da aikin ka
-const { protect } = require("../middlewares/auth.middleware"); // Ko da verifyToken kake amfani da shi, tabbatar akwai shi
+// Tabbatar an shigo da auth middleware daidai
+const { protect } = require("../middlewares/auth.middleware"); 
 
-// Idan kana amfani da 'protect' ko 'verifyToken', tabbatar ba undefined bane
 const authMiddleware = protect || exports.verifyToken || ((req, res, next) => next());
 
-// Idan kana son amfani da auth middleware a kan dukkan wallet routes:
 if (typeof authMiddleware === "function") {
   router.use(authMiddleware);
 }
 
 /* ======================================================
-   GET USER WALLET TRANSACTIONS / LEDGER
-   GET /api/v1/wallet/transactions
+   WALLET ROUTES
 ====================================================== */
 
-router.get(
-  "/transactions",
-  getLedger // Ko kuma wani function din da ke dawo da lissafin transaksiyon na mai amfani
-);
-
 router.get("/", getWallet);
-router.get("/transactions", getWalletTransactions);
+
+// Zabi daya tsakanin getWalletTransactions ko getLedger gwargwadon abin da kake so
+router.get("/transactions", getWalletTransactions); 
+
 router.post("/fund", createFundingRequest);
 router.get("/funding-requests", getMyFundingRequests);
 router.post("/paystack/initialize", initializePaystackFunding);

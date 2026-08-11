@@ -55,7 +55,11 @@ router.post(
   safeHandler(walletController.createWithdrawalRequest, "createWithdrawalRequest missing")
 );
 
-
+router.post(
+  "/paystack/initialize",
+  validate(fundWalletSchema), // Ko wani schema da kake amfani da shi na biyan kuɗi
+  safeHandler(walletController.initializePaystack, "initializePaystack missing")
+);
 /* ======================================================
    ADMIN WALLET ROUTES
 ====================================================== */

@@ -905,3 +905,40 @@ exports.getWalletTransactions = async (req, res) => {
     );
   }
 };
+/* ======================================================
+   INITIALIZE PAYSTACK PAYMENT
+   POST /api/v1/wallet/paystack/initialize
+====================================================== */
+
+exports.initializePaystack = async (req, res) => {
+  try {
+    const userId = ensureId(req.user?.id, "User ID");
+    const email = getUserEmail(req);
+
+    // Idan kana da wani aiki a walletService kamar initializePaystack ko createPaystackTransaction
+    const result = await walletService.initializePaystack({
+      userId,
+      email,
+      ...req.body, // misali yana dauke da amount da sauransu
+    });
+
+    await writeAuditLog({
+      req,
+      action: "INITIALIZE_PAYSTACK",
+      description: `${email} initialized Paystack payment of amount ${req.body.amount || ""}`,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Paystack transaction initialized successfully.",
+      ...result,
+    });
+  } catch (error) {
+    return sendError(
+      res,
+      error,
+      "Unable to initialize Paystack payment.",
+      400
+    );
+  }
+};

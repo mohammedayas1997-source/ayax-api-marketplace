@@ -772,20 +772,21 @@ exports.verifyPaystackFunding = async (req, res) => {
 
     const result = await paystackResponse.json();
 
+    // Wannan zai nuna maka ainihin bayanin kuskuren a cikin terminal ɗinka
     if (!paystackResponse.ok || !result.status) {
-      return res.status(400).json({
-        success: false,
-        message: result.message || "Unable to verify Paystack payment.",
+      console.log("Paystack Initialization Error Details:", result);
+
+      await prisma.walletFunding.update({
+        where: { id: funding.id },
+        data: {
+          status: "CANCELLED",
+          note: result.message || "Paystack initialization failed.",
+        },
       });
-    }
 
-    const transactionData = result.data;
-
-    if (transactionData.status !== "success") {
       return res.status(400).json({
         success: false,
-        message: "Payment has not been completed successfully.",
-        paymentStatus: transactionData.status,
+        message: result.message || "Unable to initialize Paystack payment.",
       });
     }
 

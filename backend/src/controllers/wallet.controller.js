@@ -579,10 +579,11 @@ exports.getMyFundingRequests = async (req, res) => {
 
 exports.initializePaystackFunding = async (req, res) => {
   try {
-    // 1. Tabbatar cewa Secret Key yana nan (ko dai daga env ko a hardcode idan akwai bukata)
-    const secretKey = PAYSTACK_SECRET_KEY || process.env.PAYSTACK_SECRET_KEY;
-    
+    const secretKey = process.env.PAYSTACK_SECRET_KEY;
+
     if (!secretKey) {
+      console.error("PAYSTACK_SECRET_KEY is missing");
+
       return res.status(500).json({
         success: false,
         message: "Paystack secret key is not configured.",
@@ -599,7 +600,7 @@ exports.initializePaystackFunding = async (req, res) => {
       });
     }
 
-    if (amount < 1000) { // Na rage zuwa 1000 ko ka mayar da shi yadda kake so
+    if (amount < 1000) {
       return res.status(400).json({
         success: false,
         message: "Minimum Paystack funding amount is ₦1,000.",
@@ -608,7 +609,11 @@ exports.initializePaystackFunding = async (req, res) => {
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, name: true, email: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+      },
     });
 
     if (!user) {
@@ -621,65 +626,94 @@ exports.initializePaystackFunding = async (req, res) => {
     if (!user.email) {
       return res.status(400).json({
         success: false,
-        message: "A valid email address is required for Paystack funding.",
+        message: "A valid email address is required.",
       });
     }
 
-    const reference = generateReference("AYAX-PAYSTACK");
-    
-    // 2. Anan na sa adireshi kai tsaye domin kauce wa matsalar ENV da ke kawo matsala
-    const callbackUrl = `https://www.ayaxapis.com/dashboard/wallet?reference=${reference}`;
+    const reference =
+      generateReference("AYAX-PAYSTACK");
 
-    const funding = await prisma.walletFunding.create({
-      data: {
-        userId,
-        amount,
-        reference,
-        paymentReference: reference,
-        channel: "PAYSTACK",
-        status: "PENDING",
-      },
-    });
+    const callbackUrl =
+      `${FRONTEND_URL}/dashboard/wallet?reference=${encodeURIComponent(
+        reference
+      )}`;
 
-    const paystackResponse = await fetch("https://api.paystack.co/transaction/initialize", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${secretKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        email: user.email,
-        amount: Math.round(amount * 100), // Kobo conversion
-        reference,
-        callback_url: callbackUrl,
-        currency: "NGN",
-        metadata: {
+    const funding =
+      await prisma.walletFunding.create({
+        data: {
           userId,
-          fundingId: funding.id,
-          fundingReference: reference,
-          customerName: user.name,
-          purpose: "WALLET_FUNDING",
+          amount,
+          reference,
+          paymentReference: reference,
+          channel: "PAYSTACK",
+          status: "PENDING",
         },
-      }),
+      });
+
+    console.log("Initializing Paystack:", {
+      email: user.email,
+      amount,
+      reference,
+      callbackUrl,
     });
 
-    const result = await paystackResponse.json();
+    const paystackResponse = await fetch(
+      "https://api.paystack.co/transaction/initialize",
+      {
+        method: "POST",
 
-    // Idan Paystack ta ki amincewa, za mu kama sakon kuskuren a nan don gani
-    if (!paystackResponse.ok || !result.status) {
-      console.error("Paystack API Error Response:", result);
+        headers: {
+          Authorization: `Bearer ${secretKey}`,
+          "Content-Type": "application/json",
+        },
 
+        body: JSON.stringify({
+          email: user.email,
+          amount: Math.round(amount * 100),
+          reference,
+          callback_url: callbackUrl,
+          currency: "NGN",
+
+          metadata: {
+            userId,
+            fundingId: funding.id,
+            fundingReference: reference,
+            purpose: "WALLET_FUNDING",
+          },
+        }),
+      }
+    );
+
+    const result =
+      await paystackResponse.json();
+
+    console.log(
+      "PAYSTACK RESPONSE:",
+      JSON.stringify(result, null, 2)
+    );
+
+    if (
+      !paystackResponse.ok ||
+      !result.status ||
+      !result.data?.authorization_url
+    ) {
       await prisma.walletFunding.update({
         where: { id: funding.id },
         data: {
           status: "CANCELLED",
-          note: result.message || "Paystack initialization failed.",
+          note:
+            result.message ||
+            "Paystack initialization failed.",
         },
       });
 
       return res.status(400).json({
         success: false,
-        message: result.message || "Unable to initialize Paystack payment.",
+        message:
+          result.message ||
+          "Paystack could not initialize the payment.",
+        paystackStatus:
+          result.status ?? false,
       });
     }
 
@@ -688,29 +722,55 @@ exports.initializePaystackFunding = async (req, res) => {
       userId,
       userEmail: user.email,
       action: "INITIALIZE_PAYSTACK_FUNDING",
-      description: `Initialized Paystack wallet funding ${reference} for NGN ${amount}`,
+      description:
+        `Initialized Paystack wallet funding ${reference} for NGN ${amount}`,
     });
 
     return res.status(200).json({
       success: true,
-      message: "Paystack payment initialized successfully.",
-      authorizationUrl: result.data.authorization_url,
-      accessCode: result.data.access_code,
-      reference: result.data.reference,
-      funding: serializeFunding(funding),
+      message:
+        "Paystack payment initialized successfully.",
+
+      authorizationUrl:
+        result.data.authorization_url,
+
+      accessCode:
+        result.data.access_code,
+
+      reference:
+        result.data.reference,
+
+      funding:
+        serializeFunding(funding),
+
       data: {
-        authorizationUrl: result.data.authorization_url,
-        authorization_url: result.data.authorization_url,
-        accessCode: result.data.access_code,
-        access_code: result.data.access_code,
-        reference: result.data.reference,
+        authorizationUrl:
+          result.data.authorization_url,
+
+        authorization_url:
+          result.data.authorization_url,
+
+        accessCode:
+          result.data.access_code,
+
+        access_code:
+          result.data.access_code,
+
+        reference:
+          result.data.reference,
       },
     });
   } catch (error) {
-    console.error("Initialize Paystack error:", error);
+    console.error(
+      "INITIALIZE PAYSTACK ERROR:",
+      error
+    );
+
     return res.status(500).json({
       success: false,
-      message: "Unable to initialize Paystack funding.",
+      message:
+        error?.message ||
+        "Unable to initialize Paystack funding.",
     });
   }
 };

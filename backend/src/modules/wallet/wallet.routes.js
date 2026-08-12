@@ -21,7 +21,6 @@ const {
 } = require("./wallet.validator");
 
 const walletController = require("./wallet.controller");
-const { protect } = require("../../middlewares/auth.middleware");
 
 // Helper don tabbatar cewa function gaske ne kafin a miƙa wa Express
 const safeHandler = (fn, fallbackMessage = "Route not implemented") => {
@@ -60,6 +59,7 @@ router.post(
   validate(fundWalletSchema),
   safeHandler(walletController.initializePaystack, "initializePaystack missing")
 );
+
 /* ======================================================
    ADMIN WALLET ROUTES
 ====================================================== */
@@ -117,7 +117,7 @@ router.patch(
 router.patch(
   "/withdrawal/:id/reject",
   role("SUPER_ADMIN"),
-  validate(rejectFundingSchema),
+  validate(rejectWithdrawalSchema), // Gyara anan zuwa rejectWithdrawalSchema
   safeHandler(walletController.rejectWithdrawal, "rejectWithdrawal missing")
 );
 

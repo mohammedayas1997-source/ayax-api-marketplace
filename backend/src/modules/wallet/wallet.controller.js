@@ -859,6 +859,7 @@ exports.statistics = async (
     );
   }
 };
+
 /* ======================================================
    GET MY WALLET TRANSACTIONS (LEDGER)
    GET /api/v1/wallet/transactions or GET /api/v1/admin/wallet/transactions
@@ -868,7 +869,6 @@ exports.getWalletTransactions = async (req, res) => {
   try {
     const userId = ensureId(req.user?.id, "User ID");
 
-    // Idan Admin ne kuma yana son na wani user daban ko dukansu, zaka iya duba req.query ko req.params
     const query = {
       ...req.query,
       userId: req.user?.role === "ADMIN" ? req.query.userId : userId,
@@ -905,6 +905,7 @@ exports.getWalletTransactions = async (req, res) => {
     );
   }
 };
+
 /* ======================================================
    INITIALIZE PAYSTACK PAYMENT
    POST /api/v1/wallet/paystack/initialize
@@ -912,15 +913,20 @@ exports.getWalletTransactions = async (req, res) => {
 
 exports.initializePaystack = async (req, res) => {
   try {
-    const userId = req.user.id;
-    const email = req.user.email;
+    const userId = ensureId(req.user?.id, "User ID");
+    const email = req.user?.email;
     const { amount } = req.body;
 
-    // Tabbatar an kira daidai sunan aikin da ke cikin service:
     const result = await walletService.initializePaystackFunding({
       userId,
       email,
       amount,
+    });
+
+    await writeAuditLog({
+      req,
+      action: "INITIALIZE_PAYSTACK_PAYMENT",
+      description: `${getUserEmail(req)} initialized Paystack payment of ₦${amount}`,
     });
 
     return res.status(200).json({
@@ -930,12 +936,15 @@ exports.initializePaystack = async (req, res) => {
         authorization_url: result.authorizationUrl,
         access_code: result.accessCode,
         reference: result.reference,
+        funding: result.funding,
       },
     });
   } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: error.message || "Could not retrieve payment authorization URL.",
-    });
+    return sendError(
+      res,
+      error,
+      "Could not retrieve payment authorization URL.",
+      400
+    );
   }
 };

@@ -1,7 +1,6 @@
 require("./config/env");
 
 const http = require("http");
-
 const app = require("./app");
 
 const { initSocket } = require("./config/socket");
@@ -177,13 +176,4 @@ process.on("SIGTERM", () => {
 
 process.on("SIGINT", () => {
   shutdown("SIGINT");
-});
-
-process.on("SIGTERM", () => {
-  console.log("SIGTERM received.");
-
-  server.close(() => {
-    console.log("HTTP server closed.");
-    process.exit(0);
-  });
 });

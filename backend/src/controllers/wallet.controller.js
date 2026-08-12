@@ -579,7 +579,10 @@ exports.getMyFundingRequests = async (req, res) => {
 
 exports.initializePaystackFunding = async (req, res) => {
   try {
-    if (!PAYSTACK_SECRET_KEY) {
+    // 1. Tabbatar cewa Secret Key yana nan (ko dai daga env ko a hardcode idan akwai bukata)
+    const secretKey = PAYSTACK_SECRET_KEY || process.env.PAYSTACK_SECRET_KEY;
+    
+    if (!secretKey) {
       return res.status(500).json({
         success: false,
         message: "Paystack secret key is not configured.",
@@ -596,10 +599,10 @@ exports.initializePaystackFunding = async (req, res) => {
       });
     }
 
-    if (amount < 10000) {
+    if (amount < 1000) { // Na rage zuwa 1000 ko ka mayar da shi yadda kake so
       return res.status(400).json({
         success: false,
-        message: "Minimum Paystack funding amount is ₦10,000.",
+        message: "Minimum Paystack funding amount is ₦1,000.",
       });
     }
 
@@ -623,7 +626,9 @@ exports.initializePaystackFunding = async (req, res) => {
     }
 
     const reference = generateReference("AYAX-PAYSTACK");
-    const callbackUrl = req.body.callbackUrl || `${FRONTEND_URL}/dashboard/wallet?reference=${reference}`;
+    
+    // 2. Anan na sa adireshi kai tsaye domin kauce wa matsalar ENV da ke kawo matsala
+    const callbackUrl = `https://www.ayaxapis.com/dashboard/wallet?reference=${reference}`;
 
     const funding = await prisma.walletFunding.create({
       data: {
@@ -636,15 +641,15 @@ exports.initializePaystackFunding = async (req, res) => {
       },
     });
 
-    const paystackResponse = await fetch(`${PAYSTACK_BASE_URL}/transaction/initialize`, {
+    const paystackResponse = await fetch("https://api.paystack.co/transaction/initialize", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
+        Authorization: `Bearer ${secretKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
         email: user.email,
-        amount: Math.round(amount * 100),
+        amount: Math.round(amount * 100), // Kobo conversion
         reference,
         callback_url: callbackUrl,
         currency: "NGN",
@@ -660,7 +665,10 @@ exports.initializePaystackFunding = async (req, res) => {
 
     const result = await paystackResponse.json();
 
+    // Idan Paystack ta ki amincewa, za mu kama sakon kuskuren a nan don gani
     if (!paystackResponse.ok || !result.status) {
+      console.error("Paystack API Error Response:", result);
+
       await prisma.walletFunding.update({
         where: { id: funding.id },
         data: {

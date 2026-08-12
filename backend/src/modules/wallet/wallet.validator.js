@@ -42,7 +42,7 @@ const rejectWithdrawalSchema = z.object({
 
 const manualAdjustmentSchema = z.object({
   userId: z.string().min(1, "User ID is required"),
-  type: z.enum(["CREDIT", "DEBIT"]),
+  type: z.enum(["CREDIT", "DEBIT", "ADJUSTMENT"]), // An ƙara "ADJUSTMENT" anan don daidaita da Controller
   amount: amountSchema,
   pin: z.string().min(4, "PIN is required"),
   description: z.string().min(3, "Description is required"),

@@ -916,7 +916,7 @@ exports.initializePaystack = async (req, res) => {
     const email = req.user.email;
     const { amount } = req.body;
 
-    // Kira aikin service wanda ka rubuta yanzu
+    // Tabbatar an kira daidai sunan aikin da ke cikin service:
     const result = await walletService.initializePaystackFunding({
       userId,
       email,
@@ -927,7 +927,7 @@ exports.initializePaystack = async (req, res) => {
       success: true,
       message: "Paystack initialized successfully",
       data: {
-        authorization_url: result.authorizationUrl, // Mun maida shi zuwa abin da frontend ke tsammani
+        authorization_url: result.authorizationUrl,
         access_code: result.accessCode,
         reference: result.reference,
       },

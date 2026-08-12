@@ -57,7 +57,7 @@ router.post(
 
 router.post(
   "/paystack/initialize",
-  validate(fundWalletSchema), // Ko wani schema da kake amfani da shi na biyan kuɗi
+  validate(fundWalletSchema),
   safeHandler(walletController.initializePaystack, "initializePaystack missing")
 );
 /* ======================================================

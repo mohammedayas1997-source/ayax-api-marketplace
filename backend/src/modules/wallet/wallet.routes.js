@@ -19,6 +19,10 @@ const {
   rejectWithdrawalSchema,
   manualAdjustmentSchema,
 } = require("./wallet.validator");
+const { 
+  initializePaystackFunding, 
+  verifyPaystackFunding // <--- Ka tabbatar wannan yana ciki
+} = require("../controllers/wallet.controller");
 
 const walletController = require("./wallet.controller");
 

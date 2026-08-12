@@ -280,9 +280,12 @@ export default function WalletPage() {
         amount: numericAmount,
       });
 
+      // An ƙara duba duk wani posibilities na inda URL ɗin zai iya zuwa
       const authUrl =
         response.data?.authorizationUrl ||
-        response.data?.data?.authorizationUrl;
+        response.data?.authorization_url ||
+        response.data?.data?.authorizationUrl ||
+        response.data?.data?.authorization_url;
 
       if (authUrl) {
         // Tura mai amfani kai tsaye zuwa shafin biyan kudi na Paystack

@@ -42,6 +42,8 @@ router.get("/me", safeHandler(walletController.getMyWallet, "getMyWallet missing
 
 router.get("/transactions", safeHandler(walletController.getWalletTransactions, "getWalletTransactions missing"));
 
+router.get("/paystack/verify/:reference", verifyPaystackFunding);
+
 router.post(
   "/funding",
   validate(fundWalletSchema),

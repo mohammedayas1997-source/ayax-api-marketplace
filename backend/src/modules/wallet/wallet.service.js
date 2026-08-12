@@ -142,8 +142,25 @@ exports.initializePaystackFunding = async ({ userId, email, amount }) => {
       reference,
     };
   } catch (error) {
-    const errorMsg = error.response?.data?.message || error.message || "Failed to initialize Paystack payment.";
-    throw new Error(errorMsg);
+  console.error("========== PAYSTACK INITIALIZATION ERROR ==========");
+  console.error("Message:", error.message);
+  console.error("Status:", error.response?.status);
+  console.error(
+    "Paystack Response:",
+    JSON.stringify(
+      error.response?.data,
+      null,
+      2
+    )
+  );
+  console.error("====================================================");
+
+  const errorMsg =
+    error.response?.data?.message ||
+    error.message ||
+    "Failed to initialize Paystack payment.";
+
+  throw new Error(errorMsg);
   }
 };
 

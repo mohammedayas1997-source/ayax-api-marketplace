@@ -730,7 +730,9 @@ exports.verifyPaystackFunding = async (req, res) => {
     }
 
     const userId = req.user.id;
-    const reference = String(req.params.reference || "").trim();
+    const reference = String(
+      req.params.reference || ""
+    ).trim();
 
     if (!reference) {
       return res.status(400).json({
@@ -739,12 +741,20 @@ exports.verifyPaystackFunding = async (req, res) => {
       });
     }
 
-    const funding = await prisma.walletFunding.findFirst({
-      where: {
-        userId,
-        OR: [{ reference }, { paymentReference: reference }],
-      },
-    });
+    /* ==================================================
+       FIND FUNDING RECORD
+    ================================================== */
+
+    const funding =
+      await prisma.walletFunding.findFirst({
+        where: {
+          userId,
+          OR: [
+            { reference },
+            { paymentReference: reference },
+          ],
+        },
+      });
 
     if (!funding) {
       return res.status(404).json({
@@ -753,114 +763,307 @@ exports.verifyPaystackFunding = async (req, res) => {
       });
     }
 
+    /* ==================================================
+       PREVENT DOUBLE CREDIT
+    ================================================== */
+
     if (funding.status === "APPROVED") {
-      const wallet = await getOrCreateWallet(userId);
+      const wallet =
+        await getOrCreateWallet(userId);
+
       return res.status(200).json({
         success: true,
-        message: "Payment was already verified and credited.",
+        message:
+          "Payment was already verified and credited.",
         alreadyProcessed: true,
+
         wallet: {
-          balance: Number(wallet.balance || 0),
+          balance: Number(
+            wallet.balance || 0
+          ),
           currency: "NGN",
         },
-        funding: serializeFunding(funding),
+
+        funding:
+          serializeFunding(funding),
       });
     }
 
-    const paystackResponse = await fetch(
-      `${PAYSTACK_BASE_URL}/transaction/verify/${encodeURIComponent(reference)}`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
-          Accept: "application/json",
-        },
-      }
+    /* ==================================================
+       VERIFY WITH PAYSTACK
+    ================================================== */
+
+    const paystackResponse =
+      await fetch(
+        `${PAYSTACK_BASE_URL}/transaction/verify/${encodeURIComponent(
+          reference
+        )}`,
+        {
+          method: "GET",
+
+          headers: {
+            Authorization:
+              `Bearer ${PAYSTACK_SECRET_KEY}`,
+
+            Accept:
+              "application/json",
+          },
+        }
+      );
+
+    const result =
+      await paystackResponse.json();
+
+    console.log(
+      "Paystack verification response:",
+      JSON.stringify(
+        result,
+        null,
+        2
+      )
     );
 
-    const result = await paystackResponse.json();
+    /* ==================================================
+       PAYSTACK API ERROR
+    ================================================== */
 
-    // Wannan zai nuna maka ainihin bayanin kuskuren a cikin terminal ɗinka
-    if (!paystackResponse.ok || !result.status) {
-      console.log("Paystack Initialization Error Details:", result);
-
-      await prisma.walletFunding.update({
-        where: { id: funding.id },
-        data: {
-          status: "CANCELLED",
-          note: result.message || "Paystack initialization failed.",
-        },
-      });
-
+    if (
+      !paystackResponse.ok ||
+      !result.status ||
+      !result.data
+    ) {
       return res.status(400).json({
         success: false,
-        message: result.message || "Unable to initialize Paystack payment.",
+        message:
+          result.message ||
+          "Unable to verify Paystack payment.",
       });
     }
 
-    const paidAmount = Number(transactionData.amount) / 100;
+    /* ==================================================
+       TRANSACTION DATA
+    ================================================== */
 
-    if (Number(paidAmount.toFixed(2)) !== Number(funding.amount.toFixed(2))) {
+    const transactionData =
+      result.data;
+
+    /* ==================================================
+       PAYMENT STATUS
+    ================================================== */
+
+    if (
+      String(
+        transactionData.status || ""
+      ).toLowerCase() !== "success"
+    ) {
       return res.status(400).json({
         success: false,
-        message: "Payment amount does not match the funding request.",
+        message:
+          `Payment has not been completed. Current status: ${
+            transactionData.status ||
+            "unknown"
+          }`,
+        paymentStatus:
+          transactionData.status ||
+          null,
       });
     }
 
-    const credited = await creditWalletFromPaystack({
-      userId,
-      amount: paidAmount,
-      fundingReference: funding.reference,
-      paymentReference: transactionData.reference,
-    });
+    /* ==================================================
+       VERIFY REFERENCE
+    ================================================== */
+
+    if (
+      transactionData.reference &&
+      transactionData.reference !==
+        funding.reference
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Payment reference does not match the funding request.",
+      });
+    }
+
+    /* ==================================================
+       VERIFY AMOUNT
+       Paystack amount is in KOBO
+    ================================================== */
+
+    const paidAmount =
+      Number(transactionData.amount) /
+      100;
+
+    const fundingAmount =
+      Number(funding.amount);
+
+    if (
+      !Number.isFinite(paidAmount) ||
+      paidAmount <= 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Invalid payment amount received from Paystack.",
+      });
+    }
+
+    if (
+      Number(paidAmount.toFixed(2)) !==
+      Number(fundingAmount.toFixed(2))
+    ) {
+      console.error(
+        "Paystack amount mismatch:",
+        {
+          paidAmount,
+          fundingAmount,
+          reference,
+        }
+      );
+
+      return res.status(400).json({
+        success: false,
+        message:
+          "Payment amount does not match the funding request.",
+        paidAmount,
+        expectedAmount:
+          fundingAmount,
+      });
+    }
+
+    /* ==================================================
+       CREDIT WALLET
+    ================================================== */
+
+    const credited =
+      await creditWalletFromPaystack({
+        userId,
+        amount: paidAmount,
+        fundingReference:
+          funding.reference,
+        paymentReference:
+          transactionData.reference ||
+          reference,
+      });
+
+    /* ==================================================
+       NOTIFICATION + EMAIL
+    ================================================== */
 
     if (!credited.alreadyProcessed) {
-      await sendWalletFundedNotification({
-        user: credited.user,
-        amount: paidAmount,
-        balance: credited.wallet.balance,
-        reference: funding.reference,
-      });
+      try {
+        await sendWalletFundedNotification({
+          user: credited.user,
+          amount: paidAmount,
+          balance:
+            credited.wallet.balance,
+          reference:
+            funding.reference,
+        });
+      } catch (notificationError) {
+        console.error(
+          "Wallet notification error:",
+          notificationError.message
+        );
+      }
 
       sendWalletFundingEmail({
         user: credited.user,
         amount: credited.amount,
-        previousBalance: credited.previousBalance,
-        newBalance: credited.newBalance,
-        reference: credited.reference,
-        paymentReference: credited.funding.paymentReference,
-        channel: credited.funding.channel || "PAYSTACK",
-        fundedAt: credited.funding.approvedAt || new Date(),
-      }).catch((error) => {
-        console.error("Wallet funding email error:", error.message);
+        previousBalance:
+          credited.previousBalance,
+        newBalance:
+          credited.newBalance,
+        reference:
+          credited.reference,
+        paymentReference:
+          credited.funding.paymentReference,
+        channel:
+          credited.funding.channel ||
+          "PAYSTACK",
+        fundedAt:
+          credited.funding.approvedAt ||
+          new Date(),
+      }).catch((emailError) => {
+        console.error(
+          "Wallet funding email error:",
+          emailError.message
+        );
       });
     }
+
+    /* ==================================================
+       AUDIT LOG
+    ================================================== */
 
     await createAuditLog({
       req,
       userId,
-      userEmail: req.user?.email,
-      action: "VERIFY_PAYSTACK_FUNDING",
-      description: `Verified and credited Paystack wallet funding ${funding.reference}`,
+      userEmail:
+        req.user?.email,
+
+      action:
+        "VERIFY_PAYSTACK_FUNDING",
+
+      description:
+        `Verified and credited Paystack wallet funding ${funding.reference}`,
     });
+
+    /* ==================================================
+       SUCCESS RESPONSE
+    ================================================== */
 
     return res.status(200).json({
       success: true,
-      message: credited.alreadyProcessed
-        ? "Payment was already processed."
-        : "Wallet funded successfully.",
-      alreadyProcessed: credited.alreadyProcessed,
+
+      message:
+        credited.alreadyProcessed
+          ? "Payment was already processed."
+          : "Wallet funded successfully.",
+
+      alreadyProcessed:
+        credited.alreadyProcessed,
+
+      payment: {
+        reference:
+          transactionData.reference,
+
+        status:
+          transactionData.status,
+
+        amount: paidAmount,
+
+        currency:
+          transactionData.currency,
+
+        paidAt:
+          transactionData.paid_at ||
+          transactionData.paidAt ||
+          null,
+      },
+
       wallet: {
-        balance: Number(credited.wallet.balance || 0),
+        balance: Number(
+          credited.wallet.balance || 0
+        ),
         currency: "NGN",
       },
-      funding: serializeFunding(credited.funding),
+
+      funding:
+        serializeFunding(
+          credited.funding
+        ),
     });
   } catch (error) {
-    console.error("Verify Paystack error:", error);
+    console.error(
+      "Verify Paystack error:",
+      error
+    );
+
     return res.status(500).json({
       success: false,
-      message: "Unable to verify Paystack payment.",
+      message:
+        "Unable to verify Paystack payment.",
     });
   }
 };

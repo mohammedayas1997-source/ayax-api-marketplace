@@ -278,9 +278,11 @@ export default function WalletPage() {
         amount: numericAmount,
       });
 
-      const authUrl =
-        response.data?.authorizationUrl ||
-        response.data?.data?.authorizationUrl;
+     const authUrl =
+  response.data?.authorizationUrl ||
+  response.data?.authorization_url ||
+  response.data?.data?.authorizationUrl ||
+  response.data?.data?.authorization_url;
 
       if (authUrl) {
         window.location.href = authUrl;

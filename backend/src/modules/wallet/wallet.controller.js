@@ -912,33 +912,30 @@ exports.getWalletTransactions = async (req, res) => {
 
 exports.initializePaystack = async (req, res) => {
   try {
-    const userId = ensureId(req.user?.id, "User ID");
-    const email = getUserEmail(req);
+    const userId = req.user.id;
+    const email = req.user.email;
+    const { amount } = req.body;
 
-    // Idan kana da wani aiki a walletService kamar initializePaystack ko createPaystackTransaction
-    const result = await walletService.initializePaystack({
+    // Kira aikin service wanda ka rubuta yanzu
+    const result = await walletService.initializePaystackFunding({
       userId,
       email,
-      ...req.body, // misali yana dauke da amount da sauransu
-    });
-
-    await writeAuditLog({
-      req,
-      action: "INITIALIZE_PAYSTACK",
-      description: `${email} initialized Paystack payment of amount ${req.body.amount || ""}`,
+      amount,
     });
 
     return res.status(200).json({
       success: true,
-      message: "Paystack transaction initialized successfully.",
-      ...result,
+      message: "Paystack initialized successfully",
+      data: {
+        authorization_url: result.authorizationUrl, // Mun maida shi zuwa abin da frontend ke tsammani
+        access_code: result.accessCode,
+        reference: result.reference,
+      },
     });
   } catch (error) {
-    return sendError(
-      res,
-      error,
-      "Unable to initialize Paystack payment.",
-      400
-    );
+    return res.status(400).json({
+      success: false,
+      message: error.message || "Could not retrieve payment authorization URL.",
+    });
   }
 };

@@ -1,5 +1,6 @@
 const prisma = require("../../config/prisma");
 const crypto = require("crypto");
+const axios = require("axios");
 
 const SUPER_ADMIN_PIN = process.env.SUPER_ADMIN_PIN || "123456";
 
@@ -89,15 +90,17 @@ exports.createFundingRequest = async (userId, data) => {
 };
 
 /* ======================================================
-   INITIALIZE PAYSTACK PAYMENT
+   INITIALIZE PAYSTACK PAYMENT (An daidaita sunan zuwa initializePaystackFunding)
 ====================================================== */
-const axios = require("axios");
-
-exports.initializePaystack = async ({ userId, email, amount }) => {
+exports.initializePaystackFunding = async ({ userId, email, amount }) => {
   await getOrCreateWallet(userId);
 
   const reference = generateReference("PAYSTACK");
   const numericAmount = Number(amount);
+
+  if (!numericAmount || numericAmount < 100) {
+    throw new Error("Minimum funding amount is ₦100");
+  }
 
   try {
     // Tura buƙata kai tsaye zuwa Paystack API
@@ -107,6 +110,7 @@ exports.initializePaystack = async ({ userId, email, amount }) => {
         email: email,
         amount: numericAmount * 100, // Paystack yana amfani da kobo ne
         reference: reference,
+        callback_url: process.env.PAYSTACK_CALLBACK_URL,
       },
       {
         headers: {
@@ -119,7 +123,7 @@ exports.initializePaystack = async ({ userId, email, amount }) => {
     const paystackData = response.data.data;
 
     // Ajiye a matsayin PENDING funding request a database ɗinka
-    await prisma.walletFunding.create({
+    const funding = await prisma.walletFunding.create({
       data: {
         userId,
         amount: numericAmount,
@@ -132,11 +136,10 @@ exports.initializePaystack = async ({ userId, email, amount }) => {
 
     // Dawo da link da reference ga controller da kuma frontend
     return {
-      reference: paystackData.reference,
-      authorization_url: paystackData.authorization_url,
-      access_code: paystackData.access_code,
-      amount: numericAmount,
-      email,
+      funding,
+      authorizationUrl: paystackData.authorization_url,
+      accessCode: paystackData.access_code,
+      reference,
     };
   } catch (error) {
     const errorMsg = error.response?.data?.message || error.message || "Failed to initialize Paystack payment.";

@@ -30,9 +30,9 @@ router.use(auth);
 /* ======================================================
    USER WALLET ROUTES
 ====================================================== */
-router.get("/", walletController.getMyWallet);
+router.get("/", walletController.getWallet);
 
-router.get("/me", walletController.getMyWallet);
+router.get("/me", walletController.getWallet);
 
 router.get("/transactions", walletController.getWalletTransactions || ((req, res) => res.status(501).json({ success: false, message: "Not implemented yet" })));
 
@@ -40,6 +40,19 @@ router.post(
   "/funding",
   validate(fundWalletSchema),
   walletController.createFundingRequest
+);
+
+/* ======================================================
+   PAYSTACK ROUTES
+====================================================== */
+router.post(
+  "/paystack/initialize",
+  walletController.initializePaystackFunding
+);
+
+router.get(
+  "/paystack/verify/:reference",
+  walletController.verifyPaystackFunding
 );
 
 router.post(
@@ -72,7 +85,7 @@ router.get(
 router.get(
   "/funding",
   role("SUPER_ADMIN", "ADMIN"),
-  walletController.getFundingRequests
+  walletController.getMyFundingRequests // Ko zaka iya amfani da getFundingRequests idan akwai na admin
 );
 
 router.patch(

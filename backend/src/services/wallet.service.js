@@ -173,42 +173,51 @@ exports.verifyPaystackFunding = async ({ reference, userId }) => {
   }
 
   const result = await prisma.$transaction(async (tx) => {
-    const wallet = await tx.wallet.upsert({
+    // 1. Tabbatar da samun wallet ko kuma a ƙirƙira ta
+    const currentWallet = await tx.wallet.upsert({
       where: { userId },
-      update: {
-        balance: {
-          increment: funding.amount,
-        },
-      },
+      update: {},
       create: {
         userId,
-        balance: funding.amount,
+        balance: 0,
       },
     });
 
+    const balanceBefore = currentWallet.balance;
+    const balanceAfter = balanceBefore + funding.amount;
+
+    // 2. Sabunta balance ɗin wallet
+    const wallet = await tx.wallet.update({
+      where: { userId },
+      data: {
+        balance: balanceAfter,
+      },
+    });
+
+    // 3. Sabunta matsayin funding
     const updatedFunding = await tx.walletFunding.update({
       where: { id: funding.id },
       data: {
         status: "APPROVED",
         paymentReference: payment.reference,
         note: "Paystack payment verified",
+        approvedAt: new Date(),
       },
     });
 
-   const balanceBefore = wallet.balance - funding.amount;
-
-  await tx.walletLedger.create({
-    data: {
-      userId,
-      reference,
-      type: "CREDIT",
-      amount: funding.amount,
-      balanceBefore,
-      balanceAfter: wallet.balance,
-      module: "PAYSTACK",
-      description: "Wallet funded via Paystack",
-    },
-  });
+    // 4. Rubuta bayani a cikin ledger
+    await tx.walletLedger.create({
+      data: {
+        userId,
+        reference,
+        type: "CREDIT",
+        amount: funding.amount,
+        balanceBefore,
+        balanceAfter,
+        module: "PAYSTACK",
+        description: "Wallet funded via Paystack verification",
+      },
+    });
 
     return { wallet, funding: updatedFunding };
   });

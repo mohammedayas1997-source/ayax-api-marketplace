@@ -779,52 +779,32 @@ exports.login = async (req, res) => {
   });
 
   try {
-    const normalizedEmail =
-      normalizeEmail(req.body.email);
+    const normalizedEmail = normalizeEmail(req.body.email);
+    const password = String(req.body.password || "");
 
-    const password =
-      String(req.body.password || "");
-
-    if (
-      !normalizedEmail ||
-      !password
-    ) {
+    if (!normalizedEmail || !password) {
       return res.status(400).json({
         success: false,
-        message:
-          "Email and password are required.",
+        message: "Email and password are required.",
       });
     }
 
-    const user =
-      await prisma.user.findUnique({
-        where: {
-          email: normalizedEmail,
-        },
+    const user = await prisma.user.findUnique({
+      where: {
+        email: normalizedEmail,
+      },
+      select: {
+        ...safeUserSelect,
+        password: true,
+        failedLoginAttempts: true,
+        lockedUntil: true,
+        lastLoginAt: true,
+        lastLoginIp: true,
+        passwordChangedAt: true,
+      },
+    });
 
-        select: {
-          ...safeUserSelect,
-
-          password: true,
-
-          failedLoginAttempts:
-            true,
-
-          lockedUntil: true,
-
-          lastLoginAt: true,
-
-          lastLoginIp: true,
-
-          passwordChangedAt:
-            true,
-        },
-      });
-
-    /*
-     * Dummy comparison domin rage
-     * account enumeration ta timing.
-     */
+    // Dummy comparison to prevent account enumeration via timing attacks
     if (!user) {
       await bcrypt.compare(
         password,
@@ -833,8 +813,7 @@ exports.login = async (req, res) => {
 
       return res.status(401).json({
         success: false,
-        message:
-          "Invalid email or password.",
+        message: "Invalid email or password.",
       });
     }
 
@@ -850,76 +829,39 @@ exports.login = async (req, res) => {
         req,
         event: "ACCOUNT_LOCKED",
         successful: false,
-        description:
-          "Login attempt made while account was temporarily locked.",
+        description: "Login attempt made while account was temporarily locked.",
       });
 
       return res.status(423).json({
         success: false,
-
-        code:
-          "ACCOUNT_TEMPORARILY_LOCKED",
-
-        message:
-          "This account is temporarily locked because of repeated failed login attempts. Please try again later.",
-
-        lockedUntil:
-          user.lockedUntil,
+        code: "ACCOUNT_TEMPORARILY_LOCKED",
+        message: "This account is temporarily locked because of repeated failed login attempts. Please try again later.",
+        lockedUntil: user.lockedUntil,
       });
     }
 
-    const passwordMatches =
-      await bcrypt.compare(
-        password,
-        user.password
-      );
+    const passwordMatches = await bcrypt.compare(password, user.password);
 
     if (!passwordMatches) {
-      const failedAttempts =
-        Number(
-          user.failedLoginAttempts || 0
-        ) + 1;
-
-      const shouldLock =
-        failedAttempts >=
-        MAX_FAILED_LOGIN_ATTEMPTS;
-
-      const lockedUntil =
-        shouldLock
-          ? getLockExpiry()
-          : null;
+      const failedAttempts = Number(user.failedLoginAttempts || 0) + 1;
+      const shouldLock = failedAttempts >= MAX_FAILED_LOGIN_ATTEMPTS;
+      const lockedUntil = shouldLock ? getLockExpiry() : null;
 
       await prisma.user.update({
-        where: {
-          id: user.id,
-        },
-
+        where: { id: user.id },
         data: {
-          failedLoginAttempts:
-            shouldLock
-              ? 0
-              : failedAttempts,
-
+          failedLoginAttempts: shouldLock ? 0 : failedAttempts,
           lockedUntil,
         },
       });
 
-      await recordLoginHistory({
-        userId: user.id,
-        req,
-        successful: false,
-      });
+      await recordLoginHistory({ userId: user.id, req, successful: false });
 
       await recordSecurityLog({
         userId: user.id,
         req,
-
-        event: shouldLock
-          ? "ACCOUNT_LOCKED"
-          : "LOGIN_FAILED",
-
+        event: shouldLock ? "ACCOUNT_LOCKED" : "LOGIN_FAILED",
         successful: false,
-
         description: shouldLock
           ? `Account temporarily locked after ${MAX_FAILED_LOGIN_ATTEMPTS} failed login attempts.`
           : `Failed login attempt ${failedAttempts} of ${MAX_FAILED_LOGIN_ATTEMPTS}.`,
@@ -927,219 +869,130 @@ exports.login = async (req, res) => {
 
       return res.status(401).json({
         success: false,
-
-        code: shouldLock
-          ? "ACCOUNT_TEMPORARILY_LOCKED"
-          : "INVALID_CREDENTIALS",
-
+        code: shouldLock ? "ACCOUNT_TEMPORARILY_LOCKED" : "INVALID_CREDENTIALS",
         message: shouldLock
           ? "Too many failed login attempts. This account has been temporarily locked."
           : "Invalid email or password.",
-
-        remainingAttempts:
-          shouldLock
-            ? 0
-            : Math.max(
-                MAX_FAILED_LOGIN_ATTEMPTS -
-                  failedAttempts,
-                0
-              ),
-
+        remainingAttempts: shouldLock
+          ? 0
+          : Math.max(MAX_FAILED_LOGIN_ATTEMPTS - failedAttempts, 0),
         lockedUntil,
       });
     }
 
-    if (
-      normalizeRole(user.status) !==
-      "ACTIVE"
-    ) {
-      await recordLoginHistory({
-        userId: user.id,
-        req,
-        successful: false,
-      });
+    if (normalizeRole(user.status) !== "ACTIVE") {
+      await recordLoginHistory({ userId: user.id, req, successful: false });
 
       return res.status(403).json({
         success: false,
-
-        code:
-          "ACCOUNT_NOT_ACTIVE",
-
-        message:
-          "This account is inactive, suspended, or blocked.",
+        code: "ACCOUNT_NOT_ACTIVE",
+        message: "This account is inactive, suspended, or blocked.",
       });
     }
 
-        /*
-     * Password ya yi daidai, amma har yanzu
-     * ba a kammala login ba sai an tabbatar
-     * da OTP.
-     */
-    const {
-      code,
-      otpId,
-      expiresAt,
-    } = await createLoginOtp(
-      user.id
-    );
+    // Password is correct, but login is incomplete until OTP verification
+    const { code, otpId, expiresAt } = await createLoginOtp(user.id);
 
-const deliveryResults =
-  await Promise.allSettled([
-    sendLoginOtpEmail({
-      user,
-      otp: code,
-      expiresAt,
-      ipAddress: getClientIp(req),
-    }),
+    const deliveryResults = await Promise.allSettled([
+      sendLoginOtpEmail({
+        user,
+        otp: code,
+        expiresAt,
+        ipAddress: getClientIp(req),
+      }),
+      sendLoginOtpSms({
+        user,
+        otp: code,
+      }),
+    ]);
 
-    sendLoginOtpSms({
-      user,
-      otp: code,
-    }),
-  ]);
+    const emailResult = deliveryResults[0];
+    const smsResult = deliveryResults[1];
 
-const emailResult =
-  deliveryResults[0];
+    const emailSent = emailResult.status === "fulfilled";
+    const smsSent = smsResult.status === "fulfilled";
 
-const smsResult =
-  deliveryResults[1];
-
-const emailSent =
-  emailResult.status === "fulfilled";
-
-const smsSent =
-  smsResult.status === "fulfilled";
-
-console.log("LOGIN OTP DELIVERY RESULTS:", {
-  userId: user.id,
-
-  email: {
-    sent: emailSent,
-    error: emailSent
-      ? null
-      : {
-          name:
-            emailResult.reason?.name,
-
-          code:
-            emailResult.reason?.code,
-
-          message:
-            emailResult.reason?.message,
-
-          response:
-            emailResult.reason?.response,
+    console.log("LOGIN OTP DELIVERY RESULTS:", {
+      userId: user.id,
+      email: {
+        sent: emailSent,
+        error: emailSent ? null : {
+          name: emailResult.reason?.name,
+          code: emailResult.reason?.code,
+          message: emailResult.reason?.message,
+          response: emailResult.reason?.response,
         },
-  },
-
-  sms: {
-    sent: smsSent,
-    error: smsSent
-      ? null
-      : {
-          name:
-            smsResult.reason?.name,
-
-          code:
-            smsResult.reason?.code,
-
-          message:
-            smsResult.reason?.message,
-
-          response:
-            smsResult.reason?.response,
+      },
+      sms: {
+        sent: smsSent,
+        error: smsSent ? null : {
+          name: smsResult.reason?.name,
+          code: smsResult.reason?.code,
+          message: smsResult.reason?.message,
+          response: smsResult.reason?.response,
         },
-  },
-});
+      },
+    });
 
-if (!emailSent && !smsSent) {
-  console.error(
-    "OTP delivery failed, but allowing login for debugging."
-  );
+    // NOTE: This block allows login bypass if both Email and SMS fail. 
+    // If you want strict OTP enforcement, change this to return a 500 error instead.
+    if (!emailSent && !smsSent) {
+      console.error("OTP delivery failed, but allowing login for debugging.");
 
-  return res.status(200).json({
-    success: true,
-    requiresOtp: false,
-    code: "LOGIN_SUCCESS_DEBUG",
-    message:
-      "Login successful (OTP bypass enabled).",
-    token: generateToken(user),
-    user: serializeUser(user),
-  });
-}
+      return res.status(200).json({
+        success: true,
+        requiresOtp: false,
+        code: "LOGIN_SUCCESS_DEBUG",
+        message: "Login successful (OTP bypass enabled).",
+        token: generateToken(user),
+        user: serializeUser(user),
+      });
+    }
 
     await recordSecurityLog({
       userId: user.id,
       req,
-
-      event:
-        "LOGIN_OTP_SENT",
-
+      event: "LOGIN_OTP_SENT",
       successful: true,
-
-      description:
-        "Login password was verified and an OTP was prepared.",
+      description: "Login password was verified and an OTP was prepared.",
     });
 
     await writeAuditLog({
       req,
       user,
-
-      action:
-        "LOGIN_OTP_SENT",
-
-      description:
-        `Login OTP was sent to ${user.email}.`,
+      action: "LOGIN_OTP_SENT",
+      description: `Login OTP was sent to ${user.email}.`,
     });
 
     const response = {
-  success: true,
-  requiresOtp: true,
-  code: "LOGIN_OTP_REQUIRED",
+      success: true,
+      requiresOtp: true,
+      code: "LOGIN_OTP_REQUIRED",
+      message: emailSent && smsSent
+        ? "Password verified. Enter the verification code sent to your email and phone."
+        : emailSent
+          ? "Password verified. Enter the verification code sent to your email."
+          : "Password verified. Enter the verification code sent to your phone.",
+      otpId,
+      userId: user.id,
+      expiresAt,
+      expiresInSeconds: 10 * 60,
+      maskedEmail: maskEmail(user.email),
+      deliveryChannels: {
+        email: emailSent,
+        sms: smsSent,
+      },
+    };
 
-  message:
-    emailSent && smsSent
-      ? "Password verified. Enter the verification code sent to your email and phone."
-      : emailSent
-        ? "Password verified. Enter the verification code sent to your email."
-        : "Password verified. Enter the verification code sent to your phone.",
-
-  otpId,
-  userId: user.id,
-  expiresAt,
-  expiresInSeconds: 10 * 60,
-
-  maskedEmail: maskEmail(user.email),
-
-  deliveryChannels: {
-    email: emailSent,
-    sms: smsSent,
-  },
-};
-    /*
-     * Development kawai:
-     * wannan yana taimakawa testing idan
-     * email worker bai fara aiki ba.
-     *
-     * Kada OTP ya fito a production.
-     */
-    if (
-      process.env.NODE_ENV !==
-      "production"
-    ) {
-      response.developmentOtp =
-        code;
+    // Development only: include OTP in response for easier testing
+    // Ensure NODE_ENV is set to "production" in live environments
+    if (process.env.NODE_ENV !== "production") {
+      response.developmentOtp = code;
     }
 
-    return res.status(200).json(
-      response
-    );
+    return res.status(200).json(response);
   } catch (error) {
-    return sendAuthError(
-      res,
-      error,
-      "Unable to complete login."
-    );
+    return sendAuthError(res, error, "Unable to complete login.");
   }
 };
 
@@ -1156,182 +1009,94 @@ if (!emailSent && !smsSent) {
    }
 ====================================================== */
 
-exports.verifyLoginOtp = async (
-  req,
-  res
-) => {
+exports.verifyLoginOtp = async (req, res) => {
   try {
-    const userId =
-      normalizeText(
-        req.body.userId
-      );
+    const userId = normalizeText(req.body.userId);
+    const otpId = normalizeText(req.body.otpId);
+    const code = normalizeText(req.body.code || req.body.otp);
 
-    const otpId =
-      normalizeText(
-        req.body.otpId
-      );
-
-    const code =
-      normalizeText(
-        req.body.code ||
-        req.body.otp
-      );
-
-    if (
-      !userId ||
-      !otpId ||
-      !/^\d{6}$/.test(code)
-    ) {
+    if (!userId || !otpId || !/^\d{6}$/.test(code)) {
       return res.status(400).json({
         success: false,
-
-        code:
-          "INVALID_OTP_REQUEST",
-
-        message:
-          "User ID, OTP ID and a valid 6-digit OTP are required.",
+        code: "INVALID_OTP_REQUEST",
+        message: "User ID, OTP ID and a valid 6-digit OTP are required.",
       });
     }
 
-    const user =
-      await prisma.user.findUnique({
-        where: {
-          id: userId,
-        },
-
-        select: {
-          ...safeUserSelect,
-
-          failedLoginAttempts:
-            true,
-
-          lockedUntil: true,
-        },
-      });
+    const user = await prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+      select: {
+        ...safeUserSelect,
+        failedLoginAttempts: true,
+        lockedUntil: true,
+      },
+    });
 
     if (!user) {
       return res.status(400).json({
         success: false,
-
-        code:
-          "INVALID_LOGIN_OTP",
-
-        message:
-          "The login verification request is invalid or has expired.",
+        code: "INVALID_LOGIN_OTP",
+        message: "The login verification request is invalid or has expired.",
       });
     }
 
-    if (
-      normalizeRole(user.status) !==
-      "ACTIVE"
-    ) {
+    if (normalizeRole(user.status) !== "ACTIVE") {
       return res.status(403).json({
         success: false,
-
-        code:
-          "ACCOUNT_NOT_ACTIVE",
-
-        message:
-          "This account is inactive, suspended, or blocked.",
+        code: "ACCOUNT_NOT_ACTIVE",
+        message: "This account is inactive, suspended, or blocked.",
       });
     }
 
     if (isAccountLocked(user)) {
       return res.status(423).json({
         success: false,
-
-        code:
-          "ACCOUNT_TEMPORARILY_LOCKED",
-
-        message:
-          "This account is temporarily locked.",
-
-        lockedUntil:
-          user.lockedUntil,
+        code: "ACCOUNT_TEMPORARILY_LOCKED",
+        message: "This account is temporarily locked.",
+        lockedUntil: user.lockedUntil,
       });
     }
 
-    const verification =
-      await verifyStoredLoginOtp({
-        userId,
-        otpId,
-        code,
-      });
+    const verification = await verifyStoredLoginOtp({
+      userId,
+      otpId,
+      code,
+    });
 
     if (!verification.success) {
       await recordSecurityLog({
         userId,
         req,
-
-        event:
-          "LOGIN_OTP_FAILED",
-
+        event: "LOGIN_OTP_FAILED",
         successful: false,
-
-        description:
-          verification.message,
+        description: verification.message,
       });
 
       return res.status(400).json({
         success: false,
-
-        code:
-          verification.code ||
-          "INVALID_LOGIN_OTP",
-
-        message:
-          verification.message,
-
-        remainingAttempts:
-          verification.remainingAttempts,
+        code: verification.code || "INVALID_LOGIN_OTP",
+        message: verification.message,
+        remainingAttempts: verification.remainingAttempts,
       });
     }
 
     const now = new Date();
 
-    const updatedUser =
-      await prisma.user.update({
-        where: {
-          id: user.id,
-        },
+    const updatedUser = await prisma.user.update({
+      where: {
+        id: user.id,
+      },
+      data: {
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+        lastLoginAt: now,
+        lastLoginIp: getClientIp(req),
+      },
+      select: safeUserSelect,
+    });
 
-        data: {
-          failedLoginAttempts: 0,
-          lockedUntil: null,
-
-          lastLoginAt: now,
-
-          lastLoginIp:
-            getClientIp(req),
-        },
-
-        select:
-          safeUserSelect,
-      });
-
-    sendLoginAlertEmail({
-  user: updatedUser,
-
-  ipAddress:
-    getClientIp(req),
-
-  userAgent:
-    req.headers["user-agent"] ||
-    "Unknown",
-
-  loggedInAt:
-    now,
-}).catch((error) => {
-  console.error(
-    "Login alert email error:",
-    error.message
-  );
-});
-
-    /*
-     * Login history zai zama successful
-     * ne bayan OTP ya yi daidai.
-     */
     await recordLoginHistory({
       userId: updatedUser.id,
       req,
@@ -1341,77 +1106,41 @@ exports.verifyLoginOtp = async (
     await recordSecurityLog({
       userId: updatedUser.id,
       req,
-
-      event:
-        "LOGIN_SUCCESS",
-
+      event: "LOGIN_SUCCESS",
       successful: true,
-
-      description:
-        "User completed login OTP verification successfully.",
+      description: "User completed login OTP verification successfully.",
     });
 
     await writeAuditLog({
-  req,
-  user: updatedUser,
+      req,
+      user: updatedUser,
+      action: "LOGIN",
+      description: `${updatedUser.email} logged in successfully after OTP verification.`,
+    });
 
-  action: "LOGIN",
+    sendLoginAlertEmail({
+      user: updatedUser,
+      ipAddress: getClientIp(req),
+      userAgent: req.headers["user-agent"] || "Unknown",
+      loggedInAt: now,
+    }).catch((error) => {
+      console.error("Login alert email error:", error.message);
+    });
 
-  description:
-    `${updatedUser.email} logged in successfully after OTP verification.`,
-});
-
-sendLoginAlertEmail({
-  user: updatedUser,
-
-  ipAddress:
-    getClientIp(req),
-
-  userAgent:
-    req.headers["user-agent"] ||
-    "Unknown",
-
-  loggedInAt:
-    now,
-}).catch((error) => {
-  console.error(
-    "Login alert email error:",
-    error.message
-  );
-});
-
-    const token =
-      generateToken(
-        updatedUser
-      );
+    const token = generateToken(updatedUser);
 
     return res.status(200).json({
       success: true,
-
       requiresOtp: false,
-
-      code:
-        "LOGIN_SUCCESS",
-
-      message:
-        "Login successful.",
-
+      code: "LOGIN_SUCCESS",
+      message: "Login successful.",
       token,
-
-      user:
-        serializeUser(
-          updatedUser
-        ),
+      user: serializeUser(updatedUser),
     });
   } catch (error) {
-    return sendAuthError(
-      res,
-      error,
-      "Unable to verify login OTP."
-    );
+    return sendAuthError(res, error, "Unable to verify login OTP.");
   }
 };
-
 /* ======================================================
    RESEND LOGIN OTP
 
@@ -2546,5 +2275,27 @@ exports.logout = async (
       error,
       "Unable to complete logout."
     );
+  }
+};
+exports.resetMyBalance = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ success: false, message: "Email is required" });
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { email: email.toLowerCase().trim() },
+      data: { balance: 0 },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Balance has been reset to 0 successfully.",
+      user: updatedUser,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
   }
 };

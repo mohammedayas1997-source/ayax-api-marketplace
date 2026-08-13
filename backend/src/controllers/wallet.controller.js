@@ -211,7 +211,7 @@ const creditWalletFromPaystack = async ({
         type: "CREDIT",
         service: "WALLET_FUNDING",
         amount: Number(amount),
-        status: "SUCCESSFUL",
+        status: "APPROVED",
         description: "Wallet funded through Paystack",
       },
     }).catch((error) => {

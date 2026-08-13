@@ -9,7 +9,7 @@ const auth = require(
 const authController = require(
   "../controllers/auth.controller"
 );
-const authController = require('../../controllers/auth.controller'); 
+
 // Ko kuma inda yake ainihi a folder din ka
 
 /* ======================================================

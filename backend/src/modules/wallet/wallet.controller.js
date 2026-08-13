@@ -948,3 +948,106 @@ exports.initializePaystack = async (req, res) => {
     );
   }
 };
+
+exports.verifyPaystackFunding = async (req, res) => {
+  try {
+    const { reference } = req.params;
+
+    if (!reference) {
+      return res.status(400).json({
+        success: false,
+        message: "Payment reference is required.",
+      });
+    }
+
+    // 1. Duba ko akwai fund request da wannan reference ɗin a database
+    const funding = await prisma.walletFunding.findFirst({
+      where: { reference },
+    });
+
+    if (!funding) {
+      return res.status(404).json({
+        success: false,
+        message: "Wallet funding record not found.",
+      });
+    }
+
+    if (funding.status === "SUCCESSFUL") {
+      return res.status(200).json({
+        success: false,
+        message: "Payment has already been verified.",
+      });
+    }
+
+    // 2. Tabbatar da biyan kuɗi daga Paystack API
+    const secretKey = process.env.PAYSTACK_SECRET_KEY;
+    const paystackResponse = await fetch(`https://api.paystack.co/transaction/verify/${reference}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const result = await paystackResponse.json();
+
+    if (!paystackResponse.ok || !result.status || result.data.status !== "success") {
+      await prisma.walletFunding.update({
+        where: { id: funding.id },
+        data: { status: "FAILED", note: "Paystack verification failed." },
+      });
+
+      return res.status(400).json({
+        success: false,
+        message: "Payment verification failed or was not successful.",
+      });
+    }
+
+    // 3. Idan komai ya tafi daidai, sabunta wallet da kuma matsayin funding ɗin
+    const amount = Number(result.data.amount) / 100; // Komawa Naira daga Kobo
+
+    const updatedWallet = await prisma.$transaction(async (tx) => {
+      // Sabunta matsayin funding
+      await tx.walletFunding.update({
+        where: { id: funding.id },
+        data: { status: "SUCCESSFUL", note: "Verified successfully via Paystack." },
+      });
+
+      // Ƙara kuɗin a cikin wallet na mai amfani
+      const wallet = await tx.wallet.update({
+        where: { userId: funding.userId },
+        data: { balance: { increment: amount } },
+      });
+
+      // Rubuta transaction a cikinledger ko transactions history
+      await tx.walletTransaction.create({
+        data: {
+          walletId: wallet.id,
+          amount,
+          type: "CREDIT",
+          reference,
+          description: `Wallet funded via Paystack (Ref: ${reference})`,
+          status: "SUCCESSFUL",
+        },
+      });
+
+      return wallet;
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Wallet funded successfully!",
+      data: {
+        wallet: updatedWallet,
+        amount,
+        reference,
+      },
+    });
+  } catch (error) {
+    console.error("Verify Paystack error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Unable to verify payment.",
+    });
+  }
+};

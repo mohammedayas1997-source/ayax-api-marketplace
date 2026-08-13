@@ -1,5 +1,3 @@
-const path = require('path');
-const authController = require(path.join(__dirname, '../controllers/auth.controller'));
 const express = require("express");
 
 const router = express.Router();
@@ -8,8 +6,9 @@ const auth = require(
   "../middlewares/auth.middleware"
 );
 
-const { resetMyBalance } = require("../controllers/dev.controller"); // Ko kuma inda yake ainihi a folder din ka
-// Ko kuma inda yake ainihi a folder din ka
+const authController = require(
+  "../controllers/auth.controller"
+);
 
 /* ======================================================
    PUBLIC AUTH ROUTES
@@ -120,6 +119,6 @@ router.post(
   authController.logout
 );
 
-router.post('/dev/reset-balance', resetMyBalance);
+
 
 module.exports = router;

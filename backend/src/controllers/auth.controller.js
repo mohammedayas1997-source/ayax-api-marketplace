@@ -2277,25 +2277,3 @@ exports.logout = async (
     );
   }
 };
-exports.resetMyBalance = async (req, res) => {
-  try {
-    const { email } = req.body;
-
-    if (!email) {
-      return res.status(400).json({ success: false, message: "Email is required" });
-    }
-
-    const updatedUser = await prisma.user.update({
-      where: { email: email.toLowerCase().trim() },
-      data: { balance: 0 },
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: "Balance has been reset to 0 successfully.",
-      user: updatedUser,
-    });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};

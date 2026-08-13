@@ -9,7 +9,7 @@ const auth = require(
 const authController = require(
   "../controllers/auth.controller"
 );
-const { resetMyBalance } = require('../controllers/user.controller');
+const userController = require('../modules/users/user.controller');
 
 /* ======================================================
    PUBLIC AUTH ROUTES

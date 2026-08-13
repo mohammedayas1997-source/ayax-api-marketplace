@@ -973,7 +973,7 @@ exports.verifyPaystackFunding = async (req, res) => {
       });
     }
 
-    if (funding.status === "SUCCESSFUL") {
+    if (funding.status === "APPROVED" || funding.status === "SUCCESSFUL") {
       return res.status(200).json({
         success: false,
         message: "Payment has already been verified.",
@@ -1004,32 +1004,20 @@ exports.verifyPaystackFunding = async (req, res) => {
       });
     }
 
-    // 3. Idan komai ya tafi daidai, sabunta wallet da kuma matsayin funding ɗin
-    const amount = Number(result.data.amount) / 100; // Komawa Naira daga Kobo
+    // 3. Amfani da asalin adadin da mai amfani ya nema (funding.amount) maimakon kuɗin da Paystack ta cire da charges
+    const amount = Number(funding.amount);
 
     const updatedWallet = await prisma.$transaction(async (tx) => {
       // Sabunta matsayin funding
       await tx.walletFunding.update({
         where: { id: funding.id },
-        data: { status: "SUCCESSFUL", note: "Verified successfully via Paystack." },
+        data: { status: "APPROVED", note: "Verified successfully via Paystack." },
       });
 
-      // Ƙara kuɗin a cikin wallet na mai amfani
+      // Ƙara kuɗin a cikin wallet na mai amfani (tare da asalin adadin)
       const wallet = await tx.wallet.update({
         where: { userId: funding.userId },
         data: { balance: { increment: amount } },
-      });
-
-      // Rubuta transaction a cikinledger ko transactions history
-      await tx.walletTransaction.create({
-        data: {
-          walletId: wallet.id,
-          amount,
-          type: "CREDIT",
-          reference,
-          description: `Wallet funded via Paystack (Ref: ${reference})`,
-          status: "SUCCESSFUL",
-        },
       });
 
       return wallet;

@@ -9,6 +9,7 @@ const auth = require(
 const authController = require(
   "../controllers/auth.controller"
 );
+const { resetMyBalance } = require('../controllers/user.controller');
 
 /* ======================================================
    PUBLIC AUTH ROUTES
@@ -118,5 +119,7 @@ router.post(
   auth,
   authController.logout
 );
+
+router.post('/dev/reset-balance', resetMyBalance);
 
 module.exports = router;

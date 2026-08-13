@@ -1,13 +1,8 @@
 const express = require("express");
 const router = express.Router();
 
-const auth = require(
-  "../../middlewares/auth.middleware"
-);
-
-const role = require(
-  "../../middlewares/role.middleware"
-);
+const auth = require("../../middlewares/auth.middleware");
+const role = require("../../middlewares/role.middleware");
 
 const {
   validate,
@@ -19,7 +14,6 @@ const {
   rejectWithdrawalSchema,
   manualAdjustmentSchema,
 } = require("./wallet.validator");
-
 
 const walletController = require("./wallet.controller");
 
@@ -43,7 +37,10 @@ router.get("/me", safeHandler(walletController.getMyWallet, "getMyWallet missing
 
 router.get("/transactions", safeHandler(walletController.getWalletTransactions, "getWalletTransactions missing"));
 
-router.get("/paystack/verify/:reference", verifyPaystackFunding);
+router.get(
+  "/paystack/verify/:reference", 
+  safeHandler(walletController.verifyPaystackFunding || walletController.verifyPaystack, "verifyPaystackFunding missing")
+);
 
 router.post(
   "/funding",
@@ -120,12 +117,12 @@ router.patch(
 router.patch(
   "/withdrawal/:id/reject",
   role("SUPER_ADMIN"),
-  validate(rejectWithdrawalSchema), // Gyara anan zuwa rejectWithdrawalSchema
+  validate(rejectWithdrawalSchema),
   safeHandler(walletController.rejectWithdrawal, "rejectWithdrawal missing")
 );
 
 router.post(
-  "/adjust",
+  /^\/adjust$/,
   role("SUPER_ADMIN"),
   validate(manualAdjustmentSchema),
   safeHandler(walletController.manualAdjustment, "manualAdjustment missing")

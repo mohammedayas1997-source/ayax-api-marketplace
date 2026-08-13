@@ -1,6 +1,7 @@
 const walletService = require("./wallet.service");
 const createAuditLog = require("../../utils/audit");
 const { emitEvent } = require("../../config/socket");
+const prisma = require("../../config/prisma");
 
 /* ======================================================
    HELPERS

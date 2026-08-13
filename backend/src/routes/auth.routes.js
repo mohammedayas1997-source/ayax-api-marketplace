@@ -1,3 +1,5 @@
+const path = require('path');
+const authController = require(path.join(__dirname, '../controllers/auth.controller'));
 const express = require("express");
 
 const router = express.Router();
@@ -6,10 +8,7 @@ const auth = require(
   "../middlewares/auth.middleware"
 );
 
-const authController = require(
-  "../controllers/auth.controller"
-);
-
+const { resetMyBalance } = require("../controllers/dev.controller"); // Ko kuma inda yake ainihi a folder din ka
 // Ko kuma inda yake ainihi a folder din ka
 
 /* ======================================================

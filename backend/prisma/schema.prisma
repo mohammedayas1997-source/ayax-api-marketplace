@@ -848,6 +848,7 @@ enum FundingStatus {
   APPROVED
   REJECTED
   CANCELLED
+  SUCCESSFUL
 }
 
 enum WithdrawalStatus {

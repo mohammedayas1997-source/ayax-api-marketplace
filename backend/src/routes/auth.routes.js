@@ -9,7 +9,7 @@ const auth = require(
 const authController = require(
   "../controllers/auth.controller"
 );
-const userController = require('../modules/users/user.controller');
+const userController = require('../modules/users/auth.controller');
 
 /* ======================================================
    PUBLIC AUTH ROUTES

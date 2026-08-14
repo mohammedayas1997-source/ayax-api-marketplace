@@ -68,7 +68,7 @@ export default function AiPage() {
           : null;
 
       const response = await fetch(
-        `${API_URL}/api/v1/ai/chat`,
+        `${API_URL}/ai/chat`,
         {
           method: "POST",
           headers: {

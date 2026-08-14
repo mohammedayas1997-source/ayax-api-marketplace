@@ -9,6 +9,9 @@ import {
   KeyRound,
   BarChart3,
   CheckCircle,
+  MapPin,
+  Mail,
+  Phone,
 } from "lucide-react";
 
 export default function HomePage() {
@@ -43,6 +46,9 @@ export default function HomePage() {
             </Link>
             <Link href="/docs" className="text-slate-700 hover:text-blue-600">
               Docs
+            </Link>
+            <Link href="/contact" className="text-slate-700 hover:text-blue-600">
+              Contact
             </Link>
             <Link href="/login" className="text-slate-700 hover:text-blue-600">
               Login
@@ -167,8 +173,47 @@ export default function HomePage() {
         />
       </section>
 
-      <footer className="border-t border-slate-800 py-8 text-center text-slate-500">
-        © 2026 Ayax Digital Solutions. All rights reserved.
+      <footer className="border-t border-slate-800 bg-slate-900/50 pt-16 pb-12">
+        <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-3 gap-8 mb-12">
+          <div>
+            <h3 className="text-lg font-bold text-white mb-3">Ayax APIs</h3>
+            <p className="text-slate-400 text-sm leading-relaxed">
+              The ultimate developer marketplace for reliable telecommunication services, VTU automation, and secure transactions.
+            </p>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-semibold text-slate-200 uppercase tracking-wider mb-4">Quick Links</h4>
+            <ul className="space-y-2 text-sm text-slate-400">
+              <li><Link href="/pricing" className="hover:text-blue-400 transition">Pricing</Link></li>
+              <li><Link href="/docs" className="hover:text-blue-400 transition">API Documentation</Link></li>
+              <li><Link href="/contact" className="hover:text-blue-400 transition">Contact Us</Link></li>
+              <li><Link href="/login" className="hover:text-blue-400 transition">Login</Link></li>
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-semibold text-slate-200 uppercase tracking-wider mb-4">Contact Info</h4>
+            <ul className="space-y-3 text-sm text-slate-400">
+              <li className="flex items-start gap-3">
+                <MapPin size={18} className="text-blue-400 shrink-0 mt-0.5" />
+                <span>Block C, 13/14, Yam Musa Plaza, Hotoro ring road, Kano, Nigeria</span>
+              </li>
+              <li className="flex items-center gap-3">
+                <Mail size={18} className="text-blue-400 shrink-0" />
+                <span>support@ayaxapis.com</span>
+              </li>
+              <li className="flex items-center gap-3">
+                <Phone size={18} className="text-blue-400 shrink-0" />
+                <span>+234 816 333 7772</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div className="max-w-7xl mx-auto px-6 border-t border-slate-800 pt-8 text-center text-slate-500 text-sm">
+          © 2026 Ayax Digital Solutions. All rights reserved.
+        </div>
       </footer>
     </main>
   );

@@ -16,7 +16,6 @@ const getOpenAIConfig = () => {
     );
 
     error.statusCode = 500;
-
     throw error;
   }
 
@@ -46,7 +45,8 @@ const buildMessages = ({
             ["user", "assistant"].includes(
               item.role
             ) &&
-            typeof item.content === "string"
+            typeof item.content === "string" &&
+            item.content.trim()
         )
         .slice(-10)
     : [];
@@ -59,10 +59,9 @@ const buildMessages = ({
 
     ...safeHistory.map((item) => ({
       role: item.role,
-      content: String(item.content).slice(
-        0,
-        4000
-      ),
+      content: String(item.content)
+        .trim()
+        .slice(0, 4000),
     })),
 
     {
@@ -75,12 +74,25 @@ const buildMessages = ({
 exports.chat = async ({
   message,
   history = [],
+  conversationId = null,
 }) => {
   const { apiKey, model } =
     getOpenAIConfig();
 
+  const cleanedMessage =
+    cleanMessage(message);
+
+  if (!cleanedMessage) {
+    const error = new Error(
+      "Message is required."
+    );
+
+    error.statusCode = 400;
+    throw error;
+  }
+
   const messages = buildMessages({
-    message,
+    message: cleanedMessage,
     history,
   });
 
@@ -113,16 +125,22 @@ exports.chat = async ({
       );
 
       error.statusCode = 502;
-
       throw error;
     }
 
     return {
-      message: assistantMessage.trim(),
+      message:
+        assistantMessage.trim(),
+
       model:
-        response.data?.model || model,
+        response.data?.model ||
+        model,
+
       usage:
-        response.data?.usage || null,
+        response.data?.usage ||
+        null,
+
+      conversationId,
     };
   } catch (error) {
     if (error.statusCode) {
@@ -140,7 +158,7 @@ exports.chat = async ({
 
     const finalError = new Error(
       apiMessage ||
-        "Unable to communicate with Ayax AI."
+        "Unable to communicate with AYAX AI."
     );
 
     finalError.statusCode =

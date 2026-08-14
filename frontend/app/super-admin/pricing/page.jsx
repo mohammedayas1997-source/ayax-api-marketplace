@@ -148,7 +148,7 @@ export default function SuperPricingPage() {
   useEffect(() => {
     loadPricing();
 
-    const token = localStorage.getItem("token");
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
     if (token) {
       socket.auth = { token };

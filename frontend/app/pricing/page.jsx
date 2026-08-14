@@ -5,9 +5,7 @@ import Image from "next/image";
 import { useState } from "react";
 import { ArrowRight, Search, Shield, Zap, Sliders, Database, Layers } from "lucide-react";
 
-// Sample initial data pricing rows supporting flexible configurations for 1GB up to 100GB
 const initialPricingData = [
-  // MTN Data Bundles (1GB to 100GB sample progression)
   { category: "Data (MTN)", name: "MTN 1GB (SME)", apiPrice: "₦265", userPrice: "₦290", status: "Active" },
   { category: "Data (MTN)", name: "MTN 2GB (SME)", apiPrice: "₦530", userPrice: "₦580", status: "Active" },
   { category: "Data (MTN)", name: "MTN 5GB (SME)", apiPrice: "₦1,325", userPrice: "₦1,450", status: "Active" },
@@ -16,7 +14,6 @@ const initialPricingData = [
   { category: "Data (MTN)", name: "MTN 50GB (Corporate)", apiPrice: "₦13,250", userPrice: "₦14,500", status: "Active" },
   { category: "Data (MTN)", name: "MTN 100GB (Corporate)", apiPrice: "₦26,500", userPrice: "₦29,000", status: "Active" },
 
-  // Airtel Data Bundles
   { category: "Data (AIRTEL)", name: "Airtel 1GB (CG)", apiPrice: "₦270", userPrice: "₦300", status: "Active" },
   { category: "Data (AIRTEL)", name: "Airtel 2GB (CG)", apiPrice: "₦540", userPrice: "₦600", status: "Active" },
   { category: "Data (AIRTEL)", name: "Airtel 5GB (CG)", apiPrice: "₦1,350", userPrice: "₦1,500", status: "Active" },
@@ -24,14 +21,12 @@ const initialPricingData = [
   { category: "Data (AIRTEL)", name: "Airtel 50GB", apiPrice: "₦13,500", userPrice: "₦15,000", status: "Active" },
   { category: "Data (AIRTEL)", name: "Airtel 100GB", apiPrice: "₦27,000", userPrice: "₦30,000", status: "Active" },
 
-  // Glo & 9mobile
   { category: "Data (GLO)", name: "Glo 1GB (Corporate)", apiPrice: "₦250", userPrice: "₦280", status: "Active" },
   { category: "Data (GLO)", name: "Glo 10GB (Corporate)", apiPrice: "₦2,500", userPrice: "₦2,800", status: "Active" },
   { category: "Data (GLO)", name: "Glo 50GB", apiPrice: "₦12,500", userPrice: "₦14,000", status: "Active" },
   { category: "Data (9MOBILE)", name: "9mobile 1GB", apiPrice: "₦200", userPrice: "₦230", status: "Active" },
   { category: "Data (9MOBILE)", name: "9mobile 10GB", apiPrice: "₦2,000", userPrice: "₦2,300", status: "Active" },
 
-  // Other Services
   { category: "Cable TV", name: "DStv Compact", apiPrice: "₦12,500", userPrice: "₦12,700", status: "Active" },
   { category: "Cable TV", name: "GOTv Jolli", apiPrice: "₦3,300", userPrice: "₦3,450", status: "Active" },
   { category: "Utilities (NEPA)", name: "Electricity Unit (Per kWh)", apiPrice: "₦75", userPrice: "₦82", status: "Active" },
@@ -95,11 +90,10 @@ export default function PricingPage() {
           Automated Pricing Table <span className="text-blue-500">(1GB - 100GB)</span>
         </h1>
         <p className="text-slate-400 mt-5 max-w-2xl mx-auto text-lg leading-relaxed">
-          Admin zai iya saita farashin kowane gigabyte (daga 1GB, 2GB, 5GB, 10GB har zuwa 100GB) daya bayan daya, tare da NEPA, Cable TV, NIMC, da BVN.
+          Configure precise pricing for every data volume tier (from 1GB, 2GB, up to 100GB), alongside electricity bills, cable subscriptions, and verification services.
         </p>
       </section>
 
-      {/* Admin Panel Quick View Hint */}
       <section className="max-w-7xl mx-auto px-6 mb-8">
         <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-4 sm:p-6 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -109,7 +103,7 @@ export default function PricingPage() {
             <div>
               <h3 className="font-bold text-white text-base">Admin Pricing Control</h3>
               <p className="text-xs text-slate-300 mt-0.5">
-                Kowane package na Data ana saita shi ne daban-daban daga 1GB zuwa 100GB ta cikin Admin Dashboard.
+                Every data package can be configured individually from 1GB to 100GB directly within the Admin Dashboard.
               </p>
             </div>
           </div>
@@ -122,7 +116,6 @@ export default function PricingPage() {
         </div>
       </section>
 
-      {/* Filter and Search Section */}
       <section className="max-w-7xl mx-auto px-6 mb-8">
         <div className="flex flex-col md:flex-row gap-4 items-center justify-between bg-slate-900/80 border border-slate-800 p-4 rounded-2xl backdrop-blur-md">
           <div className="flex items-center gap-2 overflow-x-auto w-full md:w-auto pb-2 md:pb-0 scrollbar-none">
@@ -154,7 +147,6 @@ export default function PricingPage() {
         </div>
       </section>
 
-      {/* Pricing Table Section */}
       <section className="max-w-7xl mx-auto px-6 pb-24">
         <div className="rounded-3xl border border-slate-800 bg-slate-900/60 overflow-hidden shadow-2xl backdrop-blur-md">
           <div className="overflow-x-auto">
@@ -173,7 +165,7 @@ export default function PricingPage() {
                 {filteredPricing.length === 0 ? (
                   <tr>
                     <td colSpan="6" className="py-12 text-center text-slate-500">
-                      Babu wani plan da ya dace da binciken ka.
+                      No pricing plans found matching your search criteria.
                     </td>
                   </tr>
                 ) : (
@@ -211,7 +203,7 @@ export default function PricingPage() {
           <div className="p-6 bg-slate-950/40 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400">
             <div className="flex items-center gap-2">
               <Shield size={16} className="text-blue-500" />
-              <span>Admin zai iya sabunta farashin kowane gigabyte (1GB zuwa 100GB) a kowane lokaci a cikin panel din sa.</span>
+              <span>Administrators can update pricing for any data volume (1GB to 100GB) at any time directly from the control panel.</span>
             </div>
             <Link
               href="/login"

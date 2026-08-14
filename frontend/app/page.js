@@ -12,11 +12,12 @@ import {
   MapPin,
   Mail,
   Phone,
+  MessageCircle,
 } from "lucide-react";
 
 export default function HomePage() {
   return (
-    <main className="min-h-screen bg-slate-950 text-white">
+    <main className="min-h-screen bg-slate-950 text-white relative">
       <nav className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-3">
@@ -215,6 +216,17 @@ export default function HomePage() {
           © 2026 Ayax Digital Solutions. All rights reserved.
         </div>
       </footer>
+
+      {/* Floating WhatsApp Assistance Button */}
+      <a
+        href="https://wa.me/2348163337772?text=Hello%20Ayax%20APIs,%20I%20need%20help%20with..."
+        target="_blank"
+        rel="noopener noreferrer"
+        className="fixed bottom-6 right-6 z-50 bg-green-500 hover:bg-green-600 text-white p-4 rounded-full shadow-2xl flex items-center justify-center transition transform hover:scale-110"
+        aria-label="Chat on WhatsApp"
+      >
+        <MessageCircle size={28} />
+      </a>
     </main>
   );
 }

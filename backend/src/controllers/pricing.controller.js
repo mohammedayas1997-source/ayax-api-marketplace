@@ -1,782 +1,219 @@
-const prisma = require("../config/prisma");
-const { emitEvent } = require("../config/socket");
+"use client";
 
-const ALLOWED_TIERS = [
-  "REGULAR",
-  "STANDARD",
-  "PREMIUM",
+import Link from "next/link";
+import Image from "next/image";
+import { useState } from "react";
+import { ArrowRight, Search, Shield, Zap, Sliders, Database, Layers } from "lucide-react";
+
+const initialPricingData = [
+  { category: "Data (MTN)", name: "MTN 1GB (SME)", apiPrice: "₦265", userPrice: "₦290", status: "Active" },
+  { category: "Data (MTN)", name: "MTN 2GB (SME)", apiPrice: "₦530", userPrice: "₦580", status: "Active" },
+  { category: "Data (MTN)", name: "MTN 5GB (SME)", apiPrice: "₦1,325", userPrice: "₦1,450", status: "Active" },
+  { category: "Data (MTN)", name: "MTN 10GB (SME)", apiPrice: "₦2,650", userPrice: "₦2,900", status: "Active" },
+  { category: "Data (MTN)", name: "MTN 20GB (Corporate)", apiPrice: "₦5,300", userPrice: "₦5,800", status: "Active" },
+  { category: "Data (MTN)", name: "MTN 50GB (Corporate)", apiPrice: "₦13,250", userPrice: "₦14,500", status: "Active" },
+  { category: "Data (MTN)", name: "MTN 100GB (Corporate)", apiPrice: "₦26,500", userPrice: "₦29,000", status: "Active" },
+
+  { category: "Data (AIRTEL)", name: "Airtel 1GB (CG)", apiPrice: "₦270", userPrice: "₦300", status: "Active" },
+  { category: "Data (AIRTEL)", name: "Airtel 2GB (CG)", apiPrice: "₦540", userPrice: "₦600", status: "Active" },
+  { category: "Data (AIRTEL)", name: "Airtel 5GB (CG)", apiPrice: "₦1,350", userPrice: "₦1,500", status: "Active" },
+  { category: "Data (AIRTEL)", name: "Airtel 10GB (CG)", apiPrice: "₦2,700", userPrice: "₦3,000", status: "Active" },
+  { category: "Data (AIRTEL)", name: "Airtel 50GB", apiPrice: "₦13,500", userPrice: "₦15,000", status: "Active" },
+  { category: "Data (AIRTEL)", name: "Airtel 100GB", apiPrice: "₦27,000", userPrice: "₦30,000", status: "Active" },
+
+  { category: "Data (GLO)", name: "Glo 1GB (Corporate)", apiPrice: "₦250", userPrice: "₦280", status: "Active" },
+  { category: "Data (GLO)", name: "Glo 10GB (Corporate)", apiPrice: "₦2,500", userPrice: "₦2,800", status: "Active" },
+  { category: "Data (GLO)", name: "Glo 50GB", apiPrice: "₦12,500", userPrice: "₦14,000", status: "Active" },
+  { category: "Data (9MOBILE)", name: "9mobile 1GB", apiPrice: "₦200", userPrice: "₦230", status: "Active" },
+  { category: "Data (9MOBILE)", name: "9mobile 10GB", apiPrice: "₦2,000", userPrice: "₦2,300", status: "Active" },
+
+  { category: "Cable TV", name: "DStv Compact", apiPrice: "₦12,500", userPrice: "₦12,700", status: "Active" },
+  { category: "Cable TV", name: "GOTv Jolli", apiPrice: "₦3,300", userPrice: "₦3,450", status: "Active" },
+  { category: "Utilities (NEPA)", name: "Electricity Unit (Per kWh)", apiPrice: "₦75", userPrice: "₦82", status: "Active" },
+  { category: "Verification", name: "NIMC Slip Print / Verification", apiPrice: "₦50", userPrice: "₦100", status: "Active" },
+  { category: "Verification", name: "BVN Verification Service", apiPrice: "₦20", userPrice: "₦50", status: "Active" },
 ];
 
-const normalizeText = (value = "") =>
-  String(value).trim();
+export default function PricingPage() {
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("All");
 
-const normalizeCode = (value = "") =>
-  String(value)
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9_]/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_+|_+$/g, "");
+  const categories = ["All", "Data (MTN)", "Data (AIRTEL)", "Data (GLO)", "Data (9MOBILE)", "Cable TV", "Utilities (NEPA)", "Verification"];
 
-const normalizeTier = (value = "") =>
-  String(value).trim().toUpperCase();
-
-const parseBoolean = (value, fallback = true) => {
-  if (value === undefined || value === null) {
-    return fallback;
-  }
-
-  if (typeof value === "boolean") {
-    return value;
-  }
-
-  return ["true", "1", "yes", "on"].includes(
-    String(value).trim().toLowerCase()
-  );
-};
-
-const parseJsonValue = (value) => {
-  if (
-    value === undefined ||
-    value === null ||
-    value === ""
-  ) {
-    return undefined;
-  }
-
-  if (
-    typeof value === "object" &&
-    !Array.isArray(value)
-  ) {
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    return value;
-  }
-
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-};
-
-const getAuthenticatedUserId = (req) =>
-  req.user?.id ||
-  req.user?.userId ||
-  req.auth?.userId ||
-  null;
-
-const sendControllerError = (
-  res,
-  error,
-  fallbackMessage
-) => {
-  console.error("PRICING_CONTROLLER_ERROR:", error);
-
-  if (error?.code === "P2002") {
-    return res.status(409).json({
-      success: false,
-      message:
-        "Pricing already exists for this service and tier.",
-    });
-  }
-
-  if (error?.code === "P2025") {
-    return res.status(404).json({
-      success: false,
-      message: "Pricing record not found.",
-    });
-  }
-
-  return res.status(500).json({
-    success: false,
-    message:
-      error?.message ||
-      fallbackMessage ||
-      "Pricing operation failed.",
+  const filteredPricing = initialPricingData.filter((item) => {
+    const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          item.category.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesCategory = selectedCategory === "All" || item.category === selectedCategory;
+    return matchesSearch && matchesCategory;
   });
-};
 
-/*
- * GET /api/v1/pricing
- *
- * Optional query:
- * ?serviceCode=NIN_VERIFY
- * ?category=IDENTITY
- * ?tier=PREMIUM
- * ?enabled=true
- * ?search=nin
- */
-exports.getPricing = async (req, res) => {
-  try {
-    const {
-      serviceCode,
-      category,
-      tier,
-      enabled,
-      search,
-    } = req.query;
-
-    const where = {};
-
-    if (serviceCode) {
-      where.serviceCode =
-        normalizeCode(serviceCode);
-    }
-
-    if (category) {
-      where.category =
-        normalizeCode(category);
-    }
-
-    if (tier) {
-      const normalizedTier =
-        normalizeTier(tier);
-
-      if (!ALLOWED_TIERS.includes(normalizedTier)) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Tier must be REGULAR, STANDARD or PREMIUM.",
-        });
-      }
-
-      where.tier = normalizedTier;
-    }
-
-    if (enabled !== undefined) {
-      where.enabled = parseBoolean(enabled);
-    }
-
-    if (search) {
-      const searchValue =
-        normalizeText(search);
-
-      where.OR = [
-        {
-          serviceName: {
-            contains: searchValue,
-            mode: "insensitive",
-          },
-        },
-        {
-          serviceCode: {
-            contains: searchValue,
-            mode: "insensitive",
-          },
-        },
-        {
-          category: {
-            contains: searchValue,
-            mode: "insensitive",
-          },
-        },
-      ];
-    }
-
-    const pricing =
-      await prisma.servicePricing.findMany({
-        where,
-        orderBy: [
-          {
-            category: "asc",
-          },
-          {
-            serviceCode: "asc",
-          },
-          {
-            tier: "asc",
-          },
-        ],
-      });
-
-    return res.status(200).json({
-      success: true,
-      count: pricing.length,
-      pricing,
-    });
-  } catch (error) {
-    return sendControllerError(
-      res,
-      error,
-      "Unable to load pricing."
-    );
-  }
-};
-
-/*
- * GET /api/v1/pricing/:id
- */
-exports.getPricingById = async (req, res) => {
-  try {
-    const pricing =
-      await prisma.servicePricing.findUnique({
-        where: {
-          id: req.params.id,
-        },
-      });
-
-    if (!pricing) {
-      return res.status(404).json({
-        success: false,
-        message: "Pricing record not found.",
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      pricing,
-    });
-  } catch (error) {
-    return sendControllerError(
-      res,
-      error,
-      "Unable to load pricing."
-    );
-  }
-};
-
-/*
- * GET /api/v1/pricing/service/:serviceCode
- *
- * Wannan endpoint zai iya amfani da shi
- * frontend ko service engine wajen ɗauko
- * REGULAR, STANDARD da PREMIUM.
- */
-exports.getServicePricing = async (
-  req,
-  res
-) => {
-  try {
-    const serviceCode = normalizeCode(
-      req.params.serviceCode
-    );
-
-    if (!serviceCode) {
-      return res.status(400).json({
-        success: false,
-        message: "Service code is required.",
-      });
-    }
-
-    const pricing =
-      await prisma.servicePricing.findMany({
-        where: {
-          serviceCode,
-          enabled: true,
-        },
-        orderBy: {
-          tier: "asc",
-        },
-      });
-
-    return res.status(200).json({
-      success: true,
-      serviceCode,
-      count: pricing.length,
-      pricing,
-    });
-  } catch (error) {
-    return sendControllerError(
-      res,
-      error,
-      "Unable to load service pricing."
-    );
-  }
-};
-
-/*
- * POST /api/v1/pricing
- */
-exports.createPricing = async (req, res) => {
-  try {
-    const {
-      serviceCode,
-      serviceName,
-      category,
-      tier,
-      costPrice,
-      sellingPrice,
-      currency,
-      enabled,
-      features,
-      metadata,
-    } = req.body;
-
-    const normalizedServiceCode =
-      normalizeCode(serviceCode);
-
-    const normalizedServiceName =
-      normalizeText(serviceName);
-
-    const normalizedCategory =
-      normalizeCode(category);
-
-    const normalizedTier =
-      normalizeTier(tier);
-
-    if (
-      !normalizedServiceCode ||
-      !normalizedServiceName ||
-      !normalizedCategory ||
-      !normalizedTier
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "serviceCode, serviceName, category and tier are required.",
-      });
-    }
-
-    if (!ALLOWED_TIERS.includes(normalizedTier)) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Tier must be REGULAR, STANDARD or PREMIUM.",
-      });
-    }
-
-    const numericCostPrice = Number(
-      costPrice || 0
-    );
-
-    const numericSellingPrice = Number(
-      sellingPrice
-    );
-
-    if (
-      !Number.isFinite(numericCostPrice) ||
-      numericCostPrice < 0
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Cost price must be a valid amount.",
-      });
-    }
-
-    if (
-      !Number.isFinite(numericSellingPrice) ||
-      numericSellingPrice < 0
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Selling price must be a valid amount.",
-      });
-    }
-
-    if (
-      numericSellingPrice <
-      numericCostPrice
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Selling price cannot be lower than cost price.",
-      });
-    }
-
-    const existing =
-      await prisma.servicePricing.findUnique({
-        where: {
-          serviceCode_tier: {
-            serviceCode:
-              normalizedServiceCode,
-            tier: normalizedTier,
-          },
-        },
-      });
-
-    if (existing) {
-      return res.status(409).json({
-        success: false,
-        message:
-          "Pricing already exists for this service and tier.",
-      });
-    }
-
-    const userId =
-      getAuthenticatedUserId(req);
-
-    const pricing =
-      await prisma.servicePricing.create({
-        data: {
-          serviceCode:
-            normalizedServiceCode,
-
-          serviceName:
-            normalizedServiceName,
-
-          category:
-            normalizedCategory,
-
-          tier:
-            normalizedTier,
-
-          costPrice:
-            numericCostPrice,
-
-          sellingPrice:
-            numericSellingPrice,
-
-          currency:
-            normalizeCode(currency || "NGN"),
-
-          enabled:
-            parseBoolean(enabled, true),
-
-          features:
-            parseJsonValue(features),
-
-          metadata:
-            parseJsonValue(metadata),
-
-          createdBy:
-            userId,
-
-          updatedBy:
-            userId,
-        },
-      });
-
-    emitEvent("pricing-created", {
-      message:
-        "Service pricing created.",
-      pricing,
-    });
-
-    return res.status(201).json({
-      success: true,
-      message:
-        "Service pricing created successfully.",
-      pricing,
-    });
-  } catch (error) {
-    return sendControllerError(
-      res,
-      error,
-      "Unable to create pricing."
-    );
-  }
-};
-
-/*
- * PATCH /api/v1/pricing/:id
- */
-exports.updatePricing = async (req, res) => {
-  try {
-    const existing =
-      await prisma.servicePricing.findUnique({
-        where: {
-          id: req.params.id,
-        },
-      });
-
-    if (!existing) {
-      return res.status(404).json({
-        success: false,
-        message: "Pricing record not found.",
-      });
-    }
-
-    const data = {};
-
-    if (req.body.serviceCode !== undefined) {
-      const serviceCode =
-        normalizeCode(
-          req.body.serviceCode
-        );
-
-      if (!serviceCode) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Service code cannot be empty.",
-        });
-      }
-
-      data.serviceCode = serviceCode;
-    }
-
-    if (req.body.serviceName !== undefined) {
-      const serviceName =
-        normalizeText(
-          req.body.serviceName
-        );
-
-      if (!serviceName) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Service name cannot be empty.",
-        });
-      }
-
-      data.serviceName = serviceName;
-    }
-
-    if (req.body.category !== undefined) {
-      const category =
-        normalizeCode(
-          req.body.category
-        );
-
-      if (!category) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Category cannot be empty.",
-        });
-      }
-
-      data.category = category;
-    }
-
-    if (req.body.tier !== undefined) {
-      const tier =
-        normalizeTier(req.body.tier);
-
-      if (!ALLOWED_TIERS.includes(tier)) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Tier must be REGULAR, STANDARD or PREMIUM.",
-        });
-      }
-
-      data.tier = tier;
-    }
-
-    const nextCostPrice =
-      req.body.costPrice !== undefined
-        ? Number(req.body.costPrice)
-        : Number(existing.costPrice);
-
-    const nextSellingPrice =
-      req.body.sellingPrice !== undefined
-        ? Number(req.body.sellingPrice)
-        : Number(existing.sellingPrice);
-
-    if (
-      !Number.isFinite(nextCostPrice) ||
-      nextCostPrice < 0
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Cost price must be a valid amount.",
-      });
-    }
-
-    if (
-      !Number.isFinite(nextSellingPrice) ||
-      nextSellingPrice < 0
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Selling price must be a valid amount.",
-      });
-    }
-
-    if (nextSellingPrice < nextCostPrice) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Selling price cannot be lower than cost price.",
-      });
-    }
-
-    if (req.body.costPrice !== undefined) {
-      data.costPrice = nextCostPrice;
-    }
-
-    if (
-      req.body.sellingPrice !== undefined
-    ) {
-      data.sellingPrice =
-        nextSellingPrice;
-    }
-
-    if (req.body.currency !== undefined) {
-      data.currency =
-        normalizeCode(
-          req.body.currency || "NGN"
-        );
-    }
-
-    if (req.body.enabled !== undefined) {
-      data.enabled =
-        parseBoolean(req.body.enabled);
-    }
-
-    if (req.body.features !== undefined) {
-      data.features =
-        parseJsonValue(
-          req.body.features
-        );
-    }
-
-    if (req.body.metadata !== undefined) {
-      data.metadata =
-        parseJsonValue(
-          req.body.metadata
-        );
-    }
-
-    data.updatedBy =
-      getAuthenticatedUserId(req);
-
-    const pricing =
-      await prisma.servicePricing.update({
-        where: {
-          id: req.params.id,
-        },
-        data,
-      });
-
-    emitEvent("pricing-updated", {
-      message:
-        "Service pricing updated.",
-      pricing,
-    });
-
-    return res.status(200).json({
-      success: true,
-      message:
-        "Service pricing updated successfully.",
-      pricing,
-    });
-  } catch (error) {
-    return sendControllerError(
-      res,
-      error,
-      "Unable to update pricing."
-    );
-  }
-};
-
-/*
- * PATCH /api/v1/pricing/:id/status
- *
- * Body:
- * { "enabled": true }
- *
- * Idan babu enabled a body,
- * zai juya current status.
- */
-exports.togglePricingStatus = async (
-  req,
-  res
-) => {
-  try {
-    const existing =
-      await prisma.servicePricing.findUnique({
-        where: {
-          id: req.params.id,
-        },
-      });
-
-    if (!existing) {
-      return res.status(404).json({
-        success: false,
-        message: "Pricing record not found.",
-      });
-    }
-
-    const nextEnabled =
-      req.body.enabled === undefined
-        ? !existing.enabled
-        : parseBoolean(
-            req.body.enabled,
-            existing.enabled
-          );
-
-    const pricing =
-      await prisma.servicePricing.update({
-        where: {
-          id: req.params.id,
-        },
-        data: {
-          enabled: nextEnabled,
-          updatedBy:
-            getAuthenticatedUserId(req),
-        },
-      });
-
-    emitEvent(
-      "pricing-status-updated",
-      {
-        message:
-          "Pricing status updated.",
-        pricing,
-      }
-    );
-
-    return res.status(200).json({
-      success: true,
-      message:
-        nextEnabled
-          ? "Pricing enabled successfully."
-          : "Pricing disabled successfully.",
-      pricing,
-    });
-  } catch (error) {
-    return sendControllerError(
-      res,
-      error,
-      "Unable to update pricing status."
-    );
-  }
-};
-
-/*
- * DELETE /api/v1/pricing/:id
- */
-exports.deletePricing = async (req, res) => {
-  try {
-    const existing =
-      await prisma.servicePricing.findUnique({
-        where: {
-          id: req.params.id,
-        },
-      });
-
-    if (!existing) {
-      return res.status(404).json({
-        success: false,
-        message: "Pricing record not found.",
-      });
-    }
-
-    await prisma.servicePricing.delete({
-      where: {
-        id: req.params.id,
-      },
-    });
-
-    emitEvent("pricing-deleted", {
-      message:
-        "Service pricing deleted.",
-      pricingId: req.params.id,
-      serviceCode:
-        existing.serviceCode,
-      tier: existing.tier,
-    });
-
-    return res.status(200).json({
-      success: true,
-      message:
-        "Service pricing deleted successfully.",
-    });
-  } catch (error) {
-    return sendControllerError(
-      res,
-      error,
-      "Unable to delete pricing."
-    );
-  }
-};
+  return (
+    <main className="min-h-screen bg-slate-950 text-white">
+      <nav className="max-w-7xl mx-auto px-6 py-5 flex items-center justify-between">
+        <Link href="/" className="flex items-center gap-3">
+          <Image
+            src="/assets/logo.png"
+            alt="Ayax Logo"
+            width={44}
+            height={44}
+            priority
+          />
+          <div>
+            <h2 className="text-xl font-bold">
+              Ayax <span className="text-blue-500">APIs</span>
+            </h2>
+            <p className="text-xs text-slate-400">Developer Marketplace</p>
+          </div>
+        </Link>
+
+        <div className="flex items-center gap-4">
+          <Link
+            href="/login"
+            className="text-sm font-semibold text-slate-300 hover:text-white transition-colors"
+          >
+            Login
+          </Link>
+          <Link
+            href="/register"
+            className="bg-blue-600 px-5 py-2 rounded-xl font-semibold hover:bg-blue-500 transition-all shadow-lg shadow-blue-600/20"
+          >
+            Get Started
+          </Link>
+        </div>
+      </nav>
+
+      <section className="max-w-7xl mx-auto px-6 pt-16 pb-10 text-center">
+        <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold uppercase tracking-wider mb-6">
+          <Zap size={14} /> Granular Data & Utility Pricing
+        </div>
+        <h1 className="text-4xl sm:text-6xl font-extrabold tracking-tight">
+          Automated Pricing Table <span className="text-blue-500">(1GB - 100GB)</span>
+        </h1>
+        <p className="text-slate-400 mt-5 max-w-2xl mx-auto text-lg leading-relaxed">
+          Configure precise pricing for every data volume tier (from 1GB, 2GB, up to 100GB), alongside electricity bills, cable subscriptions, and verification services.
+        </p>
+      </section>
+
+      <section className="max-w-7xl mx-auto px-6 mb-8">
+        <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-4 sm:p-6 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-3 rounded-xl bg-blue-600/20 text-blue-400">
+              <Sliders size={22} />
+            </div>
+            <div>
+              <h3 className="font-bold text-white text-base">Admin Pricing Control</h3>
+              <p className="text-xs text-slate-300 mt-0.5">
+                Every data package can be configured individually from 1GB to 100GB directly within the Admin Dashboard.
+              </p>
+            </div>
+          </div>
+          <Link
+            href="/dashboard/admin/pricing"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-lg shadow-blue-600/20 transition-all whitespace-nowrap"
+          >
+            <Database size={14} /> Manage Data Range Prices
+          </Link>
+        </div>
+      </section>
+
+      <section className="max-w-7xl mx-auto px-6 mb-8">
+        <div className="flex flex-col md:flex-row gap-4 items-center justify-between bg-slate-900/80 border border-slate-800 p-4 rounded-2xl backdrop-blur-md">
+          <div className="flex items-center gap-2 overflow-x-auto w-full md:w-auto pb-2 md:pb-0 scrollbar-none">
+            {categories.map((cat) => (
+              <button
+                key={cat}
+                onClick={() => setSelectedCategory(cat)}
+                className={`px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                  selectedCategory === cat
+                    ? "bg-blue-600 text-white shadow-md shadow-blue-600/30"
+                    : "bg-slate-950 text-slate-400 border border-slate-800 hover:border-slate-700 hover:text-slate-200"
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative w-full md:w-72">
+            <Search size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              placeholder="Search 1GB, 2GB, 50GB, NEPA..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white outline-none focus:border-blue-500 transition-all"
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className="max-w-7xl mx-auto px-6 pb-24">
+        <div className="rounded-3xl border border-slate-800 bg-slate-900/60 overflow-hidden shadow-2xl backdrop-blur-md">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-slate-800 bg-slate-950/60 text-slate-400 text-xs uppercase tracking-wider">
+                  <th className="py-4 px-6 font-semibold">Service Category</th>
+                  <th className="py-4 px-6 font-semibold">Data / Plan (1GB - 100GB+)</th>
+                  <th className="py-4 px-6 font-semibold">API Cost</th>
+                  <th className="py-4 px-6 font-semibold">User Price</th>
+                  <th className="py-4 px-6 font-semibold">Status</th>
+                  <th className="py-4 px-6 font-semibold text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800 text-sm">
+                {filteredPricing.length === 0 ? (
+                  <tr>
+                    <td colSpan="6" className="py-12 text-center text-slate-500">
+                      No pricing plans found matching your search criteria.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredPricing.map((item, index) => (
+                    <tr key={index} className="hover:bg-slate-800/40 transition-colors">
+                      <td className="py-4 px-6 font-medium text-slate-300">
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/80 border border-slate-700/50 text-xs text-blue-400">
+                          <Layers size={12} /> {item.category}
+                        </span>
+                      </td>
+                      <td className="py-4 px-6 font-semibold text-white">{item.name}</td>
+                      <td className="py-4 px-6 font-mono text-slate-400">{item.apiPrice}</td>
+                      <td className="py-4 px-6 font-mono font-bold text-emerald-400">{item.userPrice}</td>
+                      <td className="py-4 px-6">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-500/10 text-green-400 border border-green-500/20">
+                          <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse"></span>
+                          {item.status}
+                        </span>
+                      </td>
+                      <td className="py-4 px-6 text-right">
+                        <Link
+                          href="/register"
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600/10 border border-blue-500/30 text-blue-400 hover:bg-blue-600 hover:text-white font-medium text-xs transition-all"
+                        >
+                          Buy / Integrate <ArrowRight size={14} />
+                        </Link>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="p-6 bg-slate-950/40 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-400">
+            <div className="flex items-center gap-2">
+              <Shield size={16} className="text-blue-500" />
+              <span>Administrators can update pricing for any data volume (1GB to 100GB) at any time directly from the control panel.</span>
+            </div>
+            <Link
+              href="/login"
+              className="font-semibold text-blue-400 hover:text-blue-300 transition-colors"
+            >
+              Login to Admin Panel &rarr;
+            </Link>
+          </div>
+        </div>
+      </section>
+    </main>
+  );
+}

@@ -69,6 +69,7 @@ const {
 
 const app = express();
 const isProduction = process.env.NODE_ENV === "production";
+const aiRoutes = require("./modules/ai/ai.routes");
 
 app.disable("x-powered-by");
 
@@ -451,6 +452,7 @@ app.use("/api/v1/network-profiles", networkProfileRoutes);
 app.use("/api/v1/commands", commandRoutes);
 app.use("/api/v1/pair-codes", pairCodeRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
+app.use("/api/v1/ai", aiRoutes);
 
 /* ======================================================
    PAYLOAD / PARSER ERROR HANDLER

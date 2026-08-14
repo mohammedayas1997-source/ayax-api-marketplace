@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import {
   Wallet,
@@ -14,14 +14,6 @@ import {
   AlertCircle,
   CheckCircle2,
   ShieldCheck,
-  Bot,
-  Send,
-  Sparkles,
-  Trash2,
-  User,
-  Copy,
-  Check,
-  MessageSquare,
 } from "lucide-react";
 
 import DashboardLayout from "@/components/layouts/DashboardLayout";
@@ -29,7 +21,6 @@ import api from "@/lib/api";
 import { useSocket } from "@/context/SocketContext";
 
 const QUICK_AMOUNTS = [5000, 10000, 20000, 50000, 100000];
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 
 const formatNaira = (amount) =>
   `₦${Number(amount || 0).toLocaleString("en-NG", {
@@ -86,131 +77,6 @@ export default function WalletPage() {
 
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("info");
-
-  // --- AI ASSISTANT STATES ---
-  const [aiOpen, setAiOpen] = useState(false);
-  const [messages, setMessages] = useState([
-    {
-      id: "welcome",
-      role: "assistant",
-      content:
-        "Hello 👋 I am AYAX AI. I can help you with information about your wallet, funding, AYAX APIs, and services.",
-    },
-  ]);
-  const [aiInput, setAiInput] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
-  const [previousResponseId, setPreviousResponseId] = useState(null);
-  const [copiedId, setCopiedId] = useState(null);
-
-  const bottomRef = useRef(null);
-  const textareaRef = useRef(null);
-
-  useEffect(() => {
-    if (aiOpen) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [messages, aiLoading, aiOpen]);
-
-  const sendAiMessage = async () => {
-    const text = aiInput.trim();
-    if (!text || aiLoading) return;
-
-    const userMessage = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: text,
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
-    setAiInput("");
-    setAiLoading(true);
-
-    try {
-      const token =
-        typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
-      const response = await fetch(
-  `${API_URL}/ai/chat`,
-  {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token
-        ? {
-            Authorization: `Bearer ${token}`,
-          }
-        : {}),
-    },
-    body: JSON.stringify({
-      message,
-      previousResponseId,
-    }),
-  }
-);
-
-      const result = await response.json();
-
-      if (!response.ok || !result.success) {
-        throw new Error(result.message || "Unable to contact AYAX AI.");
-      }
-
-      const assistantMessage = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: result.data?.response || "I could not generate a response.",
-      };
-
-      setMessages((prev) => [...prev, assistantMessage]);
-
-      if (result.data?.responseId) {
-        setPreviousResponseId(result.data.responseId);
-      }
-    } catch (error) {
-      console.error("AYAX AI frontend error:", error);
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "error",
-          content: error?.message || "Something went wrong. Please try again.",
-        },
-      ]);
-    } finally {
-      setAiLoading(false);
-      setTimeout(() => {
-        textareaRef.current?.focus();
-      }, 50);
-    }
-  };
-
-  const handleAiKeyDown = (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      sendAiMessage();
-    }
-  };
-
-  const clearChat = () => {
-    setMessages([
-      {
-        id: "welcome-new",
-        role: "assistant",
-        content: "Chat cleared 👋 How can I help you with your wallet today?",
-      },
-    ]);
-    setPreviousResponseId(null);
-  };
-
-  const copyMessage = async (content, id) => {
-    try {
-      await navigator.clipboard.writeText(content);
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 1500);
-    } catch (error) {
-      console.error("Copy failed:", error);
-    }
-  };
-  // ---------------------------
 
   const fetchWallet = useCallback(async () => {
     const response = await api.get("/wallet");
@@ -555,16 +421,28 @@ export default function WalletPage() {
           </section>
 
           <section className="mt-8 grid gap-5 sm:grid-cols-2">
-            <SummaryCard
-              title="Total Credit"
-              value={formatNaira(totals.totalCredit)}
-              type="credit"
-            />
-            <SummaryCard
-              title="Total Debit"
-              value={formatNaira(totals.totalDebit)}
-              type="debit"
-            />
+            <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-slate-400">Total Credit</p>
+                <h3 className="mt-2 text-2xl font-bold text-green-400">
+                  {formatNaira(totals.totalCredit)}
+                </h3>
+              </div>
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-green-500/10 text-green-400">
+                <ArrowDownLeft size={24} />
+              </div>
+            </div>
+            <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-slate-400">Total Debit</p>
+                <h3 className="mt-2 text-2xl font-bold text-red-400">
+                  {formatNaira(totals.totalDebit)}
+                </h3>
+              </div>
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-red-500/10 text-red-400">
+                <ArrowUpRight size={24} />
+              </div>
+            </div>
           </section>
 
           <section className="mt-8 rounded-3xl border border-slate-800 bg-slate-900 p-6">
@@ -743,221 +621,6 @@ export default function WalletPage() {
           </div>
         </div>
       )}
-
-      {/* --- FLOATING AI ASSISTANT WIDGET --- */}
-      <div className="fixed bottom-6 right-6 z-40">
-        {!aiOpen && (
-          <button
-            type="button"
-            onClick={() => setAiOpen(true)}
-            className="flex items-center gap-3 rounded-full bg-blue-600 px-5 py-4 text-white shadow-2xl shadow-blue-600/40 transition hover:bg-blue-500 hover:scale-105"
-          >
-            <Bot size={22} />
-            <span className="font-semibold text-sm">Ask AYAX AI</span>
-          </button>
-        )}
-
-        {aiOpen && (
-          <div className="flex flex-col h-[520px] w-[92vw] sm:w-[400px] rounded-3xl border border-slate-800 bg-slate-900 shadow-2xl backdrop-blur-xl animate-in fade-in slide-in-from-bottom-6 duration-200 overflow-hidden">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-slate-800 bg-slate-950/60 px-4 py-3.5">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white shadow-lg shadow-blue-600/20">
-                  <Bot size={18} />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                    AYAX AI
-                    <span className="rounded-full bg-green-500/10 px-2 py-0.5 text-[9px] font-semibold text-green-400">
-                      ONLINE
-                    </span>
-                  </h3>
-                  <p className="text-[11px] text-slate-400">Wallet & Services Assistant</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={clearChat}
-                  title="Clear Chat"
-                  className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white transition"
-                >
-                  <Trash2 size={16} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAiOpen(false)}
-                  title="Close"
-                  className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white transition"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-            </div>
-
-            {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 text-sm">
-              {messages.map((message) => {
-                const isUser = message.role === "user";
-                const isError = message.role === "error";
-
-                return (
-                  <div
-                    key={message.id}
-                    className={`flex gap-2.5 ${
-                      isUser ? "justify-end" : "justify-start"
-                    }`}
-                  >
-                    {!isUser && (
-                      <div
-                        className={`mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${
-                          isError
-                            ? "bg-red-500/10 text-red-400"
-                            : "bg-blue-600 text-white"
-                        }`}
-                      >
-                        {isError ? <AlertCircle size={14} /> : <Bot size={14} />}
-                      </div>
-                    )}
-
-                    <div
-                      className={`group max-w-[85%] ${
-                        isUser ? "items-end" : "items-start"
-                      }`}
-                    >
-                      <div
-                        className={`rounded-2xl px-3.5 py-2.5 text-xs sm:text-sm leading-6 ${
-                          isUser
-                            ? "rounded-br-sm bg-blue-600 text-white"
-                            : isError
-                            ? "rounded-bl-sm border border-red-500/20 bg-red-500/10 text-red-300"
-                            : "rounded-bl-sm border border-slate-800 bg-slate-950 text-slate-200"
-                        }`}
-                      >
-                        {message.content}
-                      </div>
-
-                      {!isUser && !isError && (
-                        <button
-                          type="button"
-                          onClick={() => copyMessage(message.content, message.id)}
-                          className="mt-1 flex items-center gap-1 text-[10px] text-slate-500 opacity-0 transition group-hover:opacity-100 hover:text-slate-300"
-                        >
-                          {copiedId === message.id ? (
-                            <>
-                              <Check size={11} /> Copied
-                            </>
-                          ) : (
-                            <>
-                              <Copy size={11} /> Copy
-                            </>
-                          )}
-                        </button>
-                      )}
-                    </div>
-
-                    {isUser && (
-                      <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-800 text-slate-200">
-                        <User size={14} />
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-
-              {aiLoading && (
-                <div className="flex gap-2.5">
-                  <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-600 text-white">
-                    <Bot size={14} />
-                  </div>
-                  <div className="flex items-center gap-1 rounded-2xl rounded-bl-sm border border-slate-800 bg-slate-950 px-4 py-3">
-                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-500" />
-                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-500 [animation-delay:150ms]" />
-                    <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-500 [animation-delay:300ms]" />
-                  </div>
-                </div>
-              )}
-
-              <div ref={bottomRef} />
-            </div>
-
-            {/* Quick Suggestions */}
-            <div className="border-t border-slate-800 px-3 py-2 bg-slate-950/40">
-              <div className="flex gap-1.5 overflow-x-auto pb-1 text-[11px]">
-                {[
-                  "How do I fund my wallet?",
-                  "Check my balance status",
-                  "What APIs are available?",
-                ].map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    type="button"
-                    disabled={aiLoading}
-                    onClick={() => {
-                      setAiInput(suggestion);
-                      textareaRef.current?.focus();
-                    }}
-                    className="flex shrink-0 items-center gap-1 rounded-full border border-slate-800 bg-slate-900 px-2.5 py-1 text-slate-300 transition hover:border-blue-500 hover:text-blue-400 disabled:opacity-50"
-                  >
-                    <Sparkles size={11} />
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Input Box */}
-            <div className="border-t border-slate-800 p-3 bg-slate-950">
-              <div className="flex items-end gap-2 rounded-xl border border-slate-700 bg-slate-900 p-1.5 focus-within:border-blue-500 transition">
-                <textarea
-                  ref={textareaRef}
-                  value={aiInput}
-                  onChange={(e) => setAiInput(e.target.value)}
-                  onKeyDown={handleAiKeyDown}
-                  disabled={aiLoading}
-                  rows={1}
-                  placeholder="Ask AYAX AI..."
-                  className="max-h-24 min-h-[36px] flex-1 resize-none bg-transparent px-2 py-1.5 text-xs text-white outline-none placeholder:text-slate-500"
-                />
-                <button
-                  type="button"
-                  onClick={sendAiMessage}
-                  disabled={aiLoading || !aiInput.trim()}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <Send size={15} />
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
     </DashboardLayout>
-  );
-}
-
-function SummaryCard({ title, value, type }) {
-  const isCredit = type === "credit";
-
-  return (
-    <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-sm">
-      <div className="flex items-center gap-4">
-        <div
-          className={`flex h-12 w-12 items-center justify-center rounded-2xl ${
-            isCredit
-              ? "bg-green-500/10 text-green-400"
-              : "bg-red-500/10 text-red-400"
-          }`}
-        >
-          {isCredit ? <ArrowDownLeft size={22} /> : <ArrowUpRight size={22} />}
-        </div>
-
-        <div>
-          <p className="text-sm text-slate-400">{title}</p>
-          <h3 className="mt-1 text-2xl font-bold text-white">{value}</h3>
-        </div>
-      </div>
-    </div>
   );
 }

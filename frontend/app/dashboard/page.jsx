@@ -129,17 +129,24 @@ export default function WalletPage() {
       const token =
         typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
-      const response = await fetch(`${API_URL}/api/v1/ai/chat`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          message: text,
-          previousResponseId,
-        }),
-      });
+      const response = await fetch(
+  `${API_URL}/ai/chat`,
+  {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token
+        ? {
+            Authorization: `Bearer ${token}`,
+          }
+        : {}),
+    },
+    body: JSON.stringify({
+      message,
+      previousResponseId,
+    }),
+  }
+);
 
       const result = await response.json();
 

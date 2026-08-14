@@ -13,8 +13,7 @@ import {
 } from "lucide-react";
 
 const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ||
-  "http://localhost:5000";
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 
 export default function AiPage() {
   const [messages, setMessages] = useState([
@@ -28,9 +27,7 @@ export default function AiPage() {
 
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [previousResponseId, setPreviousResponseId] =
-    useState(null);
-
+  const [conversationId, setConversationId] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
 
   const bottomRef = useRef(null);
@@ -41,6 +38,27 @@ export default function AiPage() {
       behavior: "smooth",
     });
   }, [messages, loading]);
+
+  const clearChat = () => {
+    setMessages([
+      {
+        id: "welcome-new",
+        role: "assistant",
+        content: "Chat cleared 👋 How can I help you today?",
+      },
+    ]);
+    setConversationId(null);
+  };
+
+  const copyMessage = async (content, id) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 1500);
+    } catch (error) {
+      console.error("Copy failed:", error);
+    }
+  };
 
   const sendMessage = async () => {
     const message = input.trim();
@@ -53,11 +71,19 @@ export default function AiPage() {
       content: message,
     };
 
-    setMessages((prev) => [
-      ...prev,
-      userMessage,
-    ]);
+    const currentHistory = messages
+      .filter(
+        (item) =>
+          item.role === "user" ||
+          item.role === "assistant"
+      )
+      .slice(-10)
+      .map((item) => ({
+        role: item.role,
+        content: item.content,
+      }));
 
+    setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setLoading(true);
 
@@ -68,7 +94,7 @@ export default function AiPage() {
           : null;
 
       const response = await fetch(
-        `${API_URL}/ai/chat`,
+        `${API_URL}/api/v1/ai/chat`,
         {
           method: "POST",
           headers: {
@@ -81,7 +107,8 @@ export default function AiPage() {
           },
           body: JSON.stringify({
             message,
-            previousResponseId,
+            conversationId,
+            history: currentHistory,
           }),
         }
       );
@@ -95,12 +122,15 @@ export default function AiPage() {
         );
       }
 
+      const reply =
+        result.data?.reply ||
+        result.data?.response ||
+        "I could not generate a response.";
+
       const assistantMessage = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content:
-          result.data?.response ||
-          "I could not generate a response.",
+        content: reply,
       };
 
       setMessages((prev) => [
@@ -108,13 +138,16 @@ export default function AiPage() {
         assistantMessage,
       ]);
 
-      if (result.data?.responseId) {
-        setPreviousResponseId(
-          result.data.responseId
+      if (result.data?.conversationId) {
+        setConversationId(
+          result.data.conversationId
         );
       }
     } catch (error) {
-      console.error("AYAX AI frontend error:", error);
+      console.error(
+        "AYAX AI frontend error:",
+        error
+      );
 
       setMessages((prev) => [
         ...prev,
@@ -136,47 +169,9 @@ export default function AiPage() {
   };
 
   const handleKeyDown = (event) => {
-    if (
-      event.key === "Enter" &&
-      !event.shiftKey
-    ) {
+    if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       sendMessage();
-    }
-  };
-
-  const clearChat = () => {
-    setMessages([
-      {
-        id: "welcome-new",
-        role: "assistant",
-        content:
-          "Chat cleared 👋 I am AYAX AI. How can I help you today?",
-      },
-    ]);
-
-    setPreviousResponseId(null);
-  };
-
-  const copyMessage = async (
-    message,
-    id
-  ) => {
-    try {
-      await navigator.clipboard.writeText(
-        message
-      );
-
-      setCopiedId(id);
-
-      setTimeout(() => {
-        setCopiedId(null);
-      }, 1500);
-    } catch (error) {
-      console.error(
-        "Copy failed:",
-        error
-      );
     }
   };
 
@@ -186,7 +181,6 @@ export default function AiPage() {
 
         {/* HEADER */}
         <header className="mb-4 flex items-center justify-between rounded-2xl border border-slate-800 bg-slate-900/80 px-4 py-4 shadow-xl backdrop-blur sm:px-6">
-
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-600 shadow-lg shadow-blue-600/20">
               <Bot size={24} />
@@ -226,7 +220,6 @@ export default function AiPage() {
 
           {/* MESSAGES */}
           <div className="flex-1 overflow-y-auto p-4 sm:p-6">
-
             {messages.map((message) => {
               const isUser =
                 message.role === "user";
@@ -243,7 +236,6 @@ export default function AiPage() {
                       : "justify-start"
                   }`}
                 >
-
                   {!isUser && (
                     <div
                       className={`mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
@@ -267,7 +259,6 @@ export default function AiPage() {
                         : "items-start"
                     }`}
                   >
-
                     <div
                       className={`rounded-2xl px-4 py-3 text-sm leading-7 ${
                         isUser
@@ -280,36 +271,30 @@ export default function AiPage() {
                       {message.content}
                     </div>
 
-                    {!isUser &&
-                      !isError && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            copyMessage(
-                              message.content,
-                              message.id
-                            )
-                          }
-                          className="mt-2 flex items-center gap-1 text-xs text-slate-500 opacity-0 transition group-hover:opacity-100 hover:text-slate-300"
-                        >
-                          {copiedId ===
-                          message.id ? (
-                            <>
-                              <Check
-                                size={13}
-                              />
-                              Copied
-                            </>
-                          ) : (
-                            <>
-                              <Copy
-                                size={13}
-                              />
-                              Copy
-                            </>
-                          )}
-                        </button>
-                      )}
+                    {!isUser && !isError && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          copyMessage(
+                            message.content,
+                            message.id
+                          )
+                        }
+                        className="mt-2 flex items-center gap-1 text-xs text-slate-500 opacity-0 transition group-hover:opacity-100 hover:text-slate-300"
+                      >
+                        {copiedId === message.id ? (
+                          <>
+                            <Check size={13} />
+                            Copied
+                          </>
+                        ) : (
+                          <>
+                            <Copy size={13} />
+                            Copy
+                          </>
+                        )}
+                      </button>
+                    )}
                   </div>
 
                   {isUser && (
@@ -324,7 +309,7 @@ export default function AiPage() {
             {/* TYPING */}
             {loading && (
               <div className="mb-6 flex gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white">
                   <Bot size={18} />
                 </div>
 
@@ -342,7 +327,6 @@ export default function AiPage() {
           {/* SUGGESTIONS */}
           <div className="border-t border-slate-800 px-4 py-3">
             <div className="flex gap-2 overflow-x-auto pb-1">
-
               {[
                 "What are AYAX APIs?",
                 "How do I fund my wallet?",
@@ -369,7 +353,6 @@ export default function AiPage() {
           {/* INPUT */}
           <div className="border-t border-slate-800 p-4">
             <div className="flex items-end gap-3 rounded-2xl border border-slate-700 bg-slate-950 p-2 transition focus-within:border-blue-500">
-
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -386,10 +369,7 @@ export default function AiPage() {
               <button
                 type="button"
                 onClick={sendMessage}
-                disabled={
-                  loading ||
-                  !input.trim()
-                }
+                disabled={loading || !input.trim()}
                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Send size={18} />
@@ -403,5 +383,9 @@ export default function AiPage() {
         </section>
       </div>
     </main>
+
+
+
+
   );
 }

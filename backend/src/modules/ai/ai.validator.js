@@ -19,18 +19,29 @@ const chatSchema = z
     conversationId: z
       .string()
       .trim()
+      .optional()
+      .nullable(),
+
+    history: z
+      .array(
+        z.object({
+          role: z.enum(["user", "assistant"]),
+          content: z.string().trim().min(1, "Content cannot be empty"),
+        })
+      )
       .optional(),
   })
   .transform((data) => ({
     message: data.message || data.prompt,
-    conversationId: data.conversationId,
+    conversationId: data.conversationId || null,
+    history: data.history || [],
   }))
   .refine(
     (data) =>
       typeof data.message === "string" &&
       data.message.trim().length > 0,
     {
-      message: "Message is required",
+      message: "Message or prompt is required",
       path: ["message"],
     }
   );

@@ -37,8 +37,8 @@ exports.chat = async (req, res) => {
       success: true,
       message: "AI response generated successfully.",
       data: {
-        conversationId: conversationId || null,
-        reply: result.message,
+        conversationId: result.conversationId || conversationId || null,
+        reply: result.message || result.reply,
         model: result.model,
         usage: result.usage || null,
       },

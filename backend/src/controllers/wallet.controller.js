@@ -679,6 +679,7 @@ exports.initializePaystackFunding = async (req, res) => {
             fundingId: funding.id,
             fundingReference: reference,
             purpose: "WALLET_FUNDING",
+            platform: "ayax_api_marketplace",
           },
         }),
       }

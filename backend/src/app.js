@@ -39,6 +39,7 @@ const pairCodeRoutes = require("./routes/pairCode.routes");
 const networkProfileRoutes = require("./routes/networkProfile.routes");
 const commandRoutes = require("./routes/command.routes");
 const adminNotificationRoutes = require("./routes/adminNotification.routes");
+const mainWebhookRoutes = require("./routes/webhookRoutes");
 
 /* ======================================================
    MODULE ROUTES
@@ -52,7 +53,7 @@ const apiProviderRoutes = require("./modules/api-marketplace/api-provider.routes
 const apiServiceRoutes = require("./modules/api-marketplace/api-service.routes");
 const apiKeyModuleRoutes = require("./modules/api-marketplace/api-key.routes");
 const apiUsageRoutes = require("./modules/api-marketplace/api-usage.routes");
-const webhookRoutes = require("./modules/api-marketplace/webhook.routes");
+const marketplaceWebhookRoutes = require("./modules/api-marketplace/webhook.routes");
 const documentationRoutes = require("./modules/api-marketplace/documentation.routes");
 const apiMarketplaceDashboardRoutes = require("./modules/api-marketplace/api-marketplace-dashboard.routes");
 
@@ -394,6 +395,8 @@ app.use(
   superAdminRoutes
 );
 
+app.use("/api/v1/webhook", mainWebhookRoutes);
+
 app.use(
   "/api/v1/admin/wallet",
   adminLimiter,
@@ -403,7 +406,7 @@ app.use(
 app.use("/api/v1/users", userModuleRoutes);
 
 /* ======================================================
-   DEVELOPER WALLET (An cire paymentLimiter dake kawo cikas anan)
+   DEVELOPER WALLET
 ====================================================== */
 
 app.use("/api/v1/wallet", userWalletRoutes);
@@ -435,7 +438,7 @@ app.use("/api/v1/api-providers", apiProviderRoutes);
 app.use("/api/v1/api-services", apiServiceRoutes);
 app.use("/api/v1/api-keys", apiKeyModuleRoutes);
 app.use("/api/v1/api-usage", apiUsageRoutes);
-app.use("/api/v1/webhooks", webhookRoutes);
+app.use("/api/v1/webhooks", marketplaceWebhookRoutes);
 app.use("/api/v1/api-docs", documentationRoutes);
 app.use("/api/v1/api-marketplace", apiMarketplaceDashboardRoutes);
 app.use("/api/v1/marketplace", marketplaceRoutes);

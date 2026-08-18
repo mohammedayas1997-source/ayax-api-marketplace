@@ -1516,77 +1516,51 @@ exports.getCurrentUser = async (
    POST /api/v1/auth/forgot-password
 ====================================================== */
 
-exports.forgotPassword = async (
-  req,
-  res
-) => {
+/* ======================================================
+   FORGOT PASSWORD
+
+   POST /api/v1/auth/forgot-password
+====================================================== */
+
+exports.forgotPassword = async (req, res) => {
   try {
-    const email = normalizeEmail(
-      req.body.email
-    );
+    const email = normalizeEmail(req.body.email);
 
     if (!email) {
       return res.status(400).json({
         success: false,
-        message:
-          "Email address is required.",
+        message: "Email address is required.",
       });
     }
 
-    
-    const user =
-      await prisma.user.findUnique({
-        where: {
-          email,
-        },
+    const user = await prisma.user.findUnique({
+      where: {
+        email,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        status: true,
+      },
+    });
 
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          status: true,
-        },
-      });
-
-    /*
-     * Generic response domin kada a bayyana
-     * ko email yana cikin database.
-     */
-    if (!user) {
+    // Generic response to prevent account enumeration
+    if (!user || normalizeRole(user.status) !== "ACTIVE") {
       return res.status(200).json({
         success: true,
-        message:
-          GENERIC_RESET_MESSAGE,
+        message: GENERIC_RESET_MESSAGE,
       });
     }
 
-    if (
-      normalizeRole(user.status) !==
-      "ACTIVE"
-    ) {
-      return res.status(200).json({
-        success: true,
-        message:
-          GENERIC_RESET_MESSAGE,
-      });
-    }
+    const { plainToken, tokenHash, expiresAt } = generatePasswordResetToken();
 
-    const {
-      plainToken,
-      tokenHash,
-      expiresAt,
-    } = generatePasswordResetToken();
-
-    /*
-     * Kashe tsofaffin unused reset tokens
-     * na wannan user.
-     */
+    // Invalidate previous unused reset tokens for this user
     await prisma.passwordResetToken.updateMany({
       where: {
         userId: user.id,
         usedAt: null,
       },
-
       data: {
         usedAt: new Date(),
       },
@@ -1600,17 +1574,11 @@ exports.forgotPassword = async (
       },
     });
 
-    const frontendUrl = normalizeText(
-      process.env.FRONTEND_URL
-    ).replace(/\/+$/, "");
+    const frontendUrl = normalizeText(process.env.FRONTEND_URL || "https://ayaxapis.com").replace(/\/+$/, "");
+    const resetUrl = `${frontendUrl}/reset-password?token=${encodeURIComponent(plainToken)}`;
 
-    const resetUrl =
-      `${frontendUrl}/reset-password` +
-      `?token=${encodeURIComponent(
-        plainToken
-      )}`;
-
-    await queuePasswordResetEmail({
+    // Send reset instructions via email service
+    await sendPasswordResetEmail({
       user,
       resetUrl,
     });
@@ -1618,53 +1586,31 @@ exports.forgotPassword = async (
     await recordSecurityLog({
       userId: user.id,
       req,
-      event: "PASSWORD_RESET",
+      event: "PASSWORD_RESET_REQUESTED",
       successful: true,
-      description:
-        "Password reset was requested.",
+      description: "Password reset instructions prepared and sent.",
     });
 
     await writeAuditLog({
       req,
       user,
-
-      action:
-        "PASSWORD_RESET_REQUEST",
-
-      description:
-        `${user.email} requested a password reset.`,
+      action: "PASSWORD_RESET_REQUEST",
+      description: `${user.email} requested a password reset link.`,
     });
 
     const response = {
       success: true,
-      message:
-        GENERIC_RESET_MESSAGE,
+      message: GENERIC_RESET_MESSAGE,
     };
 
-    /*
-     * A development kawai za a iya nuna token.
-     * Kada ya fito a production.
-     */
-    if (
-      process.env.NODE_ENV !==
-      "production"
-    ) {
-      response.developmentResetToken =
-        plainToken;
-
-      response.developmentResetUrl =
-        resetUrl;
+    if (process.env.NODE_ENV !== "production") {
+      response.developmentResetToken = plainToken;
+      response.developmentResetUrl = resetUrl;
     }
 
-    return res.status(200).json(
-      response
-    );
+    return res.status(200).json(response);
   } catch (error) {
-    return sendAuthError(
-      res,
-      error,
-      "Unable to process password reset request."
-    );
+    return sendAuthError(res, error, "Unable to process password reset request.");
   }
 };
 
@@ -1674,224 +1620,150 @@ exports.forgotPassword = async (
    POST /api/v1/auth/reset-password
 ====================================================== */
 
-exports.resetPassword = async (
-  req,
-  res
-) => {
+exports.resetPassword = async (req, res) => {
   try {
-    const token = normalizeText(
-      req.body.token
-    );
-
-    const newPassword = String(
-      req.body.password ||
-        req.body.newPassword ||
-        ""
-    );
+    const token = normalizeText(req.body.token);
+    const newPassword = String(req.body.password || req.body.newPassword || "");
 
     if (!token || !newPassword) {
       return res.status(400).json({
         success: false,
-
-        message:
-          "Reset token and new password are required.",
+        message: "Reset token and new password are required.",
       });
     }
 
-    const passwordValidation =
-      validatePassword(newPassword);
+    const passwordValidation = validatePassword(newPassword);
 
     if (!passwordValidation.valid) {
       return res.status(400).json({
         success: false,
-        message:
-          passwordValidation.message,
+        message: passwordValidation.message,
       });
     }
 
     const tokenHash = hashToken(token);
 
-    const resetRecord =
-      await prisma.passwordResetToken.findUnique({
-        where: {
-          tokenHash,
-        },
-
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              status: true,
-              password: true,
-            },
+    const resetRecord = await prisma.passwordResetToken.findUnique({
+      where: {
+        tokenHash,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            status: true,
+            password: true,
           },
         },
-      });
+      },
+    });
 
     if (
       !resetRecord ||
       resetRecord.usedAt ||
-      resetRecord.expiresAt.getTime() <=
-        Date.now()
+      resetRecord.expiresAt.getTime() <= Date.now()
     ) {
       return res.status(400).json({
         success: false,
-
-        code:
-          "INVALID_RESET_TOKEN",
-
-        message:
-          "The password reset link is invalid or has expired.",
+        code: "INVALID_RESET_TOKEN",
+        message: "The password reset link is invalid or has expired.",
       });
     }
 
-    if (
-      normalizeRole(
-        resetRecord.user.status
-      ) !== "ACTIVE"
-    ) {
+    if (normalizeRole(resetRecord.user.status) !== "ACTIVE") {
       return res.status(403).json({
         success: false,
-
-        message:
-          "This account is not active.",
+        message: "This account is not active.",
       });
     }
 
-    const samePassword =
-      await bcrypt.compare(
-        newPassword,
-        resetRecord.user.password
-      );
+    const samePassword = await bcrypt.compare(
+      newPassword,
+      resetRecord.user.password
+    );
 
     if (samePassword) {
       return res.status(400).json({
         success: false,
-
-        message:
-          "Your new password must be different from your current password.",
+        message: "Your new password must be different from your current password.",
       });
     }
 
-    const hashedPassword =
-      await bcrypt.hash(
-        newPassword,
-        PASSWORD_HASH_ROUNDS
-      );
-
-    const passwordChangedAt =
-      new Date();
-
-    await prisma.$transaction(
-      async (tx) => {
-        await tx.user.update({
-          where: {
-            id:
-              resetRecord.user.id,
-          },
-
-          data: {
-            password:
-              hashedPassword,
-
-            passwordChangedAt,
-
-            failedLoginAttempts: 0,
-            lockedUntil: null,
-          },
-        });
-
-        await tx.passwordResetToken.update({
-          where: {
-            id: resetRecord.id,
-          },
-
-          data: {
-            usedAt:
-              passwordChangedAt,
-          },
-        });
-
-        /*
-         * Kashe duk sauran reset tokens.
-         */
-        await tx.passwordResetToken.updateMany({
-          where: {
-            userId:
-              resetRecord.user.id,
-
-            id: {
-              not:
-                resetRecord.id,
-            },
-
-            usedAt: null,
-          },
-
-          data: {
-            usedAt:
-              passwordChangedAt,
-          },
-        });
-      }
+    const hashedPassword = await bcrypt.hash(
+      newPassword,
+      PASSWORD_HASH_ROUNDS
     );
 
+    const passwordChangedAt = new Date();
+
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: {
+          id: resetRecord.user.id,
+        },
+        data: {
+          password: hashedPassword,
+          passwordChangedAt,
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+        },
+      });
+
+      await tx.passwordResetToken.update({
+        where: {
+          id: resetRecord.id,
+        },
+        data: {
+          usedAt: passwordChangedAt,
+        },
+      });
+
+      // Invalidate all other active reset tokens
+      await tx.passwordResetToken.updateMany({
+        where: {
+          userId: resetRecord.user.id,
+          id: {
+            not: resetRecord.id,
+          },
+          usedAt: null,
+        },
+        data: {
+          usedAt: passwordChangedAt,
+        },
+      });
+    });
+
     await recordSecurityLog({
-      userId:
-        resetRecord.user.id,
-
+      userId: resetRecord.user.id,
       req,
-
-      event:
-        "PASSWORD_RESET",
-
+      event: "PASSWORD_RESET_SUCCESS",
       successful: true,
-
-      description:
-        "Password was reset successfully.",
+      description: "User successfully reset their account password.",
     });
 
     await writeAuditLog({
       req,
-
-      user:
-        resetRecord.user,
-
-      action:
-        "PASSWORD_RESET",
-
-      description:
-        `${resetRecord.user.email} reset their password.`,
+      user: resetRecord.user,
+      action: "PASSWORD_RESET_COMPLETED",
+      description: `${resetRecord.user.email} reset their password successfully.`,
     });
 
     await createPasswordNotification({
-      user:
-        resetRecord.user,
-
-      title:
-        "🔐 Password Reset Successful",
-
-      message:
-        "Your Ayax APIs password was reset successfully. Existing access tokens have been invalidated. Contact support immediately if you did not perform this action.",
+      user: resetRecord.user,
+      title: "Password Reset Successful",
+      message: "Your account password has been changed successfully. If you did not perform this action, please contact support immediately.",
     });
 
     return res.status(200).json({
       success: true,
-
-      message:
-        "Password reset successful. Please sign in with your new password.",
+      message: "Password reset successful. Please sign in with your new password.",
     });
   } catch (error) {
-    return sendAuthError(
-      res,
-      error,
-      "Unable to reset password."
-    );
+    return sendAuthError(res, error, "Unable to reset password.");
   }
 };
-
 /* ======================================================
    CHANGE PASSWORD
 

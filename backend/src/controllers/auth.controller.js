@@ -21,7 +21,11 @@ const {
 const {
   sendLoginOtpSms,
 } = require("../utils/sendLoginOtpSms");
-const { sendLoginAlertEmail } = require("../services/emailService");
+const { 
+  sendLoginAlertEmail, 
+  sendPasswordResetEmail,
+  sendLoginOtpEmail
+} = require("../services/emailService");
 
 /* ======================================================
    CONSTANTS

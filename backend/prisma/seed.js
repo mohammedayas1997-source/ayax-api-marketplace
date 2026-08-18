@@ -132,3 +132,190 @@ main()
 .finally(async()=>{
  await prisma.$disconnect();
 });
+
+const cablePlans = [
+  // GOtv Packages
+  { cableTv: "gotv", packageCode: "01", name: "GOtv Smallie (Monthly)", price: 1575, apiPrice: 1550 },
+  { cableTv: "gotv", packageCode: "02", name: "GOtv Jinja", price: 3300, apiPrice: 3250 },
+  { cableTv: "gotv", packageCode: "03", name: "GOtv Jolli", price: 4850, apiPrice: 4800 },
+  { cableTv: "gotv", packageCode: "04", name: "GOtv Max", price: 7200, apiPrice: 7100 },
+  { cableTv: "gotv", packageCode: "05", name: "GOtv Supa", price: 9600, apiPrice: 9500 },
+  { cableTv: "gotv", packageCode: "06", name: "GOtv Supa Plus", price: 15700, apiPrice: 15500 },
+
+  // DStv Packages
+  { cableTv: "dstv", packageCode: "01", name: "DStv Padi", price: 3600, apiPrice: 3550 },
+  { cableTv: "dstv", packageCode: "02", name: "DStv Yanga", price: 5100, apiPrice: 5000 },
+  { cableTv: "dstv", packageCode: "03", name: "DStv Confam", price: 9300, apiPrice: 9200 },
+  { cableTv: "dstv", packageCode: "04", name: "DStv Compact", price: 15700, apiPrice: 15500 },
+  { cableTv: "dstv", packageCode: "05", name: "DStv Compact Plus", price: 25000, apiPrice: 24700 },
+  { cableTv: "dstv", packageCode: "06", name: "DStv Premium", price: 37000, apiPrice: 36500 },
+
+  // StarTimes Packages (Monthly)
+  { cableTv: "startimes", packageCode: "11", name: "StarTimes Nova (Monthly)", price: 1700, apiPrice: 1650 },
+  { cableTv: "startimes", packageCode: "12", name: "StarTimes Basic (Monthly)", price: 3300, apiPrice: 3250 },
+  { cableTv: "startimes", packageCode: "13", name: "StarTimes Smart (Monthly)", price: 4700, apiPrice: 4600 },
+  { cableTv: "startimes", packageCode: "14", name: "StarTimes Classic (Monthly)", price: 5500, apiPrice: 5400 },
+  { cableTv: "startimes", packageCode: "15", name: "StarTimes Super (Monthly)", price: 8200, apiPrice: 8050 },
+];
+
+async function main() {
+  console.log("Seeding Cable TV plans...");
+
+  for (const plan of cablePlans) {
+    await prisma.cablePlan.upsert({
+      where: {
+        cableTv_packageCode: {
+          cableTv: plan.cableTv,
+          packageCode: plan.packageCode,
+        },
+      },
+      update: {
+        name: plan.name,
+        price: plan.price,
+        apiPrice: plan.apiPrice,
+        isActive: true,
+      },
+      create: {
+        provider: "CLUBKONNECT",
+        cableTv: plan.cableTv,
+        packageCode: plan.packageCode,
+        name: plan.name,
+        price: plan.price,
+        apiPrice: plan.apiPrice,
+        isActive: true,
+      },
+    });
+  }
+
+  console.log("Cable TV plans seeded successfully!");
+}
+
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });
+
+  const electricityDiscos = [
+  {
+    discoCode: "ikeja-electric",
+    name: "Ikeja Electric (IKEDC)",
+    supportsPrepaid: true,
+    supportsPostpaid: true,
+    minAmount: 500,
+  },
+  {
+    discoCode: "eko-electric",
+    name: "Eko Electric (EKEDC)",
+    supportsPrepaid: true,
+    supportsPostpaid: true,
+    minAmount: 500,
+  },
+  {
+    discoCode: "kano-electric",
+    name: "Kano Electric (KEDCO)",
+    supportsPrepaid: true,
+    supportsPostpaid: true,
+    minAmount: 500,
+  },
+  {
+    discoCode: "abuja-electric",
+    name: "Abuja Electric (AEDC)",
+    supportsPrepaid: true,
+    supportsPostpaid: true,
+    minAmount: 500,
+  },
+  {
+    discoCode: "ibadan-electric",
+    name: "Ibadan Electric (IBEDC)",
+    supportsPrepaid: true,
+    supportsPostpaid: true,
+    minAmount: 500,
+  },
+  {
+    discoCode: "enugu-electric",
+    name: "Enugu Electric (EEDC)",
+    supportsPrepaid: true,
+    supportsPostpaid: true,
+    minAmount: 500,
+  },
+  {
+    discoCode: "port-harcourt-electric",
+    name: "Port Harcourt Electric (PHED)",
+    supportsPrepaid: true,
+    supportsPostpaid: true,
+    minAmount: 500,
+  },
+  {
+    discoCode: "jos-electric",
+    name: "Jos Electric (JED)",
+    supportsPrepaid: true,
+    supportsPostpaid: true,
+    minAmount: 500,
+  },
+  {
+    discoCode: "kaduna-electric",
+    name: "Kaduna Electric (KAEDCO)",
+    supportsPrepaid: true,
+    supportsPostpaid: true,
+    minAmount: 500,
+  },
+  {
+    discoCode: "benin-electric",
+    name: "Benin Electric (BEDC)",
+    supportsPrepaid: true,
+    supportsPostpaid: true,
+    minAmount: 500,
+  },
+  {
+    discoCode: "yola-electric",
+    name: "Yola Electric (YEDC)",
+    supportsPrepaid: true,
+    supportsPostpaid: true,
+    minAmount: 500,
+  },
+];
+
+async function seedDiscos() {
+  console.log("Seeding Electricity DISCOs...");
+
+  for (const disco of electricityDiscos) {
+    await prisma.electricityDisco.upsert({
+      where: { discoCode: disco.discoCode },
+      update: {
+        name: disco.name,
+        supportsPrepaid: disco.supportsPrepaid,
+        supportsPostpaid: disco.supportsPostpaid,
+        minAmount: disco.minAmount,
+        isActive: true,
+      },
+      create: {
+        discoCode: disco.discoCode,
+        name: disco.name,
+        provider: "CLUBKONNECT",
+        supportsPrepaid: disco.supportsPrepaid,
+        supportsPostpaid: disco.supportsPostpaid,
+        minAmount: disco.minAmount,
+        isActive: true,
+      },
+    });
+  }
+
+  console.log("Electricity DISCOs seeded successfully!");
+}
+
+async function main() {
+  await seedDiscos();
+}
+
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

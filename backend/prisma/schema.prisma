@@ -798,6 +798,35 @@ model GsmUssdLog {
   @@index([reference])
 }
 
+model CablePlan {
+  id          String   @id @default(cuid())
+  provider    String   @default("CLUBKONNECT")
+  cableTv     String   // dstv, gotv, startimes
+  packageCode String   // 01, 02, etc.
+  name        String   // GOtv Jinja, DStv Compact
+  price       Decimal  @db.Decimal(10, 2)
+  apiPrice    Decimal  @db.Decimal(10, 2)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([cableTv, packageCode])
+}
+
+model ElectricityDisco {
+  id            String   @id @default(cuid())
+  discoCode     String   @unique // misali: ikeja-electric, kano-electric
+  name          String   // Ikeja Electric (IKEDC)
+  provider      String   @default("CLUBKONNECT")
+  supportsPrepaid  Boolean  @default(true)
+  supportsPostpaid Boolean  @default(true)
+  minAmount     Decimal  @default(500) @db.Decimal(10, 2)
+  maxAmount     Decimal  @default(100000) @db.Decimal(10, 2)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
 enum PackageTier {
   REGULAR
   STANDARD

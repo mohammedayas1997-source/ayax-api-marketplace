@@ -457,6 +457,7 @@ app.use("/api/v1/pair-codes", pairCodeRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
 app.use("/api/v1/ai", aiRoutes);
 
+app.use("/api/v1/bills", require("./routes/bills.routes"));
 /* ======================================================
    PAYLOAD / PARSER ERROR HANDLER
 ====================================================== */

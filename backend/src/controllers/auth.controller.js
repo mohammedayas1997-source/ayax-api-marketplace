@@ -7,7 +7,6 @@ const createAuditLog = require("../utils/audit");
 const { emitEvent } = require("../config/socket");
 const {
   sendWelcomeEmail,
-  sendLoginAlertEmail,
 } = require("../services/accountEmail.service");
 
 const {

@@ -22,6 +22,7 @@ const {
 const {
   sendLoginOtpSms,
 } = require("../utils/sendLoginOtpSms");
+const { sendLoginAlertEmail } = require("../services/emailService");
 
 /* ======================================================
    CONSTANTS
@@ -770,6 +771,12 @@ exports.register = async (req, res) => {
    POST /api/v1/auth/login
 ====================================================== */
 
+/* ======================================================
+   LOGIN (STEP 1: PASSWORD VERIFICATION & OTP GENERATION)
+
+   POST /api/v1/auth/login
+====================================================== */
+
 exports.login = async (req, res) => {
   console.log("LOGIN REQUEST RECEIVED:", {
     email: normalizeEmail(req.body?.email),
@@ -890,7 +897,7 @@ exports.login = async (req, res) => {
       });
     }
 
-    // Password is correct, but login is incomplete until OTP verification
+    // Password is correct, initiate OTP generation
     const { code, otpId, expiresAt } = await createLoginOtp(user.id);
 
     const deliveryResults = await Promise.allSettled([
@@ -934,8 +941,6 @@ exports.login = async (req, res) => {
       },
     });
 
-    // NOTE: This block allows login bypass if both Email and SMS fail. 
-    // If you want strict OTP enforcement, change this to return a 500 error instead.
     if (!emailSent && !smsSent) {
       console.error("OTP delivery failed, but allowing login for debugging.");
 
@@ -984,8 +989,6 @@ exports.login = async (req, res) => {
       },
     };
 
-    // Development only: include OTP in response for easier testing
-    // Ensure NODE_ENV is set to "production" in live environments
     if (process.env.NODE_ENV !== "production") {
       response.developmentOtp = code;
     }
@@ -1118,6 +1121,7 @@ exports.verifyLoginOtp = async (req, res) => {
       description: `${updatedUser.email} logged in successfully after OTP verification.`,
     });
 
+    // Send security login notification in background
     sendLoginAlertEmail({
       user: updatedUser,
       ipAddress: getClientIp(req),
@@ -1141,6 +1145,7 @@ exports.verifyLoginOtp = async (req, res) => {
     return sendAuthError(res, error, "Unable to verify login OTP.");
   }
 };
+
 /* ======================================================
    RESEND LOGIN OTP
 
@@ -1153,253 +1158,153 @@ exports.verifyLoginOtp = async (req, res) => {
    }
 ====================================================== */
 
-exports.resendLoginOtp = async (
-  req,
-  res
-) => {
+exports.resendLoginOtp = async (req, res) => {
   try {
-    const userId =
-      normalizeText(
-        req.body.userId
-      );
+    const userId = normalizeText(req.body.userId);
+    const previousOtpId = normalizeText(req.body.otpId);
 
-    const previousOtpId =
-      normalizeText(
-        req.body.otpId
-      );
-
-    if (
-      !userId ||
-      !previousOtpId
-    ) {
+    if (!userId || !previousOtpId) {
       return res.status(400).json({
         success: false,
-
-        code:
-          "INVALID_OTP_RESEND_REQUEST",
-
-        message:
-          "User ID and previous OTP ID are required.",
+        code: "INVALID_OTP_RESEND_REQUEST",
+        message: "User ID and previous OTP ID are required.",
       });
     }
 
-    /*
-     * Tabbatar da cewa OTP request ɗin
-     * da aka turo na user ɗin ne.
-     */
-    const previousOtp =
-      await prisma.loginOtp.findFirst({
-        where: {
-          id: previousOtpId,
-          userId,
-        },
-
-        select: {
-          id: true,
-          createdAt: true,
-        },
-      });
+    const previousOtp = await prisma.loginOtp.findFirst({
+      where: {
+        id: previousOtpId,
+        userId,
+      },
+      select: {
+        id: true,
+        createdAt: true,
+      },
+    });
 
     if (!previousOtp) {
       return res.status(400).json({
         success: false,
-
-        code:
-          "INVALID_OTP_RESEND_REQUEST",
-
-        message:
-          "The OTP resend request is invalid.",
+        code: "INVALID_OTP_RESEND_REQUEST",
+        message: "The OTP resend request is invalid.",
       });
     }
 
-    const elapsedSeconds =
-      Math.floor(
-        (
-          Date.now() -
-          new Date(
-            previousOtp.createdAt
-          ).getTime()
-        ) / 1000
-      );
+    const elapsedSeconds = Math.floor(
+      (Date.now() - new Date(previousOtp.createdAt).getTime()) / 1000
+    );
 
-    if (
-      elapsedSeconds <
-      OTP_RESEND_COOLDOWN_SECONDS
-    ) {
-      const retryAfter =
-        OTP_RESEND_COOLDOWN_SECONDS -
-        elapsedSeconds;
+    if (elapsedSeconds < OTP_RESEND_COOLDOWN_SECONDS) {
+      const retryAfter = OTP_RESEND_COOLDOWN_SECONDS - elapsedSeconds;
 
-      res.setHeader(
-        "Retry-After",
-        String(retryAfter)
-      );
+      res.setHeader("Retry-After", String(retryAfter));
 
       return res.status(429).json({
         success: false,
-
-        code:
-          "OTP_RESEND_COOLDOWN",
-
-        message:
-          `Please wait ${retryAfter} seconds before requesting another OTP.`,
-
+        code: "OTP_RESEND_COOLDOWN",
+        message: `Please wait ${retryAfter} seconds before requesting another OTP.`,
         retryAfter,
       });
     }
 
-    const user =
-      await prisma.user.findUnique({
-        where: {
-          id: userId,
-        },
+    const user = await prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+      select: safeUserSelect,
+    });
 
-        select:
-          safeUserSelect,
-      });
-
-    if (
-      !user ||
-      normalizeRole(user.status) !==
-        "ACTIVE"
-    ) {
+    if (!user || normalizeRole(user.status) !== "ACTIVE") {
       return res.status(400).json({
         success: false,
-
-        code:
-          "INVALID_OTP_RESEND_REQUEST",
-
-        message:
-          "The OTP resend request is invalid.",
+        code: "INVALID_OTP_RESEND_REQUEST",
+        message: "The OTP resend request is invalid.",
       });
     }
 
-    const {
-      code,
-      otpId,
-      expiresAt,
-    } = await createLoginOtp(
-      user.id
-    );
+    const { code, otpId, expiresAt } = await createLoginOtp(user.id);
 
     const resendResults = await Promise.allSettled([
-  sendLoginOtpEmail({
-    user,
-    otp: code,
-    expiresAt,
-    ipAddress: getClientIp(req),
-  }),
+      sendLoginOtpEmail({
+        user,
+        otp: code,
+        expiresAt,
+        ipAddress: getClientIp(req),
+      }),
+      sendLoginOtpSms({
+        user,
+        otp: code,
+      }),
+    ]);
 
-  sendLoginOtpSms({
-    user,
-    otp: code,
-  }),
-]);
+    const emailSent = resendResults[0].status === "fulfilled";
+    const smsSent = resendResults[1].status === "fulfilled";
 
-const emailSent =
-  resendResults[0].status === "fulfilled";
+    console.log("LOGIN OTP RESEND RESULTS:", {
+      userId: user.id,
+      email: {
+        sent: emailSent,
+        error: emailSent
+          ? null
+          : {
+              code: resendResults[0].reason?.code,
+              message: resendResults[0].reason?.message,
+            },
+      },
+      sms: {
+        sent: smsSent,
+        error: smsSent
+          ? null
+          : {
+              code: resendResults[1].reason?.code,
+              message: resendResults[1].reason?.message,
+              response: resendResults[1].reason?.response,
+            },
+      },
+    });
 
-const smsSent =
-  resendResults[1].status === "fulfilled";
-
-console.log("LOGIN OTP RESEND RESULTS:", {
-  userId: user.id,
-
-  email: {
-    sent: emailSent,
-    error: emailSent
-      ? null
-      : {
-          code: resendResults[0].reason?.code,
-          message: resendResults[0].reason?.message,
-        },
-  },
-
-  sms: {
-    sent: smsSent,
-    error: smsSent
-      ? null
-      : {
-          code: resendResults[1].reason?.code,
-          message: resendResults[1].reason?.message,
-          response: resendResults[1].reason?.response,
-        },
-  },
-});
-
-if (!emailSent && !smsSent) {
-  const error = new Error(
-    "Unable to resend the login verification code."
-  );
-
-  error.statusCode = 500;
-  error.code = "OTP_DELIVERY_FAILED";
-
-  throw error;
-}
+    if (!emailSent && !smsSent) {
+      const error = new Error("Unable to resend the login verification code.");
+      error.statusCode = 500;
+      error.code = "OTP_DELIVERY_FAILED";
+      throw error;
+    }
 
     await recordSecurityLog({
       userId: user.id,
       req,
-
-      event:
-        "LOGIN_OTP_RESENT",
-
+      event: "LOGIN_OTP_RESENT",
       successful: true,
-
-      description:
-        "A new login OTP was requested.",
+      description: "A new login OTP was requested.",
     });
 
     const response = {
       success: true,
-
       requiresOtp: true,
-
-      code:
-        "LOGIN_OTP_RESENT",
-
-     message:
-  emailSent && smsSent
-    ? "A new verification code has been sent to your email and phone."
-    : emailSent
-      ? "A new verification code has been sent to your email."
-      : "A new verification code has been sent to your phone.",
-
-deliveryChannels: {
-  email: emailSent,
-  sms: smsSent,
-},
+      code: "LOGIN_OTP_RESENT",
+      message: emailSent && smsSent
+        ? "A new verification code has been sent to your email and phone."
+        : emailSent
+          ? "A new verification code has been sent to your email."
+          : "A new verification code has been sent to your phone.",
+      deliveryChannels: {
+        email: emailSent,
+        sms: smsSent,
+      },
       otpId,
-
       userId: user.id,
-
       expiresAt,
-
-      expiresInSeconds:
-        10 * 60,
-
-      maskedEmail:
-        maskEmail(user.email),
+      expiresInSeconds: 10 * 60,
+      maskedEmail: maskEmail(user.email),
     };
 
-    if (
-      process.env.NODE_ENV !==
-      "production"
-    ) {
-      response.developmentOtp =
-        code;
+    if (process.env.NODE_ENV !== "production") {
+      response.developmentOtp = code;
     }
 
-    return res.status(200).json(
-      response
-    );
+    return res.status(200).json(response);
   } catch (error) {
-    return sendAuthError(
-      res,
-      error,
-      "Unable to resend login OTP."
-    );
+    return sendAuthError(res, error, "Unable to resend login OTP.");
   }
 };
 

@@ -5,26 +5,19 @@ const jwt = require("jsonwebtoken");
 const prisma = require("../config/prisma");
 const createAuditLog = require("../utils/audit");
 const { emitEvent } = require("../config/socket");
-const {
-  sendWelcomeEmail,
-} = require("../services/accountEmail.service");
+const { sendWelcomeEmail } = require("../services/accountEmail.service");
 
 const {
   createLoginOtp,
   verifyLoginOtp: verifyStoredLoginOtp,
 } = require("../utils/loginOtp");
 
-const {
-  sendLoginOtpEmail,
-} = require("../utils/sendLoginOtpEmail");
+const { sendLoginOtpEmail } = require("../utils/sendLoginOtpEmail");
+const { sendLoginOtpSms } = require("../utils/sendLoginOtpSms");
 
 const {
-  sendLoginOtpSms,
-} = require("../utils/sendLoginOtpSms");
-const { 
-  sendLoginAlertEmail, 
+  sendLoginAlertEmail,
   sendPasswordResetEmail,
-  sendLoginOtpEmail
 } = require("../services/emailService");
 
 /* ======================================================

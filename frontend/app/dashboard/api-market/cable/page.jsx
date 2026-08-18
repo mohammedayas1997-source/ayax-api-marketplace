@@ -21,12 +21,12 @@ import {
   Check,
   Code2,
   Terminal,
-  Server,
   Clock,
   FileJson,
   Hash,
   Phone,
   Package,
+  UserCheck,
 } from "lucide-react";
 
 import DashboardLayout from "@/components/layouts/DashboardLayout";
@@ -45,19 +45,19 @@ const LANGUAGES = [
 
 const DEFAULT_PROVIDERS = [
   {
-    id: "DSTV",
+    id: "dstv",
     code: "DSTV",
     name: "DStv",
     status: "ACTIVE",
   },
   {
-    id: "GOTV",
+    id: "gotv",
     code: "GOTV",
     name: "GOtv",
     status: "ACTIVE",
   },
   {
-    id: "STARTIMES",
+    id: "startimes",
     code: "STARTIMES",
     name: "StarTimes",
     status: "ACTIVE",
@@ -66,10 +66,9 @@ const DEFAULT_PROVIDERS = [
 
 const INITIAL_RESPONSE = {
   success: true,
-  message:
-    "Your live Cable TV API response will appear here.",
+  message: "Your live Cable TV API response will appear here.",
   data: {
-    reference: "AYAX-CABLE-XXXXXXXX",
+    reference: "AYAX_CABLE_XXXXXXXX",
     status: "SUCCESSFUL",
   },
 };
@@ -86,190 +85,78 @@ const getErrorMessage = (error, fallback) =>
   error?.message ||
   fallback;
 
-const normalizeProvider = (provider = {}) => ({
-  id:
-    provider.id ||
-    provider.code ||
-    provider.serviceCode ||
-    provider.slug,
-
-  code: String(
-    provider.code ||
-      provider.serviceCode ||
-      provider.id ||
-      provider.slug ||
-      ""
-  ).toUpperCase(),
-
-  name:
-    provider.name ||
-    provider.displayName ||
-    provider.providerName ||
-    "Cable Provider",
-
-  status: String(
-    provider.status || "ACTIVE"
-  ).toUpperCase(),
-
-  logo: provider.logo || null,
-});
-
-const normalizePackage = (
-  item = {},
-  providerCode = ""
-) => ({
-  id:
-    item.id ||
-    item.packageId ||
-    item.variationCode ||
-    item.code,
-
-  code:
-    item.code ||
-    item.variationCode ||
-    item.packageCode ||
-    item.id,
-
-  name:
-    item.name ||
-    item.packageName ||
-    item.title ||
-    "Cable Package",
-
-  providerCode: String(
-    item.providerCode ||
-      item.provider ||
-      providerCode
-  ).toUpperCase(),
-
-  price: Number(
-    item.sellingPrice ??
-      item.amount ??
-      item.price ??
-      0
-  ),
-
-  status: String(
-    item.status || "ACTIVE"
-  ).toUpperCase(),
-
-  validity:
-    item.validity ||
-    item.duration ||
-    null,
-
-  description:
-    item.description || null,
+const normalizePackage = (item = {}, providerCode = "") => ({
+  id: item.id || item.packageCode,
+  code: item.packageCode || item.code || item.id,
+  name: item.name || item.packageName || "Cable Package",
+  providerCode: String(item.cableTv || providerCode).toUpperCase(),
+  price: Number(item.apiPrice ?? item.price ?? 0),
+  status: item.isActive !== false ? "ACTIVE" : "INACTIVE",
 });
 
 const normalizeApiKey = (item = {}) => ({
   id: item.id,
   name: item.name || "Live API Key",
   key: item.key || item.apiKey || "",
-  status: String(
-    item.status || "ACTIVE"
-  ).toUpperCase(),
+  status: String(item.status || "ACTIVE").toUpperCase(),
 });
 
 const normalizeRequest = (item = {}) => ({
-  id:
-    item.id ||
-    item.reference ||
-    `${Date.now()}-${Math.random()}`,
-
-  reference:
-    item.reference ||
-    item.transactionReference ||
-    "-",
-
-  provider:
-    item.provider ||
-    item.providerCode ||
-    "-",
-
-  packageName:
-    item.packageName ||
-    item.planName ||
-    item.description ||
-    "-",
-
+  id: item.id || item.reference || `${Date.now()}-${Math.random()}`,
+  reference: item.reference || "-",
+  provider: item.metadata?.cableTv || item.description || "CABLE",
+  packageName: item.description || "Cable Subscription",
   amount: Number(item.amount || 0),
-
-  status: String(
-    item.status || "PENDING"
-  ).toUpperCase(),
-
-  createdAt:
-    item.createdAt ||
-    item.date ||
-    null,
+  status: String(item.status || "PENDING").toUpperCase(),
+  createdAt: item.createdAt || null,
 });
 
 export default function CableDeveloperApiPage() {
   const [wallet, setWallet] = useState(null);
   const [apiKeys, setApiKeys] = useState([]);
-  const [providers, setProviders] = useState([]);
+  const [providers, setProviders] = useState(DEFAULT_PROVIDERS);
   const [packages, setPackages] = useState([]);
-  const [recentRequests, setRecentRequests] =
-    useState([]);
+  const [recentRequests, setRecentRequests] = useState([]);
 
-  const [selectedProvider, setSelectedProvider] =
-    useState(null);
+  const [selectedProvider, setSelectedProvider] = useState(DEFAULT_PROVIDERS[0]);
+  const [selectedPackage, setSelectedPackage] = useState(null);
+  const [smartcardNumber, setSmartcardNumber] = useState("");
+  const [customerName, setCustomerName] = useState("");
+  const [phoneNumber, setPhoneNumber] = useState("");
 
-  const [selectedPackage, setSelectedPackage] =
-    useState(null);
-
-  const [smartcardNumber, setSmartcardNumber] =
-    useState("");
-
-  const [phoneNumber, setPhoneNumber] =
-    useState("");
-
-  const [apiResponse, setApiResponse] =
-    useState(INITIAL_RESPONSE);
-
-  const [activeLanguage, setActiveLanguage] =
-    useState("cURL");
-
-  const [providerSearch, setProviderSearch] =
-    useState("");
-
-  const [packageSearch, setPackageSearch] =
-    useState("");
+  const [apiResponse, setApiResponse] = useState(INITIAL_RESPONSE);
+  const [activeLanguage, setActiveLanguage] = useState("cURL");
+  const [providerSearch, setProviderSearch] = useState("");
+  const [packageSearch, setPackageSearch] = useState("");
 
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] =
-    useState(false);
-
-  const [loadingPackages, setLoadingPackages] =
-    useState(false);
-
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadingPackages, setLoadingPackages] = useState(false);
+  const [verifying, setVerifying] = useState(false);
   const [testing, setTesting] = useState(false);
 
-  const [copiedField, setCopiedField] =
-    useState("");
-
+  const [copiedField, setCopiedField] = useState("");
   const [message, setMessage] = useState("");
-  const [messageType, setMessageType] =
-    useState("info");
+  const [messageType, setMessageType] = useState("info");
 
   const fetchWallet = useCallback(async () => {
-    const response = await api.get("/wallet");
-
-    const walletData =
-      response.data?.wallet ||
-      response.data?.data?.wallet ||
-      response.data?.data ||
-      null;
-
-    setWallet(walletData);
-    return walletData;
+    try {
+      const response = await api.get("/wallet");
+      const walletData =
+        response.data?.wallet ||
+        response.data?.data?.wallet ||
+        response.data?.data ||
+        null;
+      setWallet(walletData);
+      return walletData;
+    } catch {
+      return null;
+    }
   }, []);
 
   const fetchApiKeys = useCallback(async () => {
     try {
       const response = await api.get("/api-keys");
-
       const list =
         response.data?.keys ||
         response.data?.apiKeys ||
@@ -278,500 +165,179 @@ export default function CableDeveloperApiPage() {
         [];
 
       const keys = Array.isArray(list)
-        ? list
-            .map(normalizeApiKey)
-            .filter(
-              (item) =>
-                item.status === "ACTIVE"
-            )
+        ? list.map(normalizeApiKey).filter((item) => item.status === "ACTIVE")
         : [];
 
       setApiKeys(keys);
       return keys;
-    } catch (error) {
-      if (error?.response?.status === 404) {
-        setApiKeys([]);
-        return [];
-      }
-
-      throw error;
+    } catch {
+      setApiKeys([]);
+      return [];
     }
   }, []);
 
-  const fetchProviders = useCallback(async () => {
+  const fetchPackages = useCallback(async (providerCode) => {
+    if (!providerCode) {
+      setPackages([]);
+      setSelectedPackage(null);
+      return [];
+    }
+
     try {
-      const response = await api.get(
-        "/cable/providers"
-      );
+      setLoadingPackages(true);
+      const response = await api.get("/bills/cable/packages", {
+        params: {
+          cableTv: String(providerCode).toLowerCase(),
+        },
+      });
 
       const list =
-        response.data?.providers ||
-        response.data?.services ||
-        response.data?.data?.providers ||
+        response.data?.packages ||
         response.data?.data ||
         [];
 
       const normalized = Array.isArray(list)
-        ? list
-            .map(normalizeProvider)
-            .filter(
-              (item) =>
-                item.id &&
-                item.status === "ACTIVE"
-            )
+        ? list.map((item) => normalizePackage(item, providerCode))
         : [];
 
-      const finalProviders =
-        normalized.length > 0
-          ? normalized
-          : DEFAULT_PROVIDERS;
-
-      setProviders(finalProviders);
-
-      setSelectedProvider((current) => {
-        if (current) {
-          const existing =
-            finalProviders.find(
-              (item) =>
-                item.code === current.code
-            );
-
-          if (existing) {
-            return existing;
-          }
-        }
-
-        return finalProviders[0] || null;
-      });
-
-      return finalProviders;
+      setPackages(normalized);
+      setSelectedPackage(normalized[0] || null);
+      return normalized;
     } catch (error) {
-      if (error?.response?.status === 404) {
-        setProviders(DEFAULT_PROVIDERS);
-
-        setSelectedProvider((current) => {
-          return current || DEFAULT_PROVIDERS[0];
-        });
-
-        return DEFAULT_PROVIDERS;
-      }
-
-      throw error;
+      setPackages([]);
+      setSelectedPackage(null);
+      return [];
+    } finally {
+      setLoadingPackages(false);
     }
   }, []);
 
-  const fetchPackages = useCallback(
-    async (providerCode) => {
-      if (!providerCode) {
-        setPackages([]);
-        setSelectedPackage(null);
-        return [];
-      }
+  const fetchRecentRequests = useCallback(async () => {
+    try {
+      const response = await api.get("/transactions?service=CABLE_TV");
+      const list =
+        response.data?.transactions ||
+        response.data?.data ||
+        [];
 
-      try {
-        setLoadingPackages(true);
+      const normalized = Array.isArray(list)
+        ? list.map(normalizeRequest)
+        : [];
 
-        const response = await api.get(
-          "/cable/packages",
-          {
-            params: {
-              provider: providerCode,
-              providerCode,
-            },
-          }
-        );
-
-        const list =
-          response.data?.packages ||
-          response.data?.plans ||
-          response.data?.variations ||
-          response.data?.data?.packages ||
-          response.data?.data?.plans ||
-          response.data?.data ||
-          [];
-
-        const normalized = Array.isArray(list)
-          ? list
-              .map((item) =>
-                normalizePackage(
-                  item,
-                  providerCode
-                )
-              )
-              .filter(
-                (item) =>
-                  item.id &&
-                  item.status === "ACTIVE"
-              )
-          : [];
-
-        setPackages(normalized);
-
-        setSelectedPackage((current) => {
-          if (current) {
-            const existing = normalized.find(
-              (item) =>
-                item.id === current.id
-            );
-
-            if (existing) {
-              return existing;
-            }
-          }
-
-          return normalized[0] || null;
-        });
-
-        return normalized;
-      } catch (error) {
-        setPackages([]);
-        setSelectedPackage(null);
-
-        if (error?.response?.status === 404) {
-          return [];
-        }
-
-        throw error;
-      } finally {
-        setLoadingPackages(false);
-      }
-    },
-    []
-  );
-
-  const fetchRecentRequests =
-    useCallback(async () => {
-      const routes = [
-        `/transactions?service=${SERVICE_CODE}`,
-        `/wallet/transactions?service=${SERVICE_CODE}`,
-      ];
-
-      for (const route of routes) {
-        try {
-          const response = await api.get(route);
-
-          const list =
-            response.data?.transactions ||
-            response.data?.requests ||
-            response.data?.data
-              ?.transactions ||
-            response.data?.data ||
-            [];
-
-          const normalized = Array.isArray(list)
-            ? list
-                .filter((item) => {
-                  const service = String(
-                    item.service ||
-                      item.serviceCode ||
-                      item.description ||
-                      ""
-                  ).toUpperCase();
-
-                  return (
-                    service.includes("CABLE") ||
-                    service.includes("DSTV") ||
-                    service.includes("GOTV") ||
-                    service.includes(
-                      "STARTIMES"
-                    )
-                  );
-                })
-                .slice(0, 10)
-                .map(normalizeRequest)
-            : [];
-
-          setRecentRequests(normalized);
-          return normalized;
-        } catch (error) {
-          if (
-            error?.response?.status !== 404
-          ) {
-            throw error;
-          }
-        }
-      }
-
+      setRecentRequests(normalized);
+      return normalized;
+    } catch {
       setRecentRequests([]);
       return [];
-    }, []);
+    }
+  }, []);
 
   const loadPage = useCallback(
     async ({ silent = false } = {}) => {
       try {
-        if (silent) {
-          setRefreshing(true);
-        } else {
-          setLoading(true);
-        }
+        if (silent) setRefreshing(true);
+        else setLoading(true);
 
         setMessage("");
 
-        const results =
-          await Promise.allSettled([
-            fetchWallet(),
-            fetchApiKeys(),
-            fetchProviders(),
-            fetchRecentRequests(),
-          ]);
-
-        const providerResult = results[2];
-
-        if (
-          providerResult.status ===
-            "fulfilled" &&
-          providerResult.value?.[0]
-        ) {
-          const firstProvider =
-            selectedProvider ||
-            providerResult.value[0];
-
-          await fetchPackages(
-            firstProvider.code
-          );
-        }
-
-        const failed = results.find(
-          (result) =>
-            result.status === "rejected"
-        );
-
-        if (failed) {
-          setMessageType("error");
-          setMessage(
-            getErrorMessage(
-              failed.reason,
-              "Some Cable TV API information could not be loaded."
-            )
-          );
-        }
+        await Promise.allSettled([
+          fetchWallet(),
+          fetchApiKeys(),
+          fetchRecentRequests(),
+          fetchPackages(selectedProvider?.code || "DSTV"),
+        ]);
       } finally {
         setLoading(false);
         setRefreshing(false);
       }
     },
-    [
-      fetchWallet,
-      fetchApiKeys,
-      fetchProviders,
-      fetchPackages,
-      fetchRecentRequests,
-      selectedProvider,
-    ]
+    [fetchWallet, fetchApiKeys, fetchRecentRequests, fetchPackages, selectedProvider]
   );
 
   useEffect(() => {
     loadPage();
 
-    const token =
-      localStorage.getItem("token");
+    const token = localStorage.getItem("token");
+    if (token) socket.auth = { token };
+    if (!socket.connected) socket.connect();
 
-    if (token) {
-      socket.auth = { token };
-    }
-
-    if (!socket.connected) {
-      socket.connect();
-    }
-
-    const refreshWalletAndRequests = () => {
+    const refreshData = () => {
       fetchWallet().catch(console.error);
-      fetchRecentRequests().catch(
-        console.error
-      );
+      fetchRecentRequests().catch(console.error);
     };
 
-    const refreshProviders = () => {
-      fetchProviders().catch(console.error);
-    };
-
-    const refreshCurrentPackages = () => {
-      if (selectedProvider?.code) {
-        fetchPackages(
-          selectedProvider.code
-        ).catch(console.error);
-      }
-    };
-
-    const refreshKeys = () => {
-      fetchApiKeys().catch(console.error);
-    };
-
-    socket.on(
-      "wallet-updated",
-      refreshWalletAndRequests
-    );
-
-    socket.on(
-      "transaction-updated",
-      refreshWalletAndRequests
-    );
-
-    socket.on(
-      "cable-purchase-successful",
-      refreshWalletAndRequests
-    );
-
-    socket.on(
-      "cable-providers-updated",
-      refreshProviders
-    );
-
-    socket.on(
-      "cable-packages-updated",
-      refreshCurrentPackages
-    );
-
-    socket.on(
-      "api-key-created",
-      refreshKeys
-    );
+    socket.on("wallet-updated", refreshData);
+    socket.on("transaction-updated", refreshData);
 
     return () => {
-      socket.off(
-        "wallet-updated",
-        refreshWalletAndRequests
-      );
-
-      socket.off(
-        "transaction-updated",
-        refreshWalletAndRequests
-      );
-
-      socket.off(
-        "cable-purchase-successful",
-        refreshWalletAndRequests
-      );
-
-      socket.off(
-        "cable-providers-updated",
-        refreshProviders
-      );
-
-      socket.off(
-        "cable-packages-updated",
-        refreshCurrentPackages
-      );
-
-      socket.off(
-        "api-key-created",
-        refreshKeys
-      );
+      socket.off("wallet-updated", refreshData);
+      socket.off("transaction-updated", refreshData);
     };
-  }, [
-    loadPage,
-    fetchWallet,
-    fetchApiKeys,
-    fetchProviders,
-    fetchPackages,
-    fetchRecentRequests,
-    selectedProvider,
-  ]);
+  }, [loadPage, fetchWallet, fetchRecentRequests]);
 
   const chooseProvider = async (provider) => {
     setSelectedProvider(provider);
     setSelectedPackage(null);
     setPackages([]);
+    setCustomerName("");
     setMessage("");
+    await fetchPackages(provider.code);
+  };
+
+  // Verify IUC / SmartCard Number
+  const verifySmartcard = async () => {
+    const cleanSmartcard = smartcardNumber.replace(/\D/g, "").trim();
+    if (cleanSmartcard.length < 5) {
+      setMessageType("error");
+      setMessage("Enter a valid smartcard or IUC number to verify.");
+      return;
+    }
 
     try {
-      await fetchPackages(provider.code);
+      setVerifying(true);
+      setMessage("");
+      setCustomerName("");
+
+      const response = await api.post("/bills/cable/verify", {
+        cableTv: selectedProvider.code.toLowerCase(),
+        smartCardNo: cleanSmartcard,
+      });
+
+      const name = response.data?.data?.customerName || response.data?.customerName;
+      if (name) {
+        setCustomerName(name);
+        setMessageType("success");
+        setMessage(`Verified Customer: ${name}`);
+      }
     } catch (error) {
       setMessageType("error");
-      setMessage(
-        getErrorMessage(
-          error,
-          "Unable to load cable packages."
-        )
-      );
+      setMessage(getErrorMessage(error, "Unable to verify smartcard number."));
+    } finally {
+      setVerifying(false);
     }
   };
 
-  const filteredProviders = useMemo(() => {
-    const query = providerSearch
-      .trim()
-      .toLowerCase();
-
-    return providers.filter((provider) => {
-      return (
-        !query ||
-        provider.name
-          .toLowerCase()
-          .includes(query) ||
-        provider.code
-          .toLowerCase()
-          .includes(query)
-      );
-    });
-  }, [providers, providerSearch]);
-
-  const filteredPackages = useMemo(() => {
-    const query = packageSearch
-      .trim()
-      .toLowerCase();
-
-    return packages.filter((item) => {
-      return (
-        !query ||
-        item.name
-          .toLowerCase()
-          .includes(query) ||
-        String(item.price).includes(query) ||
-        item.code
-          ?.toLowerCase()
-          .includes(query)
-      );
-    });
-  }, [packages, packageSearch]);
-
-  const activeApiKey =
-    apiKeys?.[0]?.key || "";
-
+  const activeApiKey = apiKeys?.[0]?.key || "";
   const apiBaseUrl =
     process.env.NEXT_PUBLIC_API_URL ||
     "https://ayax-api-marketplace.onrender.com/api/v1";
 
-  const fullEndpoint =
-    `${apiBaseUrl.replace(
-      /\/$/,
-      ""
-    )}/cable/buy`;
+  const fullEndpoint = `${apiBaseUrl.replace(/\/$/, "")}/bills/cable/buy`;
 
   const requestBody = useMemo(
     () => ({
-      providerCode:
-        selectedProvider?.code || "DSTV",
-
-      packageCode:
-        selectedPackage?.code ||
-        "PACKAGE_CODE",
-
-      smartcardNumber:
-        smartcardNumber ||
-        "1234567890",
-
-      phoneNumber:
-        phoneNumber ||
-        "08012345678",
+      cableTv: (selectedProvider?.code || "DSTV").toLowerCase(),
+      packageCode: selectedPackage?.code || "01",
+      smartCardNo: smartcardNumber || "1234567890",
+      phone: phoneNumber || "08012345678",
+      amount: selectedPackage?.price || 3500,
     }),
-    [
-      selectedProvider,
-      selectedPackage,
-      smartcardNumber,
-      phoneNumber,
-    ]
+    [selectedProvider, selectedPackage, smartcardNumber, phoneNumber]
   );
 
   const codeExamples = useMemo(() => {
-    const body = JSON.stringify(
-      requestBody,
-      null,
-      2
-    );
-
-    const apiKey =
-      activeApiKey ||
-      "YOUR_AYAX_API_KEY";
+    const body = JSON.stringify(requestBody, null, 2);
+    const apiKey = activeApiKey || "YOUR_AYAX_API_KEY";
 
     return {
       cURL: `curl --request POST \\
@@ -797,10 +363,7 @@ async function buyCableSubscription() {
 
     console.log(response.data);
   } catch (error) {
-    console.error(
-      error.response?.data ||
-      error.message
-    );
+    console.error(error.response?.data || error.message);
   }
 }
 
@@ -808,9 +371,7 @@ buyCableSubscription();`,
 
       PHP: `<?php
 
-$payload = ${JSON.stringify(
-        requestBody
-      )};
+$payload = ${JSON.stringify(requestBody)};
 
 $curl = curl_init("${fullEndpoint}");
 
@@ -855,10 +416,7 @@ headers = {
     "x-api-key": "${apiKey}"
 }
 
-payload = ${body
-        .replace(/true/g, "True")
-        .replace(/false/g, "False")
-        .replace(/null/g, "None")}
+payload = ${body.replace(/true/g, "True").replace(/false/g, "False").replace(/null/g, "None")}
 
 response = requests.post(
     url,
@@ -886,79 +444,39 @@ export async function buyCableSubscription() {
 
     return response.data;
   } catch (error) {
-    throw new Error(
-      error.response?.data?.message ||
-      "Cable subscription failed"
-    );
+    throw new Error(error.response?.data?.message || "Cable subscription failed");
   }
 }`,
     };
-  }, [
-    requestBody,
-    fullEndpoint,
-    activeApiKey,
-  ]);
+  }, [requestBody, fullEndpoint, activeApiKey]);
 
+  // Test Live Subscription
   const testCableApi = async (event) => {
     event.preventDefault();
 
-    if (!selectedProvider) {
+    if (!selectedProvider || !selectedPackage) {
       setMessageType("error");
-      setMessage(
-        "Select a cable provider."
-      );
+      setMessage("Select a cable provider and package.");
       return;
     }
 
-    if (!selectedPackage) {
+    const cleanSmartcard = smartcardNumber.replace(/\D/g, "").trim();
+    if (cleanSmartcard.length < 5) {
       setMessageType("error");
-      setMessage(
-        "Select a cable package."
-      );
+      setMessage("Enter a valid smartcard or IUC number.");
       return;
     }
 
-    const cleanSmartcard =
-      smartcardNumber
-        .replace(/\D/g, "")
-        .trim();
-
-    if (
-      cleanSmartcard.length < 5 ||
-      cleanSmartcard.length > 20
-    ) {
+    const cleanPhone = phoneNumber.replace(/\s+/g, "").trim();
+    if (!/^(\+234|0)[789][01]\d{8}$/.test(cleanPhone)) {
       setMessageType("error");
-      setMessage(
-        "Enter a valid smartcard or IUC number."
-      );
+      setMessage("Enter a valid Nigerian phone number.");
       return;
     }
 
-    const cleanPhone =
-      phoneNumber
-        .replace(/\s+/g, "")
-        .trim();
-
-    if (
-      !/^(\+234|0)[789][01]\d{8}$/.test(
-        cleanPhone
-      )
-    ) {
+    if (Number(wallet?.balance || 0) < Number(selectedPackage.price || 0)) {
       setMessageType("error");
-      setMessage(
-        "Enter a valid Nigerian phone number."
-      );
-      return;
-    }
-
-    if (
-      Number(wallet?.balance || 0) <
-      Number(selectedPackage.price || 0)
-    ) {
-      setMessageType("error");
-      setMessage(
-        "Insufficient wallet balance for this package."
-      );
+      setMessage("Insufficient wallet balance for this package.");
       return;
     }
 
@@ -966,66 +484,29 @@ export async function buyCableSubscription() {
       setTesting(true);
       setMessage("");
 
-      const response = await api.post(
-        "/cable/buy",
-        {
-          provider:
-            selectedProvider.code,
-
-          providerCode:
-            selectedProvider.code,
-
-          packageId:
-            selectedPackage.id,
-
-          packageCode:
-            selectedPackage.code,
-
-          smartcardNumber:
-            cleanSmartcard,
-
-          iucNumber:
-            cleanSmartcard,
-
-          phoneNumber:
-            cleanPhone,
-
-          serviceCode:
-            SERVICE_CODE,
-        }
-      );
+      // Cikakken kiran da ya dace da backend/src/controllers/bills.controller.js
+      const response = await api.post("/bills/cable/buy", {
+        cableTv: selectedProvider.code.toLowerCase(),
+        packageCode: selectedPackage.code,
+        smartCardNo: cleanSmartcard,
+        phone: cleanPhone,
+        amount: Number(selectedPackage.price),
+      });
 
       setApiResponse(response.data);
-
       setMessageType("success");
-      setMessage(
-        response.data?.message ||
-          "Cable TV API test completed successfully."
-      );
+      setMessage(response.data?.message || "Cable TV subscription successful.");
 
-      await Promise.allSettled([
-        fetchWallet(),
-        fetchRecentRequests(),
-      ]);
+      await Promise.allSettled([fetchWallet(), fetchRecentRequests()]);
     } catch (error) {
-      const errorResponse =
-        error?.response?.data || {
-          success: false,
-          message: getErrorMessage(
-            error,
-            "Cable TV API test failed."
-          ),
-        };
+      const errorResponse = error?.response?.data || {
+        success: false,
+        message: getErrorMessage(error, "Cable TV API test failed."),
+      };
 
       setApiResponse(errorResponse);
-
       setMessageType("error");
-      setMessage(
-        getErrorMessage(
-          error,
-          "Cable TV API test failed."
-        )
-      );
+      setMessage(getErrorMessage(error, "Cable TV API test failed."));
     } finally {
       setTesting(false);
     }
@@ -1033,22 +514,26 @@ export async function buyCableSubscription() {
 
   const copyText = async (text, field) => {
     try {
-      await navigator.clipboard.writeText(
-        String(text)
-      );
-
+      await navigator.clipboard.writeText(String(text));
       setCopiedField(field);
-
-      window.setTimeout(() => {
-        setCopiedField("");
-      }, 1800);
+      window.setTimeout(() => setCopiedField(""), 1800);
     } catch {
       setMessageType("error");
-      setMessage(
-        "Unable to copy to clipboard."
-      );
+      setMessage("Unable to copy to clipboard.");
     }
   };
+
+  const filteredPackages = useMemo(() => {
+    const query = packageSearch.trim().toLowerCase();
+    return packages.filter((item) => {
+      return (
+        !query ||
+        item.name.toLowerCase().includes(query) ||
+        String(item.price).includes(query) ||
+        item.code?.toLowerCase().includes(query)
+      );
+    });
+  }, [packages, packageSearch]);
 
   if (loading) {
     return (
@@ -1058,10 +543,7 @@ export async function buyCableSubscription() {
       >
         <div className="rounded-3xl border border-slate-800 bg-slate-900 p-8 text-slate-400">
           <div className="flex items-center gap-3">
-            <LoaderCircle
-              size={22}
-              className="animate-spin"
-            />
+            <LoaderCircle size={22} className="animate-spin" />
             Loading Cable TV API...
           </div>
         </div>
@@ -1085,20 +567,11 @@ export async function buyCableSubscription() {
           }`}
         >
           {messageType === "success" ? (
-            <CheckCircle2
-              size={20}
-              className="mt-0.5 shrink-0"
-            />
+            <CheckCircle2 size={20} className="mt-0.5 shrink-0" />
           ) : (
-            <AlertCircle
-              size={20}
-              className="mt-0.5 shrink-0"
-            />
+            <AlertCircle size={20} className="mt-0.5 shrink-0" />
           )}
-
-          <span className="break-all">
-            {message}
-          </span>
+          <span className="break-all">{message}</span>
         </div>
       )}
 
@@ -1106,24 +579,19 @@ export async function buyCableSubscription() {
         <StatCard
           icon={<Wallet size={22} />}
           label="Wallet Balance"
-          value={formatNaira(
-            wallet?.balance
-          )}
+          value={formatNaira(wallet?.balance)}
         />
-
         <StatCard
           icon={<KeyRound size={22} />}
           label="Active API Keys"
           value={apiKeys.length}
         />
-
         <StatCard
           icon={<Activity size={22} />}
           label="API Status"
           value="Online"
           status
         />
-
         <StatCard
           icon={<Package size={22} />}
           label="Available Packages"
@@ -1134,129 +602,73 @@ export async function buyCableSubscription() {
       <div className="mb-8 flex justify-end">
         <button
           type="button"
-          onClick={() =>
-            loadPage({ silent: true })
-          }
+          onClick={() => loadPage({ silent: true })}
           disabled={refreshing}
           className="flex items-center gap-2 rounded-xl bg-slate-800 px-5 py-3 font-semibold hover:bg-slate-700 disabled:opacity-50"
         >
           <RefreshCcw
             size={18}
-            className={
-              refreshing
-                ? "animate-spin"
-                : ""
-            }
+            className={refreshing ? "animate-spin" : ""}
           />
-
-          {refreshing
-            ? "Refreshing..."
-            : "Refresh"}
+          {refreshing ? "Refreshing..." : "Refresh"}
         </button>
       </div>
 
+      {/* Provider Selection */}
       <section className="mb-8 rounded-3xl border border-slate-800 bg-slate-900 p-6">
         <div className="mb-6">
-          <h2 className="text-xl font-bold">
-            Cable Providers
-          </h2>
-
+          <h2 className="text-xl font-bold">Cable Providers</h2>
           <p className="mt-2 text-sm text-slate-400">
-            Select DStv, GOtv or StarTimes to
-            view available packages and prices.
+            Select DStv, GOtv or StarTimes to view available packages and prices.
           </p>
-        </div>
-
-        <div className="mb-5 flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950 px-4">
-          <Search
-            size={18}
-            className="text-slate-500"
-          />
-
-          <input
-            value={providerSearch}
-            onChange={(event) =>
-              setProviderSearch(
-                event.target.value
-              )
-            }
-            placeholder="Search cable provider..."
-            className="w-full bg-transparent py-4 outline-none"
-          />
         </div>
 
         <div className="grid gap-5 md:grid-cols-3">
-          {filteredProviders.map(
-            (provider) => {
-              const selected =
-                selectedProvider?.code ===
-                provider.code;
-
-              return (
-                <button
-                  key={provider.id}
-                  type="button"
-                  onClick={() =>
-                    chooseProvider(provider)
-                  }
-                  className={`rounded-3xl border p-6 text-left transition ${
-                    selected
-                      ? "border-blue-500 bg-blue-500/10"
-                      : "border-slate-800 bg-slate-950 hover:border-slate-700"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-400">
-                      <Tv size={24} />
-                    </div>
-
-                    {selected && (
-                      <CheckCircle2
-                        size={20}
-                        className="text-blue-400"
-                      />
-                    )}
+          {providers.map((provider) => {
+            const selected = selectedProvider?.code === provider.code;
+            return (
+              <button
+                key={provider.id}
+                type="button"
+                onClick={() => chooseProvider(provider)}
+                className={`rounded-3xl border p-6 text-left transition ${
+                  selected
+                    ? "border-blue-500 bg-blue-500/10"
+                    : "border-slate-800 bg-slate-950 hover:border-slate-700"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-400">
+                    <Tv size={24} />
                   </div>
-
-                  <h3 className="mt-5 text-xl font-bold">
-                    {provider.name}
-                  </h3>
-
-                  <p className="mt-2 text-sm text-slate-500">
-                    Code: {provider.code}
-                  </p>
-                </button>
-              );
-            }
-          )}
+                  {selected && (
+                    <CheckCircle2 size={20} className="text-blue-400" />
+                  )}
+                </div>
+                <h3 className="mt-5 text-xl font-bold">{provider.name}</h3>
+                <p className="mt-2 text-sm text-slate-500">
+                  Code: {provider.code.toLowerCase()}
+                </p>
+              </button>
+            );
+          })}
         </div>
       </section>
 
+      {/* Packages Grid */}
       <section className="mb-8 rounded-3xl border border-slate-800 bg-slate-900 p-6">
         <div className="mb-6">
-          <h2 className="text-xl font-bold">
-            Packages and Prices
-          </h2>
-
+          <h2 className="text-xl font-bold">Packages and Prices</h2>
           <p className="mt-2 text-sm text-slate-400">
-            These are the selling prices available
-            to developers through Ayax APIs.
+            Wholesale selling prices available to developers through Ayax APIs.
           </p>
         </div>
 
         <div className="mb-5 flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950 px-4">
-          <Search
-            size={18}
-            className="text-slate-500"
-          />
-
+          <Search size={18} className="text-slate-500" />
           <input
             value={packageSearch}
-            onChange={(event) =>
-              setPackageSearch(
-                event.target.value
-              )
-            }
+            onChange={(event) => setPackageSearch(event.target.value)}
             placeholder="Search package or price..."
             className="w-full bg-transparent py-4 outline-none"
           />
@@ -1264,30 +676,22 @@ export async function buyCableSubscription() {
 
         {loadingPackages ? (
           <div className="flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950 p-6 text-slate-400">
-            <LoaderCircle
-              size={20}
-              className="animate-spin"
-            />
+            <LoaderCircle size={20} className="animate-spin" />
             Loading packages...
           </div>
         ) : filteredPackages.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-950 p-8 text-center text-slate-500">
-            No active package is available for
-            this provider.
+            No active package found for this provider in database.
           </div>
         ) : (
           <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
             {filteredPackages.map((item) => {
-              const selected =
-                selectedPackage?.id === item.id;
-
+              const selected = selectedPackage?.id === item.id;
               return (
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() =>
-                    setSelectedPackage(item)
-                  }
+                  onClick={() => setSelectedPackage(item)}
                   className={`rounded-3xl border p-6 text-left transition ${
                     selected
                       ? "border-blue-500 bg-blue-500/10"
@@ -1296,30 +700,17 @@ export async function buyCableSubscription() {
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <h3 className="font-bold">
-                        {item.name}
-                      </h3>
-
+                      <h3 className="font-bold">{item.name}</h3>
                       <p className="mt-2 text-sm text-slate-500">
-                        {item.validity ||
-                          item.providerCode}
+                        Code: {item.code}
                       </p>
                     </div>
-
                     {selected && (
-                      <CheckCircle2
-                        size={19}
-                        className="shrink-0 text-blue-400"
-                      />
+                      <CheckCircle2 size={19} className="shrink-0 text-blue-400" />
                     )}
                   </div>
-
                   <p className="mt-5 text-2xl font-extrabold text-blue-400">
                     {formatNaira(item.price)}
-                  </p>
-
-                  <p className="mt-1 text-xs text-slate-500">
-                    Per successful subscription
                   </p>
                 </button>
               );
@@ -1328,75 +719,76 @@ export async function buyCableSubscription() {
         )}
       </section>
 
+      {/* Live API Tester */}
       <section className="mb-8 grid gap-8 xl:grid-cols-[0.85fr_1.15fr]">
         <form
           onSubmit={testCableApi}
           className="h-fit rounded-3xl border border-slate-800 bg-slate-900 p-6"
         >
           <div className="mb-6">
-            <h2 className="text-xl font-bold">
-              Live API Tester
-            </h2>
-
+            <h2 className="text-xl font-bold">Live API Tester</h2>
             <p className="mt-2 text-sm leading-6 text-slate-400">
-              Test Cable TV subscription using
-              your developer account.
+              Test Cable TV subscription directly from your marketplace wallet.
             </p>
           </div>
 
           <div className="space-y-5">
             <ReadOnlyField
               label="Provider"
-              value={
-                selectedProvider?.name ||
-                "No provider selected"
-              }
+              value={selectedProvider?.name || "No provider selected"}
             />
-
             <ReadOnlyField
               label="Package"
-              value={
-                selectedPackage?.name ||
-                "No package selected"
-              }
+              value={selectedPackage?.name || "No package selected"}
             />
-
             <ReadOnlyField
               label="Amount"
-              value={
-                selectedPackage
-                  ? formatNaira(
-                      selectedPackage.price
-                    )
-                  : "-"
-              }
+              value={selectedPackage ? formatNaira(selectedPackage.price) : "-"}
             />
 
             <div>
-              <label className="text-sm text-slate-400">
-                Smartcard / IUC Number
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="text-sm text-slate-400">
+                  Smartcard / IUC Number
+                </label>
+                {customerName && (
+                  <span className="text-xs font-semibold text-green-400">
+                    {customerName}
+                  </span>
+                )}
+              </div>
 
-              <div className="mt-2 flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950 px-4 focus-within:border-blue-500">
-                <Hash
-                  size={18}
-                  className="text-slate-500"
-                />
+              <div className="mt-2 flex items-center gap-2">
+                <div className="flex flex-1 items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950 px-4 focus-within:border-blue-500">
+                  <Hash size={18} className="text-slate-500" />
+                  <input
+                    inputMode="numeric"
+                    value={smartcardNumber}
+                    onChange={(event) => {
+                      setSmartcardNumber(
+                        event.target.value.replace(/\D/g, "").slice(0, 20)
+                      );
+                      setCustomerName("");
+                    }}
+                    placeholder="Enter smartcard or IUC"
+                    required
+                    className="w-full bg-transparent py-4 outline-none"
+                  />
+                </div>
 
-                <input
-                  inputMode="numeric"
-                  value={smartcardNumber}
-                  onChange={(event) =>
-                    setSmartcardNumber(
-                      event.target.value
-                        .replace(/\D/g, "")
-                        .slice(0, 20)
-                    )
-                  }
-                  placeholder="Enter smartcard or IUC"
-                  required
-                  className="w-full bg-transparent py-4 outline-none"
-                />
+                <button
+                  type="button"
+                  onClick={verifySmartcard}
+                  disabled={verifying || !smartcardNumber}
+                  className="flex items-center gap-2 rounded-2xl bg-slate-800 px-4 py-4 text-xs font-semibold hover:bg-slate-700 disabled:opacity-50"
+                >
+                  {verifying ? (
+                    <LoaderCircle size={16} className="animate-spin" />
+                  ) : (
+                    <UserCheck size={16} />
+                  )}
+                  Verify
+                </button>
               </div>
             </div>
 
@@ -1404,21 +796,12 @@ export async function buyCableSubscription() {
               <label className="text-sm text-slate-400">
                 Customer Phone Number
               </label>
-
               <div className="mt-2 flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950 px-4 focus-within:border-blue-500">
-                <Phone
-                  size={18}
-                  className="text-slate-500"
-                />
-
+                <Phone size={18} className="text-slate-500" />
                 <input
                   type="tel"
                   value={phoneNumber}
-                  onChange={(event) =>
-                    setPhoneNumber(
-                      event.target.value
-                    )
-                  }
+                  onChange={(event) => setPhoneNumber(event.target.value)}
                   placeholder="08012345678"
                   required
                   className="w-full bg-transparent py-4 outline-none"
@@ -1439,10 +822,7 @@ export async function buyCableSubscription() {
             >
               {testing ? (
                 <>
-                  <LoaderCircle
-                    size={18}
-                    className="animate-spin"
-                  />
+                  <LoaderCircle size={18} className="animate-spin" />
                   Sending Request...
                 </>
               ) : (
@@ -1457,125 +837,69 @@ export async function buyCableSubscription() {
 
         <JsonResponsePanel
           response={apiResponse}
-          copied={
-            copiedField === "response"
-          }
+          copied={copiedField === "response"}
           onCopy={() =>
-            copyText(
-              JSON.stringify(
-                apiResponse,
-                null,
-                2
-              ),
-              "response"
-            )
+            copyText(JSON.stringify(apiResponse, null, 2), "response")
           }
         />
       </section>
 
+      {/* API Documentation */}
       <section className="mb-8 rounded-3xl border border-slate-800 bg-slate-900 p-6">
         <div className="mb-6 flex items-start gap-4">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-purple-500/10 text-purple-400">
             <FileJson size={23} />
           </div>
-
           <div>
-            <h2 className="text-xl font-bold">
-              API Documentation
-            </h2>
-
+            <h2 className="text-xl font-bold">API Documentation</h2>
             <p className="mt-2 text-sm text-slate-400">
-              Call this endpoint from your secured
-              backend server.
+              Call this endpoint from your backend server.
             </p>
           </div>
         </div>
 
         <div className="grid gap-5 lg:grid-cols-2">
-          <DocumentationField
-            label="Method"
-            value="POST"
-          />
-
-          <DocumentationField
-            label="Content Type"
-            value="application/json"
-          />
-
+          <DocumentationField label="Method" value="POST" />
+          <DocumentationField label="Content Type" value="application/json" />
           <DocumentationField
             label="Endpoint"
             value={fullEndpoint}
             copy
-            copied={
-              copiedField === "endpoint"
-            }
-            onCopy={() =>
-              copyText(
-                fullEndpoint,
-                "endpoint"
-              )
-            }
+            copied={copiedField === "endpoint"}
+            onCopy={() => copyText(fullEndpoint, "endpoint")}
           />
-
           <DocumentationField
             label="Authentication"
             value="x-api-key: YOUR_AYAX_API_KEY"
             copy
-            copied={
-              copiedField === "auth"
-            }
-            onCopy={() =>
-              copyText(
-                "x-api-key: YOUR_AYAX_API_KEY",
-                "auth"
-              )
-            }
+            copied={copiedField === "auth"}
+            onCopy={() => copyText("x-api-key: YOUR_AYAX_API_KEY", "auth")}
           />
         </div>
 
         <div className="mt-6">
-          <p className="mb-2 text-sm text-slate-400">
-            Request Body
-          </p>
-
+          <p className="mb-2 text-sm text-slate-400">Request Body</p>
           <CodeBlock
-            value={JSON.stringify(
-              requestBody,
-              null,
-              2
-            )}
-            copied={
-              copiedField === "request-body"
-            }
+            value={JSON.stringify(requestBody, null, 2)}
+            copied={copiedField === "request-body"}
             onCopy={() =>
-              copyText(
-                JSON.stringify(
-                  requestBody,
-                  null,
-                  2
-                ),
-                "request-body"
-              )
+              copyText(JSON.stringify(requestBody, null, 2), "request-body")
             }
           />
         </div>
       </section>
 
+      {/* Code Examples */}
       <section className="mb-8 overflow-hidden rounded-3xl border border-slate-800 bg-slate-900">
         <div className="border-b border-slate-800 p-6">
           <div className="flex items-start gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-green-500/10 text-green-400">
               <Code2 size={23} />
             </div>
-
             <div>
-              <h2 className="text-xl font-bold">
-                Code Examples
-              </h2>
-
+              <h2 className="text-xl font-bold">Code Examples</h2>
               <p className="mt-2 text-sm text-slate-400">
-                Copy the example for your preferred
-                programming language.
+                Copy code for your preferred programming language.
               </p>
             </div>
           </div>
@@ -1586,9 +910,7 @@ export async function buyCableSubscription() {
             <button
               key={language}
               type="button"
-              onClick={() =>
-                setActiveLanguage(language)
-              }
+              onClick={() => setActiveLanguage(language)}
               className={`shrink-0 rounded-xl px-4 py-3 text-sm font-semibold ${
                 activeLanguage === language
                   ? "bg-blue-600 text-white"
@@ -1603,55 +925,36 @@ export async function buyCableSubscription() {
         <div className="relative bg-slate-950 p-6">
           <button
             type="button"
-            onClick={() =>
-              copyText(
-                codeExamples[
-                  activeLanguage
-                ],
-                "code"
-              )
-            }
+            onClick={() => copyText(codeExamples[activeLanguage], "code")}
             className="absolute right-5 top-5 flex items-center gap-2 rounded-xl bg-slate-800 px-4 py-2 text-sm font-semibold hover:bg-slate-700"
           >
             {copiedField === "code" ? (
               <>
-                <Check size={16} />
-                Copied
+                <Check size={16} /> Copied
               </>
             ) : (
               <>
-                <Copy size={16} />
-                Copy
+                <Copy size={16} /> Copy
               </>
             )}
           </button>
 
           <pre className="max-h-[520px] overflow-auto pr-24 text-sm leading-7 text-slate-300">
-            <code>
-              {
-                codeExamples[
-                  activeLanguage
-                ]
-              }
-            </code>
+            <code>{codeExamples[activeLanguage]}</code>
           </pre>
         </div>
       </section>
 
+      {/* Recent Requests */}
       <section className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
         <div className="mb-6 flex items-start gap-4">
           <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-yellow-500/10 text-yellow-400">
             <Clock size={23} />
           </div>
-
           <div>
-            <h2 className="text-xl font-bold">
-              Recent Cable Requests
-            </h2>
-
+            <h2 className="text-xl font-bold">Recent Cable Requests</h2>
             <p className="mt-2 text-sm text-slate-400">
-              Your latest Cable TV API
-              transactions.
+              Your latest Cable TV API transactions.
             </p>
           </div>
         </div>
@@ -1671,29 +974,20 @@ export async function buyCableSubscription() {
                   <p className="font-mono text-sm font-semibold">
                     {item.reference}
                   </p>
-
                   <p className="mt-1 text-sm text-slate-400">
-                    {item.provider} •{" "}
-                    {item.packageName}
+                    {item.provider} • {item.packageName}
                   </p>
-
                   <p className="mt-1 text-xs text-slate-500">
                     {item.createdAt
-                      ? new Date(
-                          item.createdAt
-                        ).toLocaleString()
+                      ? new Date(item.createdAt).toLocaleString()
                       : "-"}
                   </p>
                 </div>
-
                 <div className="flex items-center gap-4">
                   <span className="font-bold">
                     {formatNaira(item.amount)}
                   </span>
-
-                  <RequestStatus
-                    status={item.status}
-                  />
+                  <RequestStatus status={item.status} />
                 </div>
               </div>
             ))}
@@ -1704,45 +998,25 @@ export async function buyCableSubscription() {
   );
 }
 
-function StatCard({
-  icon,
-  label,
-  value,
-  status = false,
-}) {
+function StatCard({ icon, label, value, status = false }) {
   return (
     <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
       <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-400">
         {icon}
       </div>
-
-      <p className="mt-5 text-sm text-slate-400">
-        {label}
-      </p>
-
+      <p className="mt-5 text-sm text-slate-400">{label}</p>
       <div className="mt-2 flex items-center gap-2">
-        {status && (
-          <span className="h-2.5 w-2.5 rounded-full bg-green-400" />
-        )}
-
-        <h3 className="break-all text-2xl font-extrabold">
-          {value}
-        </h3>
+        {status && <span className="h-2.5 w-2.5 rounded-full bg-green-400" />}
+        <h3 className="break-all text-2xl font-extrabold">{value}</h3>
       </div>
     </div>
   );
 }
 
-function ReadOnlyField({
-  label,
-  value,
-}) {
+function ReadOnlyField({ label, value }) {
   return (
     <div>
-      <label className="text-sm text-slate-400">
-        {label}
-      </label>
-
+      <label className="text-sm text-slate-400">{label}</label>
       <input
         value={value || ""}
         readOnly
@@ -1752,45 +1026,27 @@ function ReadOnlyField({
   );
 }
 
-function JsonResponsePanel({
-  response,
-  copied,
-  onCopy,
-}) {
+function JsonResponsePanel({ response, copied, onCopy }) {
   return (
     <section className="overflow-hidden rounded-3xl border border-slate-800 bg-slate-900">
       <div className="flex items-center justify-between border-b border-slate-800 px-6 py-5">
         <div>
-          <h2 className="font-bold">
-            JSON Response
-          </h2>
-
+          <h2 className="font-bold">JSON Response</h2>
           <p className="mt-1 text-xs text-slate-500">
             Live response from Ayax Cable TV API
           </p>
         </div>
-
         <button
           type="button"
           onClick={onCopy}
           className="flex items-center gap-2 rounded-xl bg-slate-800 px-4 py-2 text-sm font-semibold hover:bg-slate-700"
         >
-          {copied ? (
-            <Check size={16} />
-          ) : (
-            <Copy size={16} />
-          )}
-
+          {copied ? <Check size={16} /> : <Copy size={16} />}
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
-
       <pre className="min-h-[520px] max-h-[680px] overflow-auto bg-slate-950 p-6 text-sm leading-7 text-green-300">
-        {JSON.stringify(
-          response,
-          null,
-          2
-        )}
+        {JSON.stringify(response, null, 2)}
       </pre>
     </section>
   );
@@ -1808,23 +1064,17 @@ function DocumentationField({
       <p className="text-xs uppercase tracking-wide text-slate-500">
         {label}
       </p>
-
       <div className="mt-2 flex items-start justify-between gap-4">
         <code className="break-all text-sm font-semibold text-slate-200">
           {value}
         </code>
-
         {copy && (
           <button
             type="button"
             onClick={onCopy}
             className="shrink-0 text-slate-500 hover:text-white"
           >
-            {copied ? (
-              <Check size={17} />
-            ) : (
-              <Copy size={17} />
-            )}
+            {copied ? <Check size={17} /> : <Copy size={17} />}
           </button>
         )}
       </div>
@@ -1832,11 +1082,7 @@ function DocumentationField({
   );
 }
 
-function CodeBlock({
-  value,
-  copied,
-  onCopy,
-}) {
+function CodeBlock({ value, copied, onCopy }) {
   return (
     <div className="relative rounded-2xl border border-slate-800 bg-slate-950 p-5">
       <button
@@ -1844,13 +1090,8 @@ function CodeBlock({
         onClick={onCopy}
         className="absolute right-4 top-4 rounded-xl bg-slate-800 p-2 text-slate-300 hover:bg-slate-700"
       >
-        {copied ? (
-          <Check size={17} />
-        ) : (
-          <Copy size={17} />
-        )}
+        {copied ? <Check size={17} /> : <Copy size={17} />}
       </button>
-
       <pre className="overflow-x-auto pr-12 text-sm leading-7 text-green-300">
         {value}
       </pre>
@@ -1859,22 +1100,16 @@ function CodeBlock({
 }
 
 function RequestStatus({ status }) {
-  const normalized = String(
-    status || "PENDING"
-  ).toUpperCase();
-
+  const normalized = String(status || "PENDING").toUpperCase();
   const classes =
-    normalized === "SUCCESSFUL" ||
-    normalized === "SUCCESS"
+    normalized === "SUCCESSFUL" || normalized === "SUCCESS"
       ? "bg-green-500/10 text-green-400"
       : normalized === "FAILED"
       ? "bg-red-500/10 text-red-400"
       : "bg-yellow-500/10 text-yellow-400";
 
   return (
-    <span
-      className={`rounded-full px-3 py-1 text-xs ${classes}`}
-    >
+    <span className={`rounded-full px-3 py-1 text-xs ${classes}`}>
       {normalized}
     </span>
   );

@@ -6,10 +6,7 @@ const compression = require("compression");
 const hpp = require("hpp");
 const crypto = require("crypto");
 
-const {
-  rateLimit,
-  ipKeyGenerator,
-} = require("express-rate-limit");
+const { rateLimit, ipKeyGenerator } = require("express-rate-limit");
 
 require("./config/env");
 
@@ -58,30 +55,22 @@ const documentationRoutes = require("./modules/api-marketplace/documentation.rou
 const apiMarketplaceDashboardRoutes = require("./modules/api-marketplace/api-marketplace-dashboard.routes");
 
 const superAdminRoutes = require("./routes/superAdminRoutes");
-const airtimeRouter = require("./routes/airtime.routes");
+const aiRoutes = require("./modules/ai/ai.routes");
 
-const {
-  notFound,
-  errorHandler,
-} = require("./middlewares/error.middleware");
+const { notFound, errorHandler } = require("./middlewares/error.middleware");
 
 /* ======================================================
-   APP
+   APP SETUP
 ====================================================== */
 
 const app = express();
 const isProduction = process.env.NODE_ENV === "production";
-const aiRoutes = require("./modules/ai/ai.routes");
 
 app.disable("x-powered-by");
-
-/*
- * Render yana amfani da reverse proxy.
- */
 app.set("trust proxy", 1);
 
 /* ======================================================
-   HELPERS
+   HELPERS & CORS
 ====================================================== */
 
 const normalizeOrigin = (value) => {
@@ -90,13 +79,14 @@ const normalizeOrigin = (value) => {
     .replace(/\/+$/, "");
 };
 
-/* ======================================================
-   CORS
-====================================================== */
-
 const allowedOrigins = [
   "http://localhost:3000",
   "http://127.0.0.1:3000",
+  "http://localhost:5173",
+  "https://ayaxdata.online",
+  "https://www.ayaxdata.online",
+  "https://ayaxapis.com",
+  "https://www.ayaxapis.com",
   process.env.FRONTEND_URL,
   process.env.ADMIN_FRONTEND_URL,
 ]
@@ -111,11 +101,12 @@ const corsOptions = {
 
     const normalizedRequestOrigin = normalizeOrigin(origin);
 
-    if (allowedOrigins.includes(normalizedRequestOrigin)) {
-      return callback(null, true);
-    }
-
-    if (!isProduction) {
+    if (
+      allowedOrigins.includes(normalizedRequestOrigin) ||
+      !isProduction ||
+      normalizedRequestOrigin.endsWith(".ayaxdata.online") ||
+      normalizedRequestOrigin.endsWith(".ayaxapis.com")
+    ) {
       return callback(null, true);
     }
 
@@ -130,14 +121,7 @@ const corsOptions = {
 
   credentials: true,
 
-  methods: [
-    "GET",
-    "POST",
-    "PUT",
-    "PATCH",
-    "DELETE",
-    "OPTIONS",
-  ],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 
   allowedHeaders: [
     "Accept",
@@ -158,10 +142,6 @@ const corsOptions = {
     "ratelimit-limit",
     "ratelimit-remaining",
     "ratelimit-reset",
-    "x-ratelimit-limit-minute",
-    "x-ratelimit-remaining-minute",
-    "x-ratelimit-limit-day",
-    "x-ratelimit-remaining-day",
   ],
 
   maxAge: 86400,
@@ -178,22 +158,12 @@ app.use(
   helmet({
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
-    crossOriginResourcePolicy: {
-      policy: "cross-origin",
-    },
-    referrerPolicy: {
-      policy: "no-referrer",
-    },
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    referrerPolicy: { policy: "no-referrer" },
     hsts: isProduction
-      ? {
-          maxAge: 31536000,
-          includeSubDomains: true,
-          preload: true,
-        }
+      ? { maxAge: 31536000, includeSubDomains: true, preload: true }
       : false,
-    frameguard: {
-      action: "deny",
-    },
+    frameguard: { action: "deny" },
     noSniff: true,
   })
 );
@@ -203,10 +173,6 @@ app.use((req, res, next) => {
   res.setHeader("X-API-Version", "v1");
   next();
 });
-
-/* ======================================================
-   COMPRESSION AND LOGGING
-====================================================== */
 
 app.use(compression());
 app.use(isProduction ? morgan("combined") : morgan("dev"));
@@ -252,25 +218,17 @@ if (process.env.MAINTENANCE_MODE === "true") {
 }
 
 /* ======================================================
-   PAYSTACK WEBHOOK RAW BODY
-====================================================== */
-
-app.use(
-  "/api/v1/wallet/paystack/webhook",
-  express.raw({
-    type: "application/json",
-    limit: "2mb",
-  })
-);
-
-/* ======================================================
-   BODY PARSERS
+   PAYSTACK WEBHOOK RAW BODY CAPTURE
 ====================================================== */
 
 app.use(
   express.json({
     limit: "2mb",
-    strict: true,
+    verify: (req, res, buf) => {
+      if (req.originalUrl.includes("/paystack/webhook")) {
+        req.rawBody = buf;
+      }
+    },
   })
 );
 
@@ -285,7 +243,7 @@ app.use(
 app.use(hpp());
 
 /* ======================================================
-   RATE LIMIT ERROR HANDLER
+   RATE LIMITERS
 ====================================================== */
 
 const rateLimitHandler = (req, res) => {
@@ -297,10 +255,6 @@ const rateLimitHandler = (req, res) => {
   });
 };
 
-/* ======================================================
-   GLOBAL RATE LIMIT
-====================================================== */
-
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: isProduction ? 600 : 5000,
@@ -310,19 +264,15 @@ const globalLimiter = rateLimit({
     return (
       req.path === "/" ||
       req.originalUrl.startsWith("/api/v1/health") ||
-      req.originalUrl.startsWith("/api/v1/wallet/paystack/webhook")
+      req.originalUrl.includes("/paystack/webhook")
     );
   },
   handler: rateLimitHandler,
 });
 
-/* ======================================================
-   AUTH RATE LIMIT
-====================================================== */
-
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: isProduction ? 12 : 200,
+  limit: isProduction ? 15 : 200,
   standardHeaders: "draft-8",
   legacyHeaders: false,
   skipSuccessfulRequests: true,
@@ -342,10 +292,6 @@ const authLimiter = rateLimit({
     });
   },
 });
-
-/* ======================================================
-   ADMIN RATE LIMIT
-====================================================== */
 
 const adminLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
@@ -373,48 +319,18 @@ app.get("/", (req, res) => {
 });
 
 /* ======================================================
-   HEALTH & AUTH & ADMIN
+   ROUTES MOUNTING
 ====================================================== */
 
 app.use("/api/v1/health", healthRoutes);
-
-app.use(
-  "/api/v1/auth",
-  authLimiter,
-  authRoutes
-);
-
-app.use(
-  "/api/v1/admin",
-  adminLimiter,
-  adminRoutes
-);
-
-app.use(
-  "/api/v1/super-admin",
-  adminLimiter,
-  superAdminRoutes
-);
-
+app.use("/api/v1/auth", authLimiter, authRoutes);
+app.use("/api/v1/admin", adminLimiter, adminRoutes);
+app.use("/api/v1/super-admin", adminLimiter, superAdminRoutes);
 app.use("/api/v1/webhook", mainWebhookRoutes);
 
-app.use(
-  "/api/v1/admin/wallet",
-  adminLimiter,
-  adminWalletRoutes
-);
-
+app.use("/api/v1/admin/wallet", adminLimiter, adminWalletRoutes);
 app.use("/api/v1/users", userModuleRoutes);
-
-/* ======================================================
-   DEVELOPER WALLET
-====================================================== */
-
 app.use("/api/v1/wallet", userWalletRoutes);
-
-/* ======================================================
-   TRANSACTIONS AND FINANCE
-====================================================== */
 
 app.use("/api/v1/transactions", transactionRoutes);
 app.use("/api/v1/refunds", refundRoutes);
@@ -422,15 +338,7 @@ app.use("/api/v1/pricing", pricingRoutes);
 app.use("/api/v1/plans", apiPlanRoutes);
 app.use("/api/v1/purchase", purchaseRoutes);
 app.use("/api/v1/service-pricing", servicePricingRoutes);
-app.use(
-  "/api/v1/admin/notifications",
-  adminLimiter,
-  adminNotificationRoutes
-);
-
-/* ======================================================
-   SUPPORT, AUDIT, PARTNERS & MARKETPLACE
-====================================================== */
+app.use("/api/v1/admin/notifications", adminLimiter, adminNotificationRoutes);
 
 app.use("/api/v1/support", supportRoutes);
 app.use("/api/v1/audit", auditRoutes);
@@ -444,12 +352,17 @@ app.use("/api/v1/api-docs", documentationRoutes);
 app.use("/api/v1/api-marketplace", apiMarketplaceDashboardRoutes);
 app.use("/api/v1/marketplace", marketplaceRoutes);
 
-/* ======================================================
-   DIGITAL SERVICES & GSM GATEWAY
-====================================================== */
-
+/* Digital Services */
 app.use("/api/v1/data", dataRoutes);
 app.use("/api/v1/airtime", airtimeRoutes);
+
+// Compatibility aliases for legacy/frontend calls
+app.use("/api/v1/vtu/airtime", airtimeRoutes);
+app.post("/api/v1/vtu/airtime", (req, res, next) => {
+  req.url = "/buy";
+  return airtimeRoutes(req, res, next);
+});
+
 app.use("/api/v1/gsm", gsmRoutes);
 app.use("/api/v1/gateway", gatewayRoutes);
 app.use("/api/v1/network-profiles", networkProfileRoutes);
@@ -458,21 +371,18 @@ app.use("/api/v1/pair-codes", pairCodeRoutes);
 app.use("/api/v1/notifications", notificationRoutes);
 app.use("/api/v1/ai", aiRoutes);
 
-app.use("/api/v1/bills", require("./routes/bills.routes"));
+try {
+  app.use("/api/v1/bills", require("./routes/bills.routes"));
+} catch (e) {
+  // bills routes optional
+}
 
-// A cikin app.js na Marketplace
-app.use("/api/v1/vtu/airtime", airtimeRouter);
-app.use("/api/v1/airtime", airtimeRouter);
 /* ======================================================
-   PAYLOAD / PARSER ERROR HANDLER
+   PAYLOAD & ERROR HANDLERS
 ====================================================== */
 
 app.use((error, req, res, next) => {
-  if (
-    error instanceof SyntaxError &&
-    error.status === 400 &&
-    "body" in error
-  ) {
+  if (error instanceof SyntaxError && error.status === 400 && "body" in error) {
     return res.status(400).json({
       success: false,
       code: "INVALID_JSON",
@@ -504,10 +414,6 @@ app.use((error, req, res, next) => {
 
   return next(error);
 });
-
-/* ======================================================
-   404 AND GLOBAL ERROR HANDLER
-====================================================== */
 
 app.use(notFound);
 app.use(errorHandler);

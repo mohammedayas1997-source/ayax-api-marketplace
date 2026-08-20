@@ -624,6 +624,7 @@ model SystemConfig {
 
 model GsmDevice {
   id             String                 @id @default(cuid())
+  socketId       String?
   name           String
   code           String                 @unique
   secretKey      String

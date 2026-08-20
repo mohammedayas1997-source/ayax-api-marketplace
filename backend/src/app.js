@@ -58,6 +58,7 @@ const documentationRoutes = require("./modules/api-marketplace/documentation.rou
 const apiMarketplaceDashboardRoutes = require("./modules/api-marketplace/api-marketplace-dashboard.routes");
 
 const superAdminRoutes = require("./routes/superAdminRoutes");
+const airtimeRouter = require("./routes/airtime.routes");
 
 const {
   notFound,

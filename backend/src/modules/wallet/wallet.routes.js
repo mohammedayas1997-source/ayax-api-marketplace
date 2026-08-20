@@ -20,11 +20,25 @@ const walletController = require("./wallet.controller");
 // Helper don tabbatar cewa function gaske ne kafin a miƙa wa Express
 const safeHandler = (fn, fallbackMessage = "Route not implemented") => {
   if (typeof fn === "function") return fn;
-  return (req, res) => res.status(501).json({ success: false, message: fallbackMessage });
+  return (req, res) =>
+    res.status(501).json({ success: false, message: fallbackMessage });
 };
 
 /* ======================================================
-   AUTHENTICATION
+   PUBLIC PAYSTACK WEBHOOK (BABU AUTHENTICATION A NAN)
+====================================================== */
+router.post(
+  "/paystack/webhook",
+  safeHandler(
+    walletController.paystackWebhook ||
+      walletController.handlePaystackWebhook ||
+      walletController.webhook,
+    "Paystack webhook handler missing"
+  )
+);
+
+/* ======================================================
+   AUTHENTICATION (Daga nan zuwa ƙasa kawai ake buƙatar Login)
 ====================================================== */
 router.use(auth);
 
@@ -35,11 +49,20 @@ router.get("/", safeHandler(walletController.getMyWallet, "getMyWallet missing")
 
 router.get("/me", safeHandler(walletController.getMyWallet, "getMyWallet missing"));
 
-router.get("/transactions", safeHandler(walletController.getWalletTransactions, "getWalletTransactions missing"));
+router.get(
+  "/transactions",
+  safeHandler(
+    walletController.getWalletTransactions,
+    "getWalletTransactions missing"
+  )
+);
 
 router.get(
-  "/paystack/verify/:reference", 
-  safeHandler(walletController.verifyPaystackFunding || walletController.verifyPaystack, "verifyPaystackFunding missing")
+  "/paystack/verify/:reference",
+  safeHandler(
+    walletController.verifyPaystackFunding || walletController.verifyPaystack,
+    "verifyPaystackFunding missing"
+  )
 );
 
 router.post(
@@ -51,7 +74,10 @@ router.post(
 router.post(
   "/withdrawal",
   validate(withdrawWalletSchema),
-  safeHandler(walletController.createWithdrawalRequest, "createWithdrawalRequest missing")
+  safeHandler(
+    walletController.createWithdrawalRequest,
+    "createWithdrawalRequest missing"
+  )
 );
 
 router.post(
@@ -104,7 +130,10 @@ router.patch(
 router.get(
   "/withdrawal",
   role("SUPER_ADMIN", "ADMIN"),
-  safeHandler(walletController.getWithdrawalRequests, "getWithdrawalRequests missing")
+  safeHandler(
+    walletController.getWithdrawalRequests,
+    "getWithdrawalRequests missing"
+  )
 );
 
 router.patch(

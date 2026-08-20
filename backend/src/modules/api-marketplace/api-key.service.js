@@ -816,100 +816,42 @@ exports.deleteKey = async (
 
    Za a yi amfani da wannan a middleware.
 ====================================================== */
-
-exports.verifyApiKey = async (
-  plainApiKey
-) => {
-  const cleanKey =
-    normalizeText(plainApiKey);
-
+exports.verifyApiKey = async (plainApiKey) => {
+  const cleanKey = normalizeText(plainApiKey);
   if (!cleanKey) {
+    console.log("[AUTH DEBUG]: No clean key provided");
     return null;
   }
 
-  if (
-    !cleanKey.startsWith(
-      "ayax_live_"
-    ) &&
-    !cleanKey.startsWith(
-      "ayax_test_"
-    ) &&
-    !cleanKey.startsWith(
-      "ayax_dev_"
-    )
-  ) {
-    return null;
-  }
+  const keyHash = hashApiKey(cleanKey);
+  console.log("[AUTH DEBUG]: Key Hash being queried:", keyHash);
 
-  const keyHash =
-    hashApiKey(cleanKey);
-
-  const apiKey =
-    await prisma.apiKey.findUnique({
-      where: {
-        key: keyHash,
-      },
-
-      select: safeApiKeySelect,
-    });
+  const apiKey = await prisma.apiKey.findUnique({
+    where: { key: keyHash },
+    select: safeApiKeySelect,
+  });
 
   if (!apiKey) {
+    console.log("[AUTH DEBUG]: No matching key found in Database for hash:", keyHash);
     return null;
   }
 
-  if (
-    apiKey.status !== "ACTIVE"
-  ) {
+  console.log("[AUTH DEBUG]: Found API Key:", {
+    id: apiKey.id,
+    status: apiKey.status,
+    userStatus: apiKey.user?.status,
+    scopes: apiKey.scopes,
+  });
+
+  if (apiKey.status !== "ACTIVE") {
+    console.log("[AUTH DEBUG]: Key is not ACTIVE");
     return null;
   }
 
-  if (
-    apiKey.user?.status !==
-    "ACTIVE"
-  ) {
+  if (apiKey.user?.status !== "ACTIVE") {
+    console.log("[AUTH DEBUG]: User is not ACTIVE, actual:", apiKey.user?.status);
     return null;
   }
-
-  if (
-    apiKey.expiresAt &&
-    new Date(
-      apiKey.expiresAt
-    ).getTime() <= Date.now()
-  ) {
-    await prisma.apiKey.update({
-      where: {
-        id: apiKey.id,
-      },
-
-      data: {
-        status: "EXPIRED",
-        revokedAt: new Date(),
-      },
-    });
-
-    return null;
-  }
-
-  /*
-   * Kada request ya jira lastUsedAt update.
-   */
-  prisma.apiKey
-    .update({
-      where: {
-        id: apiKey.id,
-      },
-
-      data: {
-        lastUsedAt:
-          new Date(),
-      },
-    })
-    .catch((error) => {
-      console.error(
-        "Unable to update API key lastUsedAt:",
-        error.message
-      );
-    });
 
   return serializeApiKey(apiKey);
 };

@@ -20,7 +20,7 @@ import DashboardLayout from "@/components/layouts/DashboardLayout";
 import api from "@/lib/api";
 import { useSocket } from "@/context/SocketContext";
 
-const QUICK_AMOUNTS = [5000, 10000, 20000, 50000, 100000];
+const QUICK_AMOUNTS = [1000, 5000, 10000, 50000, 100000];
 
 const formatNaira = (amount) =>
   `₦${Number(amount || 0).toLocaleString("en-NG", {

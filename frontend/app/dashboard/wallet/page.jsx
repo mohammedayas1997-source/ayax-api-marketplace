@@ -19,7 +19,7 @@ import DashboardLayout from "@/components/layouts/DashboardLayout";
 import api from "@/lib/api";
 import { useSocket } from "@/context/SocketContext";
 
-const QUICK_AMOUNTS = [10000, 50000, 100000, 500000, 1000000, 5000000, 10000000];
+const QUICK_AMOUNTS = [1000, 5000, 10000, 50000, 100000, 500000, 1000000];
 
 const formatNaira = (amount) =>
   `₦${Number(amount || 0).toLocaleString("en-NG", {
@@ -265,9 +265,9 @@ export default function WalletPage() {
 
     const numericAmount = Number(amount);
 
-    if (!Number.isFinite(numericAmount) || numericAmount < 10000) {
+    if (!Number.isFinite(numericAmount) || numericAmount < 1000) {
       setMessageType("error");
-      setMessage("Enter a valid funding amount of at least ₦10,000.");
+      setMessage("Enter a valid funding amount of at least ₦1,000.");
       return;
     }
 
@@ -543,7 +543,7 @@ export default function WalletPage() {
                 <label className="text-sm text-slate-400">Amount (₦)</label>
                 <input
                   type="number"
-                  min="10000"
+                  min="1000"
                   step="1"
                   value={amount}
                   onChange={(event) => setAmount(event.target.value)}

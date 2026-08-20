@@ -458,6 +458,10 @@ app.use("/api/v1/notifications", notificationRoutes);
 app.use("/api/v1/ai", aiRoutes);
 
 app.use("/api/v1/bills", require("./routes/bills.routes"));
+
+// A cikin app.js na Marketplace
+app.use("/api/v1/vtu/airtime", airtimeRouter);
+app.use("/api/v1/airtime", airtimeRouter);
 /* ======================================================
    PAYLOAD / PARSER ERROR HANDLER
 ====================================================== */

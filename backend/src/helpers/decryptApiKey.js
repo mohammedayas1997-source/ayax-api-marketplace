@@ -1,49 +1,43 @@
+// src/helpers/decryptApiKey.js ko helpers/decryptApiKey.js
 const crypto = require("crypto");
 
-const ALGORITHM = "aes-256-cbc";
+module.exports = function decryptApiKey(encryptedText) {
+  if (!encryptedText || typeof encryptedText !== "string") {
+    return encryptedText || "";
+  }
 
-const SECRET =
-  process.env.API_KEY_ENCRYPTION_SECRET ||
-  "ayax-super-secret-key-change-this-in-production";
+  // Idan plain text ne (ba shi da IV separator kamar ":")
+  if (!encryptedText.includes(":")) {
+    return encryptedText;
+  }
 
-const KEY = crypto
-  .createHash("sha256")
-  .update(SECRET)
-  .digest();
+  try {
+    const textParts = encryptedText.split(":");
+    const ivHex = textParts.shift();
+    const encryptedData = textParts.join(":");
 
-module.exports = function decryptApiKey(
-  encryptedText
-) {
-  if (!encryptedText) return null;
+    const iv = Buffer.from(ivHex, "hex");
+    if (iv.length !== 16) {
+      return encryptedText; // Ba daidaitaccen IV bane, dawo da shi a matsayin plain text
+    }
 
-  const parts =
-    encryptedText.split(":");
+    const secret =
+      process.env.ENCRYPTION_KEY ||
+      process.env.JWT_SECRET ||
+      "default_secret_key_32_bytes_len";
 
-  const iv = Buffer.from(
-    parts.shift(),
-    "hex"
-  );
+    const key = crypto
+      .createHash("sha256")
+      .update(String(secret))
+      .digest();
 
-  const encrypted =
-    parts.join(":");
+    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+    let decrypted = decipher.update(encryptedData, "hex", "utf8");
+    decrypted += decipher.final("utf8");
 
-  const decipher =
-    crypto.createDecipheriv(
-      ALGORITHM,
-      KEY,
-      iv
-    );
-
-  let decrypted =
-    decipher.update(
-      encrypted,
-      "hex",
-      "utf8"
-    );
-
-  decrypted += decipher.final(
-    "utf8"
-  );
-
-  return decrypted;
+    return decrypted;
+  } catch (error) {
+    // Idan decryption ya fadi, dawo da ainihin string din
+    return encryptedText;
+  }
 };

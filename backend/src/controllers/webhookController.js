@@ -1,10 +1,49 @@
 const prisma = require("../config/prisma");
 const axios = require("axios");
+const crypto = require("crypto");
 
 /* ======================================================
-   HELPERS
+   1. TURA KUDI ZUWA AYAX DATA XPRESS (PRIMARY DISPATCH)
 ====================================================== */
+async function forwardToDataXpress(transactionData) {
+  const { reference, amount, customer } = transactionData;
+  const email = customer?.email?.toLowerCase().trim();
+  const paidAmount = Number(amount) / 100;
 
+  console.log(`[Forwarding -> Ayax Data Xpress] Processing Ref: ${reference} for ${email} (₦${paidAmount})`);
+
+  const rawUrl = process.env.DATA_XPRESS_API_URL || "https://ayax-data-xpress-server.onrender.com";
+  const baseUrl = rawUrl.replace(/\/+$/, "");
+
+  try {
+    // Muna tura webhook din kai tsaye zuwa Ayax Data Xpress
+    const response = await axios.post(
+      `${baseUrl}/api/v1/payment/webhook`,
+      {
+        event: "charge.success",
+        data: transactionData,
+      },
+      {
+        headers: {
+          "x-paystack-signature": "internal_forwarded",
+          "Content-Type": "application/json",
+        },
+        timeout: 45000,
+      }
+    );
+    console.log(`✅ [Ayax Data Xpress Response] Status: ${response.status} for Ref: ${reference}`);
+  } catch (err) {
+    console.error(
+      `❌ [Ayax Data Xpress Forward Failed]:`,
+      err.response?.status,
+      err.response?.data || err.message
+    );
+  }
+}
+
+/* ======================================================
+   2. HELPERS NA MARKETPLACE WALLET
+====================================================== */
 const getOrCreateWallet = async (userId, transactionClient = prisma) => {
   let wallet = await transactionClient.wallet.findUnique({
     where: { userId },
@@ -22,147 +61,13 @@ const getOrCreateWallet = async (userId, transactionClient = prisma) => {
   return wallet;
 };
 
-const creditWalletFromPaystack = async ({
-  userId,
-  amount,
-  fundingReference,
-  paymentReference,
-}) => {
-  return prisma.$transaction(async (tx) => {
-    const funding = await tx.walletFunding.findUnique({
-      where: { reference: fundingReference },
-    });
-
-    // Idan babu tsohon funding request (misali direct DVA transfer ce)
-    if (!funding) {
-      const wallet = await getOrCreateWallet(userId, tx);
-      const balanceBefore = Number(wallet.balance || 0);
-      const balanceAfter = Number((balanceBefore + Number(amount)).toFixed(2));
-      const ledgerReference = `PAYSTACK-${paymentReference || fundingReference}`;
-
-      const existingLedger = await tx.walletLedger.findUnique({
-        where: { reference: ledgerReference },
-      });
-
-      if (existingLedger) {
-        return { alreadyProcessed: true, wallet };
-      }
-
-      const updatedWallet = await tx.wallet.update({
-        where: { userId },
-        data: { balance: balanceAfter },
-      });
-
-      await tx.walletLedger.create({
-        data: {
-          userId,
-          reference: ledgerReference,
-          type: "CREDIT",
-          amount: Number(amount),
-          balanceBefore,
-          balanceAfter,
-          description: "Wallet funding through Paystack DVA",
-          module: "PAYSTACK",
-        },
-      });
-
-      return { alreadyProcessed: false, wallet: updatedWallet };
-    }
-
-    if (funding.userId !== userId) {
-      throw new Error("Funding request does not belong to this user.");
-    }
-
-    if (funding.status === "APPROVED") {
-      const existingWallet = await getOrCreateWallet(userId, tx);
-      return { alreadyProcessed: true, wallet: existingWallet };
-    }
-
-    const wallet = await getOrCreateWallet(userId, tx);
-    const balanceBefore = Number(wallet.balance || 0);
-    const balanceAfter = Number((balanceBefore + Number(amount)).toFixed(2));
-    const ledgerReference = `PAYSTACK-${fundingReference}`;
-
-    const updatedWallet = await tx.wallet.update({
-      where: { userId },
-      data: { balance: balanceAfter },
-    });
-
-    await tx.walletFunding.update({
-      where: { id: funding.id },
-      data: {
-        status: "APPROVED",
-        approvedAt: new Date(),
-        paymentReference: paymentReference || funding.paymentReference,
-        channel: "PAYSTACK",
-      },
-    });
-
-    await tx.walletLedger.create({
-      data: {
-        userId,
-        reference: ledgerReference,
-        type: "CREDIT",
-        amount: Number(amount),
-        balanceBefore,
-        balanceAfter,
-        description: "Wallet funding through Paystack",
-        module: "PAYSTACK",
-      },
-    });
-
-    return { alreadyProcessed: false, wallet: updatedWallet };
-  });
-};
-
-/* ======================================================
-   UPDATE DATA XPRESS WALLET
-====================================================== */
-
-async function updateDataXpressWallet(transactionData) {
-  const { reference, amount, customer, metadata } = transactionData;
-  const email = customer?.email?.toLowerCase().trim();
-  const customerCode = customer?.customer_code;
-  const paidAmount = Number(amount) / 100;
-
-  console.log(`[Data Xpress Webhook] Forwarding funding for ${email}: NGN ${paidAmount}`);
-
-  // TURA REQUEST ZUWA DATA XPRESS BACKEND SERVER (Don ya kara kudi a MongoDB User)
-  const DATA_XPRESS_URL = process.env.DATA_XPRESS_API_URL || "https://ayax-data-xpress-server.onrender.com";
-  
-  try {
-    await axios.post(
-      `${DATA_XPRESS_URL}/api/v1/payment/webhook`,
-      {
-        event: "charge.success",
-        data: transactionData,
-      },
-      {
-        headers: {
-          "x-paystack-signature": "internal_forwarded",
-          "Content-Type": "application/json",
-        },
-        timeout: 15000,
-      }
-    );
-    console.log(`✅ Data Xpress webhook forwarded successfully for ref: ${reference}`);
-  } catch (err) {
-    console.error(`❌ Failed to forward to Data Xpress backend:`, err.response?.data || err.message);
-  }
-}
-
-/* ======================================================
-   UPDATE MARKETPLACE WALLET
-====================================================== */
-
-async function updateMarketplaceWallet(transactionData) {
+const creditMarketplaceWallet = async (transactionData) => {
   const { reference, amount, customer, metadata } = transactionData;
   const fundingReference = metadata?.fundingReference || reference;
   const email = customer?.email?.toLowerCase().trim();
   let userId = metadata?.userId;
   const paidAmount = Number(amount) / 100;
 
-  // Idan babu userId a metadata (DVA Transfer), nemo shi a Prisma ta email
   if (!userId && email) {
     const dbUser = await prisma.user.findFirst({
       where: { email: { equals: email, mode: "insensitive" } },
@@ -171,48 +76,89 @@ async function updateMarketplaceWallet(transactionData) {
   }
 
   if (!userId) {
-    console.error(`User not found in Marketplace for ref: ${reference}`);
+    console.warn(`User not found in Marketplace DB for ref: ${reference}`);
     return;
   }
 
-  await creditWalletFromPaystack({
-    userId,
-    amount: paidAmount,
-    fundingReference,
-    paymentReference: reference,
-  });
+  await prisma.$transaction(async (tx) => {
+    const ledgerReference = `PAYSTACK-${reference}`;
 
-  console.log(`Marketplace wallet updated successfully for reference: ${reference}`);
-}
+    const existingLedger = await tx.walletLedger.findUnique({
+      where: { reference: ledgerReference },
+    });
+
+    if (existingLedger) {
+      console.log(`Ref: ${reference} already processed in Marketplace.`);
+      return;
+    }
+
+    const wallet = await getOrCreateWallet(userId, tx);
+    const balanceBefore = Number(wallet.balance || 0);
+    const balanceAfter = Number((balanceBefore + paidAmount).toFixed(2));
+
+    await tx.wallet.update({
+      where: { userId },
+      data: { balance: balanceAfter },
+    });
+
+    await tx.walletLedger.create({
+      data: {
+        userId,
+        reference: ledgerReference,
+        type: "CREDIT",
+        amount: paidAmount,
+        balanceBefore,
+        balanceAfter,
+        description: "Wallet funding through Paystack DVA",
+        module: "PAYSTACK",
+      },
+    });
+
+    console.log(`✅ [Marketplace Wallet Updated] User ${userId} received +₦${paidAmount}`);
+  });
+};
 
 /* ======================================================
-   PAYSTACK WEBHOOK CONTROLLER
+   3. MAIN WEBHOOK CONTROLLER
 ====================================================== */
-
 exports.handlePaystackWebhook = async (req, res) => {
   try {
-    const event = req.body;
+    const secret = process.env.PAYSTACK_WEBHOOK_SECRET || process.env.PAYSTACK_SECRET_KEY;
+    const signature = req.headers["x-paystack-signature"];
 
-    if (event.event === "charge.success") {
-      const transactionData = event.data;
-      const metadata = transactionData.metadata;
-      const platform = metadata?.platform;
+    // 1. Tabbatar da ingancin sa hannun Paystack
+    if (signature && signature !== "internal_forwarded" && secret) {
+      const payload = req.rawBody ? req.rawBody : JSON.stringify(req.body);
+      const hash = crypto
+        .createHmac("sha512", secret)
+        .update(payload)
+        .digest("hex");
 
-      if (platform === "ayax_marketplace") {
-        await updateMarketplaceWallet(transactionData);
-      } else if (platform === "ayax_data_xpress") {
-        await updateDataXpressWallet(transactionData);
-      } else {
-        // IDAN BABU PLATFORM METADATA (DVA Virtual Account Transfer ce):
-        // Duba ko na Data Xpress ne ko Marketplace ta hanyar tura shi zuwa Data Xpress ko sabunta Marketplace
-        console.log(`DVA Bank Transfer detected without platform flag. Processing auto-forwarding...`);
-        await updateDataXpressWallet(transactionData);
+      if (hash !== signature) {
+        console.warn("[Webhook Warning] Invalid Paystack signature.");
+        return res.status(401).send("Invalid Signature");
       }
     }
 
-    return res.sendStatus(200);
+    const event = req.body;
+
+    if (event?.event === "charge.success") {
+      const transactionData = event.data;
+      const platform = transactionData?.metadata?.platform;
+
+      // Idan an yi tagging din transaction a matsayin Marketplace kawai
+      if (platform === "ayax_marketplace") {
+        await creditMarketplaceWallet(transactionData);
+      } else {
+        // Duk wani Bank Transfer na DVA da biya na yau da kullum zai wuce kai tsaye zuwa Ayax Data Xpress
+        console.log(`[Routing] Directing transaction ${transactionData.reference} to Ayax Data Xpress`);
+        await forwardToDataXpress(transactionData);
+      }
+    }
+
+    return res.status(200).send("Webhook Processed Successfully");
   } catch (error) {
-    console.error("Webhook processing error:", error);
-    return res.sendStatus(200);
+    console.error("❌ Webhook Error:", error.message);
+    return res.status(200).send("Acknowledged");
   }
 };

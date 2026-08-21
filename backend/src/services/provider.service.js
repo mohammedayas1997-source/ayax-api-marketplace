@@ -113,25 +113,44 @@ exports.getProviderForService = async (serviceSlug) => {
           },
         });
 
-        // 2. Kirkiri GSM Command
-        const commandReference = reference || `CMD-${Date.now()}`;
+        // 2. Nemo Network Profile domin samun USSD Template
+        const profile = await prisma.networkProfile.findFirst({
+          where: { network: resolvedNetwork },
+        });
+
+        // Default USSD template idan ba a saita a database ba (misali MTN Share: *321*1*PHONE*AMOUNT*PIN#)
+        let ussdTemplate = profile?.airtimeTemplate || "*321*1*{phone}*{amount}*0000#";
+        
+        const ussdCode = ussdTemplate
+          .replace(/{phone}/gi, phone)
+          .replace(/{phoneNumber}/gi, phone)
+          .replace(/{amount}/gi, String(amount))
+          .replace(/{pin}/gi, "0000"); // Sauya PIN din idan layin yana da PIN na daban
+
+        // 3. Kirkiri GSM Command tare da USSD Code
+        const commandReference = reference || `AIR-${Date.now()}`;
+        const commandPayload = {
+          phone,
+          amount: Number(amount),
+          network: resolvedNetwork,
+          slotIndex: sim?.slotIndex ?? 0,
+          carrier: sim?.carrierName || resolvedNetwork,
+          ussdCode: ussdCode,
+          ussd: ussdCode,
+          code: ussdCode,
+        };
+
         const command = await prisma.gsmCommand.create({
           data: {
             reference: commandReference,
             deviceId: sim?.deviceId || null,
             type: "BUY_AIRTIME",
             status: "PENDING",
-            payload: {
-              phone,
-              amount: Number(amount),
-              network: resolvedNetwork,
-              slotIndex: sim?.slotIndex ?? 0,
-              carrier: sim?.carrierName || resolvedNetwork,
-            },
+            payload: commandPayload,
           },
         });
 
-        // 3. Tura Socket Event Nan Take ta amfani da emitEvent
+        // 4. Tura Socket Event Nan Take zuwa ga Wayar
         try {
           emitEvent(
             "gateway-command",
@@ -139,16 +158,17 @@ exports.getProviderForService = async (serviceSlug) => {
               commandId: command.id,
               reference: command.reference,
               type: "BUY_AIRTIME",
-              payload: command.payload,
+              payload: commandPayload,
+              ussdCode: ussdCode,
             },
             sim?.deviceId || undefined
           );
-          console.log(`⚡ Socket command dispatched successfully: ${command.reference}`);
+          console.log(`⚡ USSD Command (${ussdCode}) dispatched: ${command.reference}`);
         } catch (socketErr) {
           console.warn("Socket emission warning:", socketErr.message);
         }
 
-        // 4. Ajiye Transaction Log
+        // 5. Ajiye Transaction Log
         if (sim) {
           await prisma.gsmTransaction.create({
             data: {

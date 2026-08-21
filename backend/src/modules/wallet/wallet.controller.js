@@ -1040,3 +1040,79 @@ exports.verifyPaystackFunding = async (req, res) => {
     });
   }
 };
+
+/* ======================================================
+   PAYSTACK WEBHOOK HANDLER
+   POST /api/v1/wallet/paystack/webhook
+====================================================== */
+
+exports.paystackWebhook = async (req, res) => {
+  try {
+    const crypto = require("crypto");
+    const secret = process.env.PAYSTACK_SECRET_KEY;
+    const signature = req.headers["x-paystack-signature"];
+
+    if (!secret || !signature) {
+      return res.status(400).json({ success: false, message: "Missing signature or secret" });
+    }
+
+    // 1. Tabbatar da ingancin signature daga Paystack
+    const rawBody = req.rawBody ? req.rawBody : JSON.stringify(req.body);
+    const hash = crypto
+      .createHmac("sha512", secret)
+      .update(rawBody)
+      .digest("hex");
+
+    if (hash !== signature) {
+      console.warn("Paystack Webhook: Invalid signature rejected.");
+      return res.status(400).json({ success: false, message: "Invalid signature" });
+    }
+
+    const event = req.body;
+
+    // 2. Sarrafa biyan kudi idan ya yi nasara (charge.success)
+    if (event.event === "charge.success") {
+      const { reference, amount } = event.data;
+      const paidAmount = Number(amount) / 100;
+
+      // Nemo ko akwai record din wannan biyan a walletFunding
+      const funding = await prisma.walletFunding.findFirst({
+        where: { reference },
+      });
+
+      if (funding && funding.status !== "APPROVED" && funding.status !== "SUCCESSFUL") {
+        const creditAmount = Number(funding.amount || paidAmount);
+
+        await prisma.$transaction(async (tx) => {
+          await tx.walletFunding.update({
+            where: { id: funding.id },
+            data: { status: "APPROVED", note: "Auto-credited via Paystack Webhook." },
+          });
+
+          await tx.wallet.update({
+            where: { userId: funding.userId },
+            data: { balance: { increment: creditAmount } },
+          });
+        });
+
+        publishEvent("wallet-funding-approved", {
+          userId: funding.userId,
+          message: `Wallet funded successfully with ₦${creditAmount}`,
+          reference,
+        });
+
+        console.log(`✓ Webhook: Wallet auto-credited ₦${creditAmount} for user ${funding.userId}`);
+      }
+    }
+
+    // Paystack na bukatar 200 OK nan take
+    return res.status(200).json({ success: true, message: "Webhook acknowledged" });
+  } catch (error) {
+    console.error("Paystack Webhook Processing Error:", error);
+    return res.status(200).json({ success: true, message: "Webhook received with error" });
+  }
+};
+
+// Aliases don dacewa da safeHandler
+exports.handlePaystackWebhook = exports.paystackWebhook;
+exports.webhook = exports.paystackWebhook;

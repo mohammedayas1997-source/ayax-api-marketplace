@@ -64,7 +64,7 @@ exports.getProviderForService = async (serviceSlug) => {
       secretKey: providerData.secretKey ? decryptApiKey(providerData.secretKey) : null,
 
       // ==========================================
-      // 1. AIRTIME HANDLER (MTN MoMo *671# USSD)
+      // 1. AIRTIME HANDLER (MTN MoMo PSB *671*1*1*PHONE*AMOUNT*PIN#)
       // ==========================================
       buyAirtime: async ({ network, phone, amount, reference }) => {
         const networkMap = {
@@ -87,7 +87,7 @@ exports.getProviderForService = async (serviceSlug) => {
           networkMap[String(network).toUpperCase()] || String(network).toUpperCase();
 
         console.log(
-          `📡 Dispatching MoMo Airtime to GSM Gateway: ${resolvedNetwork} ₦${amount} -> ${phone}`
+          `📡 Dispatching MoMo Airtime: ${resolvedNetwork} ₦${amount} -> ${phone}`
         );
 
         if (
@@ -115,11 +115,11 @@ exports.getProviderForService = async (serviceSlug) => {
           },
         });
 
-        const momoPin = "1997"; // Sanya ainihin 4-digit PIN din asusun MoMo na layinka
+        const momoPin = "1997";
         
-        // Tsarin MoMo USSD Airtime: *671*2*PHONE*AMOUNT*PIN# ko *671*1*1*PHONE*AMOUNT*PIN#
+        // Ainihin tsarin MoMo Airtime: *671*1*1*PHONE*AMOUNT*PIN#
         let ussdCode = `*671*1*1*${phone}*${amount}*${momoPin}#`;
-        let steps = ["1", phone, String(amount), momoPin];
+        let steps = ["1", "1", phone, String(amount), momoPin];
 
         if (resolvedNetwork === "AIRTEL") {
           ussdCode = `*432*1*${phone}*${amount}*${momoPin}#`;
@@ -180,7 +180,7 @@ exports.getProviderForService = async (serviceSlug) => {
             },
             sim?.deviceId || undefined
           );
-          console.log(`⚡ MoMo USSD Command (${ussdCode}) dispatched: ${command.reference}`);
+          console.log(`⚡ MoMo USSD (${ussdCode}) dispatched: ${command.reference}`);
         } catch (socketErr) {
           console.warn("Socket emission warning:", socketErr.message);
         }
@@ -211,9 +211,8 @@ exports.getProviderForService = async (serviceSlug) => {
       // ==========================================
       buyData: async ({ network, phone, planSize, planCode, amount, reference }) => {
         const resolvedNetwork = String(network || "MTN").toUpperCase();
-        const pin = "1997"; // PIN din SME Data na layinka (Default: 0000 ko wanda ka canza)
+        const pin = "1997";
 
-        // Sauya girman bundle zuwa adadin SME code (MB)
         let dataSizeCode = "1000";
         const rawPlan = String(planSize || planCode || "").toUpperCase();
 
@@ -224,7 +223,6 @@ exports.getProviderForService = async (serviceSlug) => {
         if (rawPlan.includes("5GB") || rawPlan.includes("5000")) dataSizeCode = "5000";
         if (rawPlan.includes("10GB") || rawPlan.includes("10000")) dataSizeCode = "10000";
 
-        // Gano layin MTN da ke aiki
         const sim = await prisma.gsmSim.findFirst({
           where: {
             OR: [
@@ -257,7 +255,6 @@ exports.getProviderForService = async (serviceSlug) => {
           carrier: sim.carrierName || resolvedNetwork,
         };
 
-        // 1. Kirkiri Command a Database
         const command = await prisma.gsmCommand.create({
           data: {
             reference: commandReference,
@@ -268,7 +265,6 @@ exports.getProviderForService = async (serviceSlug) => {
           },
         });
 
-        // 2. Tura Socket Event zuwa Waya
         try {
           emitEvent(
             "gateway-command",

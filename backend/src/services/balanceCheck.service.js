@@ -2,10 +2,12 @@ const prisma = require("../config/prisma");
 const crypto = require("crypto");
 const { emitEvent } = require("../config/socket");
 
+const MOMO_PIN = "1997"; // Sanya 4-digit PIN din MoMo na layinka
+
 const NETWORK_CODES = {
   MTN: {
-    AIRTIME: "*310#",
-    DATA: "*323*4#",
+    AIRTIME: `*671*5*${MOMO_PIN}#`, // MoMo Wallet Balance Check
+    DATA: "DATABAL",                 // SMS zuwa 131 domin MTN SME Data
   },
   AIRTEL: {
     AIRTIME: "*310#",
@@ -79,32 +81,54 @@ async function sendBalanceCheckCommand({
       ? "DATA_BALANCE"
       : "AIRTIME_BALANCE";
 
-  const ussdCode =
-    NETWORK_CODES[network]?.[normalizedType] ||
-    (normalizedType === "DATA"
-      ? "*323#"
-      : "*310#");
+  const isMtnSmeData = network === "MTN" && normalizedType === "DATA";
 
-  const reference =
-    `USSD-${crypto
-      .randomBytes(6)
-      .toString("hex")
-      .toUpperCase()}`;
+  let commandType = isMtnSmeData ? "SEND_SMS" : "USSD";
+  let ussdCode = null;
+  let smsRecipient = null;
+  let smsMessage = null;
+
+  if (isMtnSmeData) {
+    // 1. Duba SME Data Balance ta hanyar SMS zuwa 131
+    smsRecipient = "131";
+    smsMessage = "DATABAL";
+  } else {
+    // 2. Duba MoMo Wallet Balance ta hanyar USSD
+    ussdCode =
+      NETWORK_CODES[network]?.[normalizedType] ||
+      (normalizedType === "DATA" ? "*323#" : `*671*5*${MOMO_PIN}#`);
+  }
+
+  const reference = `${commandType === "SEND_SMS" ? "SMS" : "USSD"}-${crypto
+    .randomBytes(6)
+    .toString("hex")
+    .toUpperCase()}`;
 
   const payload = {
     simId: sim.id,
     simSlot,
-    ussdCode,
     network,
     service,
     balanceType: normalizedType,
+    ...(commandType === "USSD" && {
+      ussdCode,
+      ussd: ussdCode,
+      code: ussdCode,
+      steps: ["5", MOMO_PIN],
+    }),
+    ...(commandType === "SEND_SMS" && {
+      phoneNumber: smsRecipient,
+      recipient: smsRecipient,
+      message: smsMessage,
+      smsText: smsMessage,
+    }),
   };
 
   const command = await prisma.gsmCommand.create({
     data: {
       reference,
       deviceId: device.id,
-      type: "USSD",
+      type: commandType,
       status: "PENDING",
       payload,
     },
@@ -113,26 +137,34 @@ async function sendBalanceCheckCommand({
   emitEvent(
     "gateway-command",
     {
+      commandId: command.id,
       reference,
-      type: "USSD",
-      ussdCode,
+      type: commandType,
+      payload,
       simSlot,
       simId: sim.id,
       network,
       service,
       balanceType: normalizedType,
+      ...(commandType === "USSD" && { ussdCode }),
+      ...(commandType === "SEND_SMS" && {
+        phoneNumber: smsRecipient,
+        message: smsMessage,
+      }),
     },
     device.id
   );
 
   console.log("BALANCE COMMAND SENT:", {
     reference,
+    type: commandType,
     deviceId: device.id,
     simId: sim.id,
     simSlot,
     network,
     service,
     ussdCode,
+    smsMessage,
   });
 
   return command;

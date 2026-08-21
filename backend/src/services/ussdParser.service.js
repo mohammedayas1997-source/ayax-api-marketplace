@@ -25,10 +25,10 @@ const normalizeUnit = (unit = "") => {
 };
 
 /*
- * UNIVERSAL AIRTIME BALANCE PARSER (AN GYARA ANAN KAWAI)
+ * MOMO WALLET & AIRTIME BALANCE PARSER
  */
 function parseAirtimeBalance(message = "") {
-  console.log("RAW USSD MESSAGE:", message);
+  console.log("RAW BALANCE MESSAGE:", message);
   const text = normalize(message);
   console.log("NORMALIZED TEXT:", text);
 
@@ -36,17 +36,10 @@ function parseAirtimeBalance(message = "") {
     return null;
   }
 
-  const dataUnitPattern =
-    /\b(?:TB|GB|GIGS?|G|MB|MEGS?|M|KB|K)\b/i;
-
+  const dataUnitPattern = /\b(?:TB|GB|GIGS?|G|MB|MEGS?|M|KB|K)\b/i;
   const percentagePattern = /%/;
-
-  const phoneNumberPattern =
-    /\b(?:\+?234|0)[789][01]\d{8}\b/;
-
-  const datePattern =
-    /\b(?:\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})\b/;
-
+  const phoneNumberPattern = /\b(?:\+?234|0)[789][01]\d{8}\b/;
+  const datePattern = /\b(?:\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})\b/;
   const timePattern = /\b\d{1,2}:\d{2}(?::\d{2})?\b/;
 
   const parseMoneyValue = (value) => {
@@ -72,9 +65,9 @@ function parseAirtimeBalance(message = "") {
     return amount;
   };
 
-  // 1. Gwada kamo lambar kuɗi kai tsaye daga gaban kowace kalma ta asusu ko alamar kuɗi
+  // 1. MoMo & Main Account specific regex patterns
   const exactPatterns = [
-    /(?:main\s*account|account|balance|bal|credit|main|pulse)[:\s]*(?:₦|NGN|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
+    /(?:momo\s*balance|momo\s*wallet|wallet\s*balance|available\s*balance|main\s*account|account\s*bal|account|balance|bal|credit|main|pulse)[:\s]*(?:is\s*)?(?:₦|NGN|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
     /(?:₦|NGN|\bN)\s*([\d\s,]+(?:\.\d+)?)/i,
     /is[:\s]*(?:₦|NGN|N)?\s*([\d\s,]+(?:\.\d+)?)/i
   ];
@@ -84,13 +77,13 @@ function parseAirtimeBalance(message = "") {
     if (match && match[1]) {
       const amount = parseMoneyValue(match[1]);
       if (amount !== null) {
-        console.log("MATCHED AIRTIME AMOUNT:", amount);
+        console.log("MATCHED MOMO/AIRTIME AMOUNT:", amount);
         return amount;
       }
     }
   }
 
-  // 2. Duba ko akwai kowace lamba da ta dace da tsarin kuɗi a cikin saƙon
+  // 2. General currency pattern fallback
   const allMatches = [...text.matchAll(/(?:₦|NGN|\bN)?\s*([0-9]+(?:\.[0-9]{2})?)/gi)];
   for (const match of allMatches) {
     const matchedText = match[0] || "";
@@ -107,7 +100,7 @@ function parseAirtimeBalance(message = "") {
 
     const amount = parseMoneyValue(match[1]);
     if (amount !== null) {
-      console.log("MATCHED AIRTIME AMOUNT (GENERAL):", amount);
+      console.log("MATCHED AMOUNT (GENERAL):", amount);
       return amount;
     }
   }
@@ -118,7 +111,7 @@ function parseAirtimeBalance(message = "") {
 exports.parseAirtimeBalance = parseAirtimeBalance;
 
 /*
- * DATA PARSER (BA A TABA SHI BA)
+ * SME DATA & BUNDLE BALANCE PARSER
  */
 exports.parseDataBalance = (message = "") => {
   const text = normalize(message);
@@ -127,14 +120,12 @@ exports.parseDataBalance = (message = "") => {
     return "0MB";
   }
 
-  if (/data\s*balances?/i.test(text)) {
-    const dataMatches = [...text.matchAll(/([A-Za-z0-9\-_]+)[:\s]*(?:₦|NGN|N)?\s*([0-9]+(?:\.[0-9]+)?\s*(?:TB|GB|MB|KB)?)/gi)];
-    const unitCheck = text.match(/([0-9]+(?:\.[0-9]+)?)\s*(TB|GB|GIGS?|G|MB|MEGS?|M|KB|K)\b/i);
-    if (!unitCheck) {
-      const matchZero = text.match(/:\s*(?:N|₦)?0(?:\.00)?/);
-      if (matchZero && /InstaTop|Social|Video/i.test(text)) {
-      }
-    }
+  // Handle SME Data SMS balance (e.g. "Your SME data balance is: 45000MB" or "45.5GB")
+  const smeMatch = text.match(/(?:sme\s*(?:data)?\s*balance|data\s*balance|balance)[:\s]*(?:is\s*)?([0-9]+(?:\.[0-9]+)?)\s*(MB|GB|TB)/i);
+  if (smeMatch) {
+    const value = smeMatch[1];
+    const unit = normalizeUnit(smeMatch[2]);
+    return `${value}${unit}`;
   }
 
   const matches = [
@@ -177,7 +168,7 @@ exports.parseDataBalance = (message = "") => {
 };
 
 /*
- * EXPIRY DATE PARSER (BA A TABA SHI BA)
+ * EXPIRY DATE PARSER
  */
 exports.parseExpiryDate = (message = "") => {
   const text = normalize(message);

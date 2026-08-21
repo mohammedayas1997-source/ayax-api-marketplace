@@ -1,5 +1,6 @@
 const prisma = require("../config/prisma");
 const decryptApiKey = require("../helpers/decryptApiKey");
+const { emitEvent } = require("../config/socket");
 
 let gsmGatewayService;
 try {
@@ -8,7 +9,7 @@ try {
   try {
     gsmGatewayService = require("./gateway.service");
   } catch (err) {
-    // GSM service will fallback to Prisma queries
+    // Fallback to internal prisma
   }
 }
 
@@ -63,7 +64,6 @@ exports.getProviderForService = async (serviceSlug) => {
       secretKey: providerData.secretKey ? decryptApiKey(providerData.secretKey) : null,
 
       buyAirtime: async ({ network, phone, amount, reference }) => {
-        // 1. Map Network Identifiers (e.g. 01 -> MTN)
         const networkMap = {
           "1": "MTN",
           "01": "MTN",
@@ -87,7 +87,6 @@ exports.getProviderForService = async (serviceSlug) => {
           `📡 Dispatching Airtime to GSM Gateway: ${resolvedNetwork} ₦${amount} -> ${phone}`
         );
 
-        // 2. Delegate to Gateway Service if present
         if (
           gsmGatewayService &&
           typeof gsmGatewayService.processAirtime === "function"
@@ -100,7 +99,7 @@ exports.getProviderForService = async (serviceSlug) => {
           });
         }
 
-        // 3. Locate Active SIM from GsmSim Table
+        // 1. Gano layin SIM mai aiki
         const sim = await prisma.gsmSim.findFirst({
           where: {
             OR: [
@@ -114,10 +113,11 @@ exports.getProviderForService = async (serviceSlug) => {
           },
         });
 
-        // 4. Create GSM Command for Android Gateway App
+        // 2. Kirkiri GSM Command
+        const commandReference = reference || `CMD-${Date.now()}`;
         const command = await prisma.gsmCommand.create({
           data: {
-            reference: reference || `CMD-${Date.now()}`,
+            reference: commandReference,
             deviceId: sim?.deviceId || null,
             type: "BUY_AIRTIME",
             status: "PENDING",
@@ -131,22 +131,24 @@ exports.getProviderForService = async (serviceSlug) => {
           },
         });
 
+        // 3. Tura Socket Event Nan Take ta amfani da emitEvent
         try {
-          const io = global.io || req?.app?.get("io");
-          if (io && sim?.device?.socketId) {
-            io.to(sim.device.socketId).emit("EXECUTE_COMMAND", {
+          emitEvent(
+            "gateway-command",
+            {
               commandId: command.id,
-              type: "BUY_AIRTIME",
               reference: command.reference,
+              type: "BUY_AIRTIME",
               payload: command.payload,
-            });
-            console.log(`⚡ Socket command emitted directly to device ${sim.deviceId}`);
-          }
+            },
+            sim?.deviceId || undefined
+          );
+          console.log(`⚡ Socket command dispatched successfully: ${command.reference}`);
         } catch (socketErr) {
           console.warn("Socket emission warning:", socketErr.message);
         }
 
-        // 5. Create GSM Transaction Record
+        // 4. Ajiye Transaction Log
         if (sim) {
           await prisma.gsmTransaction.create({
             data: {
@@ -154,15 +156,15 @@ exports.getProviderForService = async (serviceSlug) => {
               phoneNumber: phone,
               network: resolvedNetwork,
               amount: Number(amount),
-              reference: reference || `TX-${Date.now()}`,
+              reference: commandReference,
               status: "PENDING",
             },
-          }).catch((e) => console.warn("GsmTransaction log skipped:", e.message));
+          }).catch(() => {});
         }
 
         return {
           success: true,
-          message: "Airtime command queued successfully for GSM Gateway",
+          message: "Airtime command queued and dispatched to GSM Gateway",
           commandId: command.id,
           reference: command.reference,
         };

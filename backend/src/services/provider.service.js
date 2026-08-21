@@ -63,8 +63,10 @@ exports.getProviderForService = async (serviceSlug) => {
       apiKey: providerData.apiKey ? decryptApiKey(providerData.apiKey) : null,
       secretKey: providerData.secretKey ? decryptApiKey(providerData.secretKey) : null,
 
+      // ==========================================
+      // 1. AIRTIME HANDLER
+      // ==========================================
       buyAirtime: async ({ network, phone, amount, reference }) => {
-        // 1. Resolve Network Name
         const networkMap = {
           "1": "MTN",
           "01": "MTN",
@@ -100,7 +102,6 @@ exports.getProviderForService = async (serviceSlug) => {
           });
         }
 
-        // 2. Locate Active SIM
         const sim = await prisma.gsmSim.findFirst({
           where: {
             OR: [
@@ -114,8 +115,7 @@ exports.getProviderForService = async (serviceSlug) => {
           },
         });
 
-        // 3. Network USSD Templates & Auto-Response Steps
-        const defaultPin = "1997"; // Canza wannan idan SIM dinka yana amfani da wani PIN na daban
+        const defaultPin = "1997";
         let ussdCode = `*321*1*${phone}*${amount}*${defaultPin}#`;
         let steps = ["1", phone, String(amount), defaultPin];
 
@@ -142,7 +142,6 @@ exports.getProviderForService = async (serviceSlug) => {
             .replace(/{pin}/gi, defaultPin);
         }
 
-        // 4. Create GSM Command Payload
         const commandReference = reference || `AIR-${Date.now()}`;
         const commandPayload = {
           phone,
@@ -167,7 +166,6 @@ exports.getProviderForService = async (serviceSlug) => {
           },
         });
 
-        // 5. Emit Real-time Socket Event
         try {
           emitEvent(
             "gateway-command",
@@ -186,7 +184,6 @@ exports.getProviderForService = async (serviceSlug) => {
           console.warn("Socket emission warning:", socketErr.message);
         }
 
-        // 6. Record GSM Transaction Log
         if (sim) {
           await prisma.gsmTransaction.create({
             data: {
@@ -203,6 +200,153 @@ exports.getProviderForService = async (serviceSlug) => {
         return {
           success: true,
           message: "Airtime command queued and dispatched to GSM Gateway",
+          commandId: command.id,
+          reference: command.reference,
+        };
+      },
+
+      // ==========================================
+      // 2. DATA (SME & GIFTING) HANDLER
+      // ==========================================
+      buyData: async ({ network, phone, planSize, planCode, amount, reference }) => {
+        const networkMap = {
+          "1": "MTN",
+          "01": "MTN",
+          "MTN": "MTN",
+          "2": "GLO",
+          "02": "GLO",
+          "GLO": "GLO",
+          "3": "AIRTEL",
+          "03": "AIRTEL",
+          "AIRTEL": "AIRTEL",
+          "4": "9MOBILE",
+          "04": "9MOBILE",
+          "9MOBILE": "9MOBILE",
+        };
+
+        const resolvedNetwork =
+          networkMap[String(network).toUpperCase()] || String(network).toUpperCase();
+
+        console.log(
+          `📡 Dispatching Data (${planSize || planCode}) to GSM Gateway: ${resolvedNetwork} -> ${phone}`
+        );
+
+        if (
+          gsmGatewayService &&
+          typeof gsmGatewayService.processData === "function"
+        ) {
+          return await gsmGatewayService.processData({
+            network: resolvedNetwork,
+            phone,
+            planSize,
+            planCode,
+            amount,
+            reference,
+          });
+        }
+
+        // 1. Locate Active SIM
+        const sim = await prisma.gsmSim.findFirst({
+          where: {
+            OR: [
+              { carrierName: { contains: resolvedNetwork, mode: "insensitive" } },
+              { displayName: { contains: resolvedNetwork, mode: "insensitive" } },
+            ],
+            status: "ACTIVE",
+          },
+          include: {
+            device: true,
+          },
+        });
+
+        if (!sim) {
+          throw new Error(`No active ${resolvedNetwork} SIM found on GSM Gateway.`);
+        }
+
+        const defaultPin = "1997";
+        const commandReference = reference || `DATA-${Date.now()}`;
+
+        // 2. Format SME Data Volume (MB Conversion)
+        let sizeInMb = "1000";
+        const rawSize = String(planSize || planCode || "").toUpperCase();
+
+        if (rawSize.includes("500MB") || rawSize.includes("500")) {
+          sizeInMb = "500";
+        } else if (rawSize.includes("1GB") || rawSize.includes("1000") || rawSize.includes("1.0GB")) {
+          sizeInMb = "1000";
+        } else if (rawSize.includes("2GB") || rawSize.includes("2000") || rawSize.includes("2.0GB")) {
+          sizeInMb = "2000";
+        } else if (rawSize.includes("3GB") || rawSize.includes("3000")) {
+          sizeInMb = "3000";
+        } else if (rawSize.includes("5GB") || rawSize.includes("5000")) {
+          sizeInMb = "5000";
+        } else if (rawSize.includes("10GB") || rawSize.includes("10000")) {
+          sizeInMb = "10000";
+        }
+
+        // 3. SME Command Generation
+        // MTN SME yana aiki ta hanyar tura SMS: SMEB <Phone> <MB> <PIN> zuwa 131
+        const smsRecipient = "131";
+        const smsMessage = `SMEB ${phone} ${sizeInMb} ${defaultPin}`;
+
+        const commandPayload = {
+          phone,
+          recipient: smsRecipient,
+          phoneNumber: smsRecipient,
+          message: smsMessage,
+          smsText: smsMessage,
+          sizeInMb,
+          planSize: rawSize,
+          network: resolvedNetwork,
+          slotIndex: sim.slotIndex,
+          carrier: sim.carrierName || resolvedNetwork,
+          type: "SME_DATA",
+        };
+
+        const command = await prisma.gsmCommand.create({
+          data: {
+            reference: commandReference,
+            deviceId: sim.deviceId,
+            type: "BUY_DATA",
+            status: "PENDING",
+            payload: commandPayload,
+          },
+        });
+
+        // 4. Emit Real-time Socket Event to Device
+        try {
+          emitEvent(
+            "gateway-command",
+            {
+              commandId: command.id,
+              reference: command.reference,
+              type: "BUY_DATA",
+              payload: commandPayload,
+              smsRecipient,
+              smsMessage,
+            },
+            sim.deviceId
+          );
+          console.log(`⚡ SME Data SMS (${smsMessage}) emitted for ref: ${command.reference}`);
+        } catch (socketErr) {
+          console.warn("Socket emission warning:", socketErr.message);
+        }
+
+        // 5. Record GSM Transaction Log
+        await prisma.gsmTransaction.create({
+          data: {
+            simId: sim.id,
+            phoneNumber: phone,
+            network: resolvedNetwork,
+            amount: Number(amount || 0),
+            reference: commandReference,
+            status: "PENDING",
+          },
+        }).catch(() => {});
+
+        return {
+          success: true,
+          message: "Data purchase command queued and dispatched to GSM Gateway",
           commandId: command.id,
           reference: command.reference,
         };

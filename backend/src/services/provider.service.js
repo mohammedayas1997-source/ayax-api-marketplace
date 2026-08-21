@@ -119,13 +119,13 @@ exports.getProviderForService = async (serviceSlug) => {
         });
 
         // Default USSD template idan ba a saita a database ba (misali MTN Share: *321*1*PHONE*AMOUNT*PIN#)
-        let ussdTemplate = profile?.airtimeTemplate || "*321*1*{phone}*{amount}*0000#";
+        let ussdTemplate = profile?.airtimeTemplate || "*321*1*{phone}*{amount}*1997#";
         
         const ussdCode = ussdTemplate
           .replace(/{phone}/gi, phone)
           .replace(/{phoneNumber}/gi, phone)
           .replace(/{amount}/gi, String(amount))
-          .replace(/{pin}/gi, "0000"); // Sauya PIN din idan layin yana da PIN na daban
+          .replace(/{pin}/gi, "1997"); // Sauya PIN din idan layin yana da PIN na daban
 
         // 3. Kirkiri GSM Command tare da USSD Code
         const commandReference = reference || `AIR-${Date.now()}`;

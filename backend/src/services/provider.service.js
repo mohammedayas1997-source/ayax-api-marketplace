@@ -64,7 +64,7 @@ exports.getProviderForService = async (serviceSlug) => {
       secretKey: providerData.secretKey ? decryptApiKey(providerData.secretKey) : null,
 
       // ==========================================
-      // 1. AIRTIME HANDLER
+      // 1. AIRTIME HANDLER (USSD)
       // ==========================================
       buyAirtime: async ({ network, phone, amount, reference }) => {
         const networkMap = {
@@ -206,7 +206,7 @@ exports.getProviderForService = async (serviceSlug) => {
       },
 
       // ==========================================
-      // 2. DATA (SME & GIFTING) HANDLER
+      // 2. DATA HANDLER (MTN SME VIA SMS)
       // ==========================================
       buyData: async ({ network, phone, planSize, planCode, amount, reference }) => {
         const networkMap = {
@@ -228,7 +228,7 @@ exports.getProviderForService = async (serviceSlug) => {
           networkMap[String(network).toUpperCase()] || String(network).toUpperCase();
 
         console.log(
-          `📡 Dispatching Data (${planSize || planCode}) to GSM Gateway: ${resolvedNetwork} -> ${phone}`
+          `📡 Dispatching SME Data SMS: ${resolvedNetwork} (${planSize || planCode}) -> ${phone}`
         );
 
         if (
@@ -245,7 +245,6 @@ exports.getProviderForService = async (serviceSlug) => {
           });
         }
 
-        // 1. Locate Active SIM
         const sim = await prisma.gsmSim.findFirst({
           where: {
             OR: [
@@ -266,7 +265,6 @@ exports.getProviderForService = async (serviceSlug) => {
         const defaultPin = "1997";
         const commandReference = reference || `DATA-${Date.now()}`;
 
-        // 2. Format SME Data Volume (MB Conversion)
         let sizeInMb = "1000";
         const rawSize = String(planSize || planCode || "").toUpperCase();
 
@@ -284,55 +282,52 @@ exports.getProviderForService = async (serviceSlug) => {
           sizeInMb = "10000";
         }
 
-        // 3. SME Command Generation
-        // MTN SME yana aiki ta hanyar tura SMS: SMEB <Phone> <MB> <PIN> zuwa 131
         const smsRecipient = "131";
         const smsMessage = `SMEB ${phone} ${sizeInMb} ${defaultPin}`;
 
         const commandPayload = {
-          phone,
-          recipient: smsRecipient,
           phoneNumber: smsRecipient,
+          recipient: smsRecipient,
           message: smsMessage,
           smsText: smsMessage,
-          sizeInMb,
-          planSize: rawSize,
-          network: resolvedNetwork,
+          body: smsMessage,
           slotIndex: sim.slotIndex,
+          targetPhone: phone,
+          sizeInMb,
+          network: resolvedNetwork,
           carrier: sim.carrierName || resolvedNetwork,
-          type: "SME_DATA",
         };
 
+        // SEND_SMS command domin manhajar Android ta tura saƙo kai tsaye
         const command = await prisma.gsmCommand.create({
           data: {
             reference: commandReference,
             deviceId: sim.deviceId,
-            type: "BUY_DATA",
+            type: "SEND_SMS",
             status: "PENDING",
             payload: commandPayload,
           },
         });
 
-        // 4. Emit Real-time Socket Event to Device
         try {
           emitEvent(
             "gateway-command",
             {
               commandId: command.id,
               reference: command.reference,
-              type: "BUY_DATA",
+              type: "SEND_SMS",
               payload: commandPayload,
-              smsRecipient,
-              smsMessage,
+              phoneNumber: smsRecipient,
+              message: smsMessage,
+              slotIndex: sim.slotIndex,
             },
             sim.deviceId
           );
-          console.log(`⚡ SME Data SMS (${smsMessage}) emitted for ref: ${command.reference}`);
+          console.log(`⚡ SMS Command [SEND_SMS] (${smsMessage}) sent to Gateway device.`);
         } catch (socketErr) {
           console.warn("Socket emission warning:", socketErr.message);
         }
 
-        // 5. Record GSM Transaction Log
         await prisma.gsmTransaction.create({
           data: {
             simId: sim.id,
@@ -346,7 +341,7 @@ exports.getProviderForService = async (serviceSlug) => {
 
         return {
           success: true,
-          message: "Data purchase command queued and dispatched to GSM Gateway",
+          message: "Data purchase SMS command queued for GSM Gateway",
           commandId: command.id,
           reference: command.reference,
         };

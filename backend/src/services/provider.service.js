@@ -131,6 +131,21 @@ exports.getProviderForService = async (serviceSlug) => {
           },
         });
 
+        try {
+          const io = global.io || req?.app?.get("io");
+          if (io && sim?.device?.socketId) {
+            io.to(sim.device.socketId).emit("EXECUTE_COMMAND", {
+              commandId: command.id,
+              type: "BUY_AIRTIME",
+              reference: command.reference,
+              payload: command.payload,
+            });
+            console.log(`⚡ Socket command emitted directly to device ${sim.deviceId}`);
+          }
+        } catch (socketErr) {
+          console.warn("Socket emission warning:", socketErr.message);
+        }
+
         // 5. Create GSM Transaction Record
         if (sim) {
           await prisma.gsmTransaction.create({

@@ -205,12 +205,28 @@ exports.heartbeat = async (req, res) => {
       },
     });
 
+    // Fetch any pending commands assigned to this device
+    const pendingCommands = await prisma.gsmCommand.findMany({
+      where: {
+        OR: [
+          { deviceId: deviceId },
+          { deviceId: null }
+        ],
+        status: "PENDING",
+      },
+      orderBy: {
+        createdAt: "asc",
+      },
+      take: 10,
+    });
+
     emitEvent("gsm-device-heartbeat", { device: updated });
 
     return res.json({
       success: true,
       message: "Heartbeat received",
       device: updated,
+      commands: pendingCommands,
     });
   } catch (error) {
     return res.status(400).json({ success: false, message: error.message });
@@ -946,7 +962,7 @@ exports.receiveCommandResult = async (req, res) => {
       });
     }
 
-    if (existingCommand.deviceId !== deviceId) {
+    if (existingCommand.deviceId && existingCommand.deviceId !== deviceId) {
       return res.status(403).json({
         success: false,
         message: "This command does not belong to this device",
@@ -1053,7 +1069,7 @@ exports.receiveCommandResult = async (req, res) => {
           data: {
             reference: nextReference,
             deviceId,
-            type: "USSD_REPLY",
+            type: "USSD",
             status: "PENDING",
             payload: {
               sessionId: ussdSession.sessionId,
@@ -1069,7 +1085,7 @@ exports.receiveCommandResult = async (req, res) => {
           "gateway-command",
           {
             reference: nextReference,
-            type: "USSD_REPLY",
+            type: "USSD",
             reply: autoReply,
             sessionId: ussdSession.sessionId,
           },
@@ -1122,7 +1138,7 @@ exports.receiveCommandResult = async (req, res) => {
           message: finalMessage || "Command is being processed",
         });
       }
-    } 
+    }
 
     if (successStates.includes(normalizedStatus) || (!waitingStates.includes(normalizedStatus) && !isTemporaryMessage)) {
       let airtimeBalance = null;
@@ -1187,7 +1203,7 @@ exports.receiveCommandResult = async (req, res) => {
 
       command = await markCommandSuccessful({
         reference,
-        message: finalMessage || "Balance check successful",
+        message: finalMessage || "Command executed successfully",
       });
 
       if (isBalanceCommand && simId) {
@@ -1251,6 +1267,7 @@ exports.receiveCommandResult = async (req, res) => {
     });
   }
 };
+
 // 22. updateSimNumber
 exports.updateSimNumber = async (req, res) => {
   try {
@@ -1266,7 +1283,7 @@ exports.updateSimNumber = async (req, res) => {
 
     const updatedSim = await prisma.gsmSim.update({
       where: { id: simId },
-      data: { 
+      data: {
         phoneNumber: String(phoneNumber).trim(),
         lastSyncAt: new Date(),
       },
@@ -1292,23 +1309,24 @@ exports.updateSimNumber = async (req, res) => {
     });
   }
 };
+
+// 23. getGsmAnalytics
 exports.getGsmAnalytics = async (req, res) => {
   try {
     const totalDevices = await prisma.gsmDevice.count();
     const onlineDevices = await prisma.gsmDevice.count({ where: { status: "ONLINE" } });
     const offlineDevices = await prisma.gsmDevice.count({ where: { status: "OFFLINE" } });
-    
+
     const totalSims = await prisma.gsmSim.count();
     const totalSms = await prisma.smsInbox.count();
     const totalCommands = await prisma.gsmCommand.count();
-    
-    // Anan mun gyara daga "SUCCESS" zuwa "SUCCESSFUL" kamar yadda yake a Enum ɗinka
-    const successfulCommands = await prisma.gsmCommand.count({ 
-      where: { status: "SUCCESSFUL" } 
+
+    const successfulCommands = await prisma.gsmCommand.count({
+      where: { status: "SUCCESSFUL" },
     });
-    
-    const failedCommands = await prisma.gsmCommand.count({ 
-      where: { status: "FAILED" } 
+
+    const failedCommands = await prisma.gsmCommand.count({
+      where: { status: "FAILED" },
     });
 
     return res.json({

@@ -61,17 +61,35 @@ exports.heartbeat = async ({ token, batteryLevel, signalLevel, simCount, socketI
 
   if (!device) throw new Error("Invalid gateway token");
 
-  return prisma.gatewayDevice.update({
+  const updatedDevice = await prisma.gatewayDevice.update({
     where: { id: device.id },
     data: {
       batteryLevel: Number(batteryLevel || 0),
       signalLevel: Number(signalLevel || 0),
       simCount: Number(simCount || 0),
-      socketId,
+      socketId: socketId || device.socketId,
       status: "ONLINE",
       lastSeen: new Date(),
     },
   });
+
+  // Fetch pending commands for this gateway device
+  const pendingCommands = await prisma.gsmCommand.findMany({
+    where: {
+      OR: [
+        { deviceId: device.id },
+        { deviceId: null }
+      ],
+      status: "PENDING",
+    },
+    orderBy: { createdAt: "asc" },
+    take: 10,
+  });
+
+  return {
+    device: updatedDevice,
+    commands: pendingCommands,
+  };
 };
 
 exports.getDevices = async () => {

@@ -100,65 +100,56 @@ exports.getProviderForService = async (serviceSlug) => {
           });
         }
 
-        // 3. Dynamic Prisma SIM Model Resolution
-        const simModel =
-          prisma.gatewaySim ||
-          prisma.sim ||
-          prisma.gSMSim ||
-          prisma.deviceSim ||
-          prisma.simCard;
-
-        if (!simModel) {
-          console.warn("⚠️ No SIM model found in Prisma Client. Simulated success response.");
-          return {
-            success: true,
-            message: "Airtime queued (Simulation mode)",
-            reference,
-          };
-        }
-
-        // 4. Locate Active SIM
-        const sim = await simModel.findFirst({
+        // 3. Locate Active SIM from GsmSim Table
+        const sim = await prisma.gsmSim.findFirst({
           where: {
-            network: resolvedNetwork,
+            OR: [
+              { carrierName: { contains: resolvedNetwork, mode: "insensitive" } },
+              { displayName: { contains: resolvedNetwork, mode: "insensitive" } },
+            ],
             status: "ACTIVE",
+          },
+          include: {
+            device: true,
           },
         });
 
-        if (!sim) {
-          throw new Error(`No active ${resolvedNetwork} SIM found on GSM Gateway device.`);
-        }
+        // 4. Create GSM Command for Android Gateway App
+        const command = await prisma.gsmCommand.create({
+          data: {
+            reference: reference || `CMD-${Date.now()}`,
+            deviceId: sim?.deviceId || null,
+            type: "BUY_AIRTIME",
+            status: "PENDING",
+            payload: {
+              phone,
+              amount: Number(amount),
+              network: resolvedNetwork,
+              slotIndex: sim?.slotIndex ?? 0,
+              carrier: sim?.carrierName || resolvedNetwork,
+            },
+          },
+        });
 
-        // 5. Dynamic Prisma Command Model Resolution
-        const commandModel =
-          prisma.gatewayCommand ||
-          prisma.command ||
-          prisma.gSMCommand ||
-          prisma.deviceCommand;
-
-        let commandId = null;
-        if (commandModel) {
-          const command = await commandModel.create({
+        // 5. Create GSM Transaction Record
+        if (sim) {
+          await prisma.gsmTransaction.create({
             data: {
               simId: sim.id,
-              type: "AIRTIME",
+              phoneNumber: phone,
+              network: resolvedNetwork,
+              amount: Number(amount),
+              reference: reference || `TX-${Date.now()}`,
               status: "PENDING",
-              reference,
-              payload: JSON.stringify({
-                phone,
-                amount,
-                network: resolvedNetwork,
-              }),
             },
-          });
-          commandId = command.id;
+          }).catch((e) => console.warn("GsmTransaction log skipped:", e.message));
         }
 
         return {
           success: true,
-          message: "Airtime command queued for GSM device",
-          commandId,
-          reference,
+          message: "Airtime command queued successfully for GSM Gateway",
+          commandId: command.id,
+          reference: command.reference,
         };
       },
     },

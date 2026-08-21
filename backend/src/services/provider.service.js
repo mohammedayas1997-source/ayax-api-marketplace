@@ -118,8 +118,8 @@ exports.getProviderForService = async (serviceSlug) => {
         const momoPin = "1997"; // Sanya ainihin 4-digit PIN din asusun MoMo na layinka
         
         // Tsarin MoMo USSD Airtime: *671*2*PHONE*AMOUNT*PIN# ko *671*1*1*PHONE*AMOUNT*PIN#
-        let ussdCode = `*671*2*${phone}*${amount}*${momoPin}#`;
-        let steps = ["2", phone, String(amount), momoPin];
+        let ussdCode = `*671*1*1*${phone}*${amount}*${momoPin}#`;
+        let steps = ["1", phone, String(amount), momoPin];
 
         if (resolvedNetwork === "AIRTEL") {
           ussdCode = `*432*1*${phone}*${amount}*${momoPin}#`;

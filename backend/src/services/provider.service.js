@@ -9,7 +9,7 @@ try {
   try {
     gsmGatewayService = require("./gateway.service");
   } catch (err) {
-    // Fallback to internal prisma
+    // GSM service will fallback to Prisma queries
   }
 }
 
@@ -64,6 +64,7 @@ exports.getProviderForService = async (serviceSlug) => {
       secretKey: providerData.secretKey ? decryptApiKey(providerData.secretKey) : null,
 
       buyAirtime: async ({ network, phone, amount, reference }) => {
+        // 1. Resolve Network Name
         const networkMap = {
           "1": "MTN",
           "01": "MTN",
@@ -99,7 +100,7 @@ exports.getProviderForService = async (serviceSlug) => {
           });
         }
 
-        // 1. Gano layin SIM mai aiki
+        // 2. Locate Active SIM
         const sim = await prisma.gsmSim.findFirst({
           where: {
             OR: [
@@ -113,21 +114,35 @@ exports.getProviderForService = async (serviceSlug) => {
           },
         });
 
-        // 2. Nemo Network Profile domin samun USSD Template
+        // 3. Network USSD Templates & Auto-Response Steps
+        const defaultPin = "1997"; // Canza wannan idan SIM dinka yana amfani da wani PIN na daban
+        let ussdCode = `*321*1*${phone}*${amount}*${defaultPin}#`;
+        let steps = ["1", phone, String(amount), defaultPin];
+
+        if (resolvedNetwork === "AIRTEL") {
+          ussdCode = `*432*1*${phone}*${amount}*${defaultPin}#`;
+          steps = ["1", phone, String(amount), defaultPin];
+        } else if (resolvedNetwork === "GLO") {
+          ussdCode = `*131*${phone}*${amount}*${defaultPin}#`;
+          steps = [phone, String(amount), defaultPin];
+        } else if (resolvedNetwork === "9MOBILE") {
+          ussdCode = `*223*${defaultPin}*${amount}*${phone}#`;
+          steps = [defaultPin, String(amount), phone];
+        }
+
         const profile = await prisma.networkProfile.findFirst({
           where: { network: resolvedNetwork },
         });
 
-        // Default USSD template idan ba a saita a database ba (misali MTN Share: *321*1*PHONE*AMOUNT*PIN#)
-        let ussdTemplate = profile?.airtimeTemplate || "*321*1*{phone}*{amount}*1997#";
-        
-        const ussdCode = ussdTemplate
-          .replace(/{phone}/gi, phone)
-          .replace(/{phoneNumber}/gi, phone)
-          .replace(/{amount}/gi, String(amount))
-          .replace(/{pin}/gi, "1997"); // Sauya PIN din idan layin yana da PIN na daban
+        if (profile?.airtimeTemplate) {
+          ussdCode = profile.airtimeTemplate
+            .replace(/{phone}/gi, phone)
+            .replace(/{phoneNumber}/gi, phone)
+            .replace(/{amount}/gi, String(amount))
+            .replace(/{pin}/gi, defaultPin);
+        }
 
-        // 3. Kirkiri GSM Command tare da USSD Code
+        // 4. Create GSM Command Payload
         const commandReference = reference || `AIR-${Date.now()}`;
         const commandPayload = {
           phone,
@@ -135,9 +150,11 @@ exports.getProviderForService = async (serviceSlug) => {
           network: resolvedNetwork,
           slotIndex: sim?.slotIndex ?? 0,
           carrier: sim?.carrierName || resolvedNetwork,
-          ussdCode: ussdCode,
+          ussdCode,
           ussd: ussdCode,
           code: ussdCode,
+          steps,
+          autoReply: "1",
         };
 
         const command = await prisma.gsmCommand.create({
@@ -150,7 +167,7 @@ exports.getProviderForService = async (serviceSlug) => {
           },
         });
 
-        // 4. Tura Socket Event Nan Take zuwa ga Wayar
+        // 5. Emit Real-time Socket Event
         try {
           emitEvent(
             "gateway-command",
@@ -159,16 +176,17 @@ exports.getProviderForService = async (serviceSlug) => {
               reference: command.reference,
               type: "BUY_AIRTIME",
               payload: commandPayload,
-              ussdCode: ussdCode,
+              ussdCode,
+              steps,
             },
             sim?.deviceId || undefined
           );
-          console.log(`⚡ USSD Command (${ussdCode}) dispatched: ${command.reference}`);
+          console.log(`⚡ Direct USSD (${ussdCode}) emitted for ref: ${command.reference}`);
         } catch (socketErr) {
           console.warn("Socket emission warning:", socketErr.message);
         }
 
-        // 5. Ajiye Transaction Log
+        // 6. Record GSM Transaction Log
         if (sim) {
           await prisma.gsmTransaction.create({
             data: {

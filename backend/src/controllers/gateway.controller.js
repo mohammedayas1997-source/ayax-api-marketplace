@@ -170,7 +170,7 @@ exports.pairDevice = async (req, res) => {
   }
 };
 
-// 2. heartbeat
+// 2. heartbeat (AN GYARA FORMAT NA DATA SMS DA USSD DON ANDROID APP)
 exports.heartbeat = async (req, res) => {
   try {
     const { deviceId, secretKey, battery, charging, signal, internet } = req.body;
@@ -217,29 +217,65 @@ exports.heartbeat = async (req, res) => {
       take: 10,
     });
 
-    // 2. Fito da dukkan bayanan payload zuwa Root Level (Flattening)
+    // 2. Fito da dukkan bayanan payload zuwa Root Level (Cikakken Data don SMS da USSD)
     const formattedCommands = pendingCommands.map((cmd) => {
-      const payloadData = typeof cmd.payload === "string" 
-        ? JSON.parse(cmd.payload || "{}") 
-        : (cmd.payload || {});
+      const payloadData =
+        typeof cmd.payload === "string"
+          ? JSON.parse(cmd.payload || "{}")
+          : cmd.payload || {};
+
+      const finalType = cmd.type || payloadData.type || "USSD";
+      const smsMessageText =
+        payloadData.message ||
+        payloadData.smsText ||
+        payloadData.body ||
+        "";
+      const targetRecipient =
+        payloadData.phoneNumber ||
+        payloadData.recipient ||
+        payloadData.phone ||
+        "";
 
       return {
         id: cmd.id,
+        commandId: cmd.id,
         reference: cmd.reference,
-        type: cmd.type || payloadData.type || "USSD",
+        type: finalType,
         deviceId: cmd.deviceId || deviceId,
         status: cmd.status,
-        // Wadannan sune ainihin filayen da Android app ke nema:
+        
+        // SMS Payload Fields (Don Siyan Data na 131)
+        message: smsMessageText,
+        smsText: smsMessageText,
+        body: smsMessageText,
+        recipient: targetRecipient,
+        phoneNumber: targetRecipient,
+        phone: payloadData.targetPhone || targetRecipient,
+        targetPhone: payloadData.targetPhone || targetRecipient,
+
+        // USSD Payload Fields (Don Airtime / Direct USSD)
         ussdCode: payloadData.ussdCode || payloadData.code || payloadData.command || "",
         code: payloadData.ussdCode || payloadData.code || "",
-        slotIndex: payloadData.slotIndex !== undefined ? payloadData.slotIndex : (payloadData.simSlot || 0),
-        simSlot: payloadData.slotIndex !== undefined ? payloadData.slotIndex : (payloadData.simSlot || 0),
+        steps: payloadData.steps || [],
+
+        // SIM Card Slot Controls
+        slotIndex:
+          payloadData.slotIndex !== undefined
+            ? Number(payloadData.slotIndex)
+            : Number(payloadData.simSlot || 0),
+        simSlot:
+          payloadData.slotIndex !== undefined
+            ? Number(payloadData.slotIndex)
+            : Number(payloadData.simSlot || 0),
         simId: payloadData.simId || null,
-        phoneNumber: payloadData.phoneNumber || payloadData.phone || "",
-        amount: payloadData.amount || 0,
+
+        // Financial & Session Data
+        amount: Number(payloadData.amount || 0),
+        sizeInMb: payloadData.sizeInMb || null,
+        network: payloadData.network || null,
         reply: payloadData.reply || null,
         sessionId: payloadData.sessionId || null,
-        step: payloadData.step || 1,
+        step: Number(payloadData.step || 1),
         payload: payloadData,
       };
     });
@@ -250,7 +286,7 @@ exports.heartbeat = async (req, res) => {
       success: true,
       message: "Heartbeat received",
       device: updated,
-      commands: formattedCommands, // An dawo da su a yadda Android app zai gane su
+      commands: formattedCommands,
     });
   } catch (error) {
     console.error("Heartbeat processing error:", error.message);

@@ -1041,8 +1041,8 @@ exports.receiveCommandResult = async (req, res) => {
     const isDataCommand = ["DATA", "DATA_BALANCE", "CHECK_DATA"].includes(balanceType);
     const isBalanceCommand = Boolean(simId) && (isAirtimeCommand || isDataCommand);
 
-    // ==========================================
-    // HELPER: MAYAR WA USER KUDINSA IDAN TRANX YA FAƊI
+// ==========================================
+    // HELPER: MAYAR WA USER KUDINSA A WALLET
     // ==========================================
     const refundUserTransaction = async (reason) => {
       try {
@@ -1051,13 +1051,17 @@ exports.receiveCommandResult = async (req, res) => {
         });
 
         if (txn && txn.status !== "FAILED" && txn.status !== "REFUNDED") {
-          await prisma.user.update({
-            where: { id: txn.userId },
+          const refundAmount = Number(txn.amount);
+
+          // 1. Mayar da kudi zuwa teburin Wallet na User
+          await prisma.wallet.updateMany({
+            where: { userId: txn.userId },
             data: {
-              walletBalance: { increment: Number(txn.amount) },
+              balance: { increment: refundAmount },
             },
           });
 
+          // 2. Canza status din transaction zuwa FAILED
           await prisma.transaction.update({
             where: { id: txn.id },
             data: {
@@ -1067,7 +1071,14 @@ exports.receiveCommandResult = async (req, res) => {
             },
           });
 
-          console.log(`💰 Auto-refunded ₦${txn.amount} to User: ${txn.userId} for Ref: ${reference}`);
+          // 3. Emit real-time socket event don dashboard na user ya nuna kudin sun dawo
+          emitEvent("wallet-updated", {
+            userId: txn.userId,
+            refundedAmount: refundAmount,
+            reference,
+          });
+
+          console.log(`💰 Auto-refunded ₦${refundAmount} to User Wallet (User ID: ${txn.userId}) for Ref: ${reference}`);
         }
       } catch (refundErr) {
         console.error("Auto-refund error:", refundErr.message);

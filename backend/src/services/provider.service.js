@@ -207,7 +207,7 @@ exports.getProviderForService = async (serviceSlug) => {
       },
 
       // ==========================================
-      // 2. DATA HANDLER (MTN SME SMS ZUWA 131)
+      // 2. DATA HANDLER (AN GYARA TSARIN DISPATCH GA GSM GATEWAY)
       // ==========================================
       buyData: async ({ network, phone, planSize, planCode, amount, reference }) => {
         const resolvedNetwork = String(network || "MTN").toUpperCase();
@@ -223,65 +223,104 @@ exports.getProviderForService = async (serviceSlug) => {
         if (rawPlan.includes("5GB") || rawPlan.includes("5000")) dataSizeCode = "5000";
         if (rawPlan.includes("10GB") || rawPlan.includes("10000")) dataSizeCode = "10000";
 
-        const sim = await prisma.gsmSim.findFirst({
+        // 1. Nemo SIM din da ya dace da Network ko SIM mai aiki a Device din da yake ONLINE
+        let sim = await prisma.gsmSim.findFirst({
           where: {
             OR: [
-              { carrierName: { contains: "MTN", mode: "insensitive" } },
-              { displayName: { contains: "MTN", mode: "insensitive" } },
+              { carrierName: { contains: resolvedNetwork, mode: "insensitive" } },
+              { displayName: { contains: resolvedNetwork, mode: "insensitive" } },
             ],
             status: "ACTIVE",
           },
           include: { device: true },
         });
 
+        // Idan babu takamaiman sunan carrier, dauko kowane active sim na farko
         if (!sim) {
-          throw new Error("No active MTN SIM found on GSM Gateway.");
+          sim = await prisma.gsmSim.findFirst({
+            where: { status: "ACTIVE" },
+            include: { device: true },
+          });
         }
 
+        // Idan har yanzu babu, duba device da ke ONLINE
+        let deviceId = sim?.deviceId || null;
+        if (!deviceId) {
+          const onlineDevice = await prisma.gsmDevice.findFirst({
+            where: { status: "ONLINE" },
+            orderBy: { lastSeen: "desc" },
+          });
+          deviceId = onlineDevice?.id || null;
+        }
+
+        const slotIndex = sim?.slotIndex ?? 0;
         const smsRecipient = "131";
         const smsMessage = `SMEB ${phone} ${dataSizeCode} ${pin}`;
+        const ussdCode = `*312*${phone}*${dataSizeCode}#`;
         const commandReference = reference || `DATA-${Date.now()}`;
 
         const commandPayload = {
+          reference: commandReference,
+          deviceId: deviceId,
+          type: "SEND_SMS",
           phoneNumber: smsRecipient,
           recipient: smsRecipient,
           message: smsMessage,
           smsText: smsMessage,
           body: smsMessage,
-          slotIndex: sim.slotIndex,
+          slotIndex: slotIndex,
+          simSlot: slotIndex,
+          simId: sim?.id || null,
           targetPhone: phone,
+          phone: phone,
           sizeInMb: dataSizeCode,
           network: resolvedNetwork,
-          carrier: sim.carrierName || resolvedNetwork,
+          carrier: sim?.carrierName || resolvedNetwork,
+          ussdCode: ussdCode,
+          code: ussdCode,
+          amount: Number(amount || 0),
         };
 
+        // 2. Ajiye a Database a matsayin PENDING command
         const command = await prisma.gsmCommand.create({
           data: {
             reference: commandReference,
-            deviceId: sim.deviceId,
+            deviceId: deviceId,
             type: "SEND_SMS",
             status: "PENDING",
             payload: commandPayload,
           },
         });
 
+        // 3. Watsa Event ta Socket zuwa dakin Device da kuma duk sauran tashoshin Android Gateway
         try {
-          emitEvent(
-            "gateway-command",
-            {
-              commandId: command.id,
-              reference: command.reference,
-              type: "SEND_SMS",
-              payload: commandPayload,
-              phoneNumber: smsRecipient,
-              message: smsMessage,
-              slotIndex: sim.slotIndex,
-            },
-            sim.deviceId
-          );
-          console.log(`⚡ SMS Command (${smsMessage}) sent to Gateway device.`);
+          const eventPayload = {
+            commandId: command.id,
+            id: command.id,
+            reference: command.reference,
+            type: "SEND_SMS",
+            payload: commandPayload,
+            phoneNumber: smsRecipient,
+            recipient: smsRecipient,
+            message: smsMessage,
+            smsText: smsMessage,
+            slotIndex: slotIndex,
+            simSlot: slotIndex,
+            targetPhone: phone,
+            ussdCode: ussdCode,
+            code: ussdCode,
+          };
+
+          emitEvent("gateway-command", eventPayload, deviceId || undefined);
+          emitEvent("command", eventPayload, deviceId || undefined);
+
+          if (deviceId) {
+            emitEvent(`gateway-command-${deviceId}`, eventPayload);
+          }
+
+          console.log(`⚡ [DATA DISPATCHED] Ref: ${command.reference} -> Device: ${deviceId || "Broadcast"} (Slot: ${slotIndex})`);
         } catch (socketErr) {
-          console.warn("Socket emission error:", socketErr.message);
+          console.warn("Socket emission warning:", socketErr.message);
         }
 
         if (sim) {

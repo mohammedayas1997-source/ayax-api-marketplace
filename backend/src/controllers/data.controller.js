@@ -1,11 +1,12 @@
 const prisma = require("../lib/prisma");
 const axios = require("axios");
+const { emitGatewayCommand } = require("../config/socket");
 
 /* ======================================================
    1. GET AVAILABLE DATA PLANS & MARKETPLACE PRICING
 
    GET /api/v1/data/plans
-   Headers: { "x-api-key": "ayax_live_..." } ko Bearer Token
+   Headers: { "x-api-key": "ayax_live_..." } or Bearer Token
 ====================================================== */
 exports.getDataPlans = async (req, res) => {
   try {
@@ -30,7 +31,7 @@ exports.getDataPlans = async (req, res) => {
         volume: true,
         validity: true,
         basePrice: true,
-        apiPrice: true, // Farashin yan kasuwa/developers
+        apiPrice: true,
         isActive: true,
       },
       orderBy: {
@@ -55,7 +56,7 @@ exports.getDataPlans = async (req, res) => {
 };
 
 /* ======================================================
-   2. PURCHASE / DISPATCH DATA VIA MARKETPLACE API
+   2. PURCHASE / DISPATCH DATA VIA GSM GATEWAY
 
    POST /api/v1/data/purchase
    Headers: { "x-api-key": "ayax_live_..." }
@@ -63,7 +64,6 @@ exports.getDataPlans = async (req, res) => {
 ====================================================== */
 exports.purchaseData = async (req, res) => {
   try {
-    // req.user ko req.apiKeyUser (daga API key middleware)
     const user = req.user || req.apiKeyUser;
     const { network, phone, planCode, reference } = req.body;
 
@@ -75,7 +75,7 @@ exports.purchaseData = async (req, res) => {
       });
     }
 
-    // 1. Hana Duplicate Transactions (Idempotency Check)
+    // 1. Idempotency Check (Prevent Duplicate Operations)
     if (reference) {
       const existingTx = await prisma.transaction.findUnique({
         where: { reference },
@@ -91,7 +91,7 @@ exports.purchaseData = async (req, res) => {
       }
     }
 
-    // 2. Nemo ainihin Plan ɗin a Database
+    // 2. Fetch Matching Service Plan
     const plan = await prisma.servicePlan.findFirst({
       where: {
         planCode,
@@ -110,7 +110,7 @@ exports.purchaseData = async (req, res) => {
 
     const cost = Number(plan.apiPrice || plan.basePrice);
 
-    // 3. Tabbatar da Wallet Balance na Developer
+    // 3. Verify Developer/User Wallet Balance
     const wallet = await prisma.wallet.findUnique({
       where: { userId: user.id },
     });
@@ -119,15 +119,36 @@ exports.purchaseData = async (req, res) => {
       return res.status(402).json({
         status: "error",
         code: "INSUFFICIENT_BALANCE",
-        message: "Insufficient wallet balance. Please fund your Ayax Marketplace wallet.",
+        message: "Insufficient wallet balance. Please fund your account wallet.",
         currentBalance: wallet ? Number(wallet.balance) : 0,
         requiredAmount: cost,
       });
     }
 
-    const txReference = reference || `AYAX_DATA_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    // 4. Locate Active GSM Gateway Device and Compatible SIM Slot
+    const activeDevice = await prisma.gsmDevice.findFirst({
+      where: { status: "ONLINE" },
+      include: { sims: true },
+      orderBy: { lastSeen: "desc" },
+    });
 
-    // 4. Rage Balance da Kirkirar PENDING Transaction
+    if (!activeDevice) {
+      return res.status(503).json({
+        status: "error",
+        code: "NO_GATEWAY_ONLINE",
+        message: "All GSM Gateway lines are currently offline. Please retry shortly.",
+      });
+    }
+
+    const targetSim =
+      activeDevice.sims.find(
+        (s) => s.network?.toUpperCase() === String(network).toUpperCase()
+      ) || activeDevice.sims[0];
+
+    const txReference =
+      reference || `AYAX_DATA_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+
+    // 5. Debit Wallet and Create PENDING Transaction Record
     const { updatedWallet, transaction } = await prisma.$transaction(async (tx) => {
       const newWallet = await tx.wallet.update({
         where: { userId: user.id },
@@ -149,6 +170,8 @@ exports.purchaseData = async (req, res) => {
             phone,
             planCode,
             volume: plan.volume,
+            deviceId: activeDevice.id,
+            simId: targetSim?.id,
           },
         },
       });
@@ -156,75 +179,58 @@ exports.purchaseData = async (req, res) => {
       return { updatedWallet: newWallet, transaction: newTx };
     });
 
-    // 5. Tura Request zuwa Provider (misali Ayax Data Xpress / Upstream Provider)
-    let providerResponse;
-    let isSuccess = false;
+    // 6. Build Standard USSD Syntax
+    const ussdSyntax = `*312*${phone.trim()}*${plan.planCode}#`;
 
-    try {
-      // Misalin kiran upstream gateway:
-      /*
-      providerResponse = await axios.post(
-        `${process.env.DATA_PROVIDER_URL}/api/v1/buy-data`,
-        {
-          network: plan.network,
-          phone,
-          plan: plan.planCode,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.DATA_PROVIDER_SECRET}`,
-          },
-        }
-      );
-      isSuccess = providerResponse.data?.status === "success";
-      */
+    const commandPayload = {
+      reference: txReference,
+      deviceId: activeDevice.id,
+      type: "USSD",
+      ussdCode: ussdSyntax,
+      code: ussdSyntax,
+      slotIndex: targetSim?.slotIndex ?? 0,
+      simSlot: targetSim?.slotIndex ?? 0,
+      simId: targetSim?.id || null,
+      phoneNumber: phone.trim(),
+      amount: cost,
+      network: String(network).toUpperCase(),
+      planCode: plan.planCode,
+    };
 
-      // A halin yanzu (Mock/Direct success):
-      isSuccess = true;
-    } catch (upstreamErr) {
-      console.error("Upstream Data Provider Error:", upstreamErr.message);
-      isSuccess = false;
-    }
+    // 7. Store Command in gsmCommand Table for GSM Execution
+    await prisma.gsmCommand.create({
+      data: {
+        reference: txReference,
+        deviceId: activeDevice.id,
+        type: "USSD",
+        status: "PENDING",
+        payload: commandPayload,
+      },
+    });
 
-    // 6. Tabbatar da Transaction ko Mayar da Kudi (Refund) idan ya gaza
-    if (isSuccess) {
-      await prisma.transaction.update({
-        where: { id: transaction.id },
-        data: { status: "SUCCESS" },
-      });
+    // 8. Real-time Dispatch to GSM Device via Socket.io
+    emitGatewayCommand(activeDevice.id, {
+      id: transaction.id,
+      ...commandPayload,
+    });
 
-      return res.status(200).json({
-        status: "success",
-        code: "TRANSACTION_SUCCESSFUL",
-        message: `Successfully delivered ${plan.name} to ${phone}.`,
-        data: {
-          reference: txReference,
-          network: plan.network,
-          phone,
-          plan: plan.name,
-          amountCharged: cost,
-          walletBalance: updatedWallet.balance,
-        },
-      });
-    } else {
-      // Refund wallet idan upstream provider ya gaza
-      await prisma.$transaction([
-        prisma.wallet.update({
-          where: { userId: user.id },
-          data: { balance: { increment: cost } },
-        }),
-        prisma.transaction.update({
-          where: { id: transaction.id },
-          data: { status: "FAILED" },
-        }),
-      ]);
+    console.log(
+      `[GSM DISPATCH] Queued Ref: ${txReference} for device ${activeDevice.id} (Slot: ${commandPayload.slotIndex})`
+    );
 
-      return res.status(502).json({
-        status: "error",
-        code: "PROVIDER_FAILURE",
-        message: "Failed to deliver data bundle. Your wallet has been refunded.",
-      });
-    }
+    return res.status(200).json({
+      status: "success",
+      code: "TRANSACTION_QUEUED",
+      message: `Data purchase initiated for ${plan.name} to ${phone}. Processing on GSM Gateway.`,
+      data: {
+        reference: txReference,
+        network: plan.network,
+        phone,
+        plan: plan.name,
+        amountCharged: cost,
+        walletBalance: updatedWallet.balance,
+      },
+    });
   } catch (error) {
     console.error("Marketplace data purchase error:", error);
     return res.status(500).json({

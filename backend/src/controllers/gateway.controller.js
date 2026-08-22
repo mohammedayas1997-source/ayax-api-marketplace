@@ -10,7 +10,6 @@ const {
   parseAirtimeBalance,
   parseDataBalance,
   parseExpiryDate,
-  parseExpiryToDate,
   parsePhoneNumber,
 } = require("../services/ussdParser.service");
 const { sendBalanceCheckCommand } = require("../services/balanceCheck.service");
@@ -87,7 +86,6 @@ const parseExpiryToDate = (value) => {
   const parsed = new Date(text);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
-
 // 1. pairDevice
 exports.pairDevice = async (req, res) => {
   try {

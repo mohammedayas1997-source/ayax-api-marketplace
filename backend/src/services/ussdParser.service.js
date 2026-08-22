@@ -204,3 +204,22 @@ exports.parseExpiryDate = (message = "") => {
 
   return null;
 };
+/*
+ * PHONE NUMBER PARSER
+ */
+exports.parsePhoneNumber = (message = "") => {
+  if (!message) return null;
+  const text = String(message)
+    .replace(/\r/g, " ")
+    .replace(/\n/g, " ")
+    .trim();
+
+  // Gano lambar wayar Najeriya (misali: 08031234567, 2348031234567, ko +2348031234567)
+  const phoneMatch = text.match(/(?:\+?234|0)([789][01]\d{8})/);
+  if (phoneMatch) {
+    const rawNumber = phoneMatch[1];
+    return `0${rawNumber}`;
+  }
+
+  return null;
+};

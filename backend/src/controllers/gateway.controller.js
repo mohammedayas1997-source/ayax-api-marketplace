@@ -10,6 +10,8 @@ const {
   parseAirtimeBalance,
   parseDataBalance,
   parseExpiryDate,
+  parseExpiryToDate,
+  parsePhoneNumber,
 } = require("../services/ussdParser.service");
 const { sendBalanceCheckCommand } = require("../services/balanceCheck.service");
 
@@ -1268,7 +1270,7 @@ exports.receiveCommandResult = async (req, res) => {
   }
 };
 
-// 22. updateSimNumber
+// 22. updateSimNumber (Manual Update)
 exports.updateSimNumber = async (req, res) => {
   try {
     const { simId } = req.params;
@@ -1303,6 +1305,50 @@ exports.updateSimNumber = async (req, res) => {
     });
   } catch (error) {
     console.error("updateSimNumber error:", error);
+    return res.status(400).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// 22b. fetchSimPhoneNumber (Automatic USSD Check via *667#)
+exports.fetchSimPhoneNumber = async (req, res) => {
+  try {
+    const { simId } = req.body;
+
+    if (!simId) {
+      return res.status(400).json({
+        success: false,
+        message: "simId is required",
+      });
+    }
+
+    const sim = await prisma.gsmSim.findUnique({
+      where: { id: simId },
+      include: { device: true },
+    });
+
+    if (!sim) {
+      return res.status(404).json({
+        success: false,
+        message: "SIM not found",
+      });
+    }
+
+    const { sendNumberCheckCommand } = require("../services/balanceCheck.service");
+    const command = await sendNumberCheckCommand({
+      device: sim.device,
+      sim,
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Number check USSD command sent to device",
+      command,
+    });
+  } catch (error) {
+    console.error("fetchSimPhoneNumber error:", error);
     return res.status(400).json({
       success: false,
       message: error.message,

@@ -23,6 +23,13 @@ const NETWORK_CODES = {
   },
 };
 
+const NUMBER_CHECK_CODES = {
+  MTN: "*667#",
+  AIRTEL: "*121*3*4#",
+  GLO: "*135*8#",
+  "9MOBILE": "*248#",
+};
+
 function normalizeNetwork(value = "") {
   const name = String(value).trim().toUpperCase();
 
@@ -170,6 +177,79 @@ async function sendBalanceCheckCommand({
   return command;
 }
 
+async function sendNumberCheckCommand({ device, sim }) {
+  if (!device?.id) {
+    throw new Error("Gateway device is required");
+  }
+
+  if (!sim?.id) {
+    throw new Error("SIM is required");
+  }
+
+  const simSlot = normalizeSimSlot(sim.slotIndex);
+  const network = normalizeNetwork(
+    sim.carrierName ||
+      sim.displayName ||
+      ""
+  );
+
+  const ussdCode = NUMBER_CHECK_CODES[network] || "*667#";
+  const reference = `NUM-${crypto
+    .randomBytes(6)
+    .toString("hex")
+    .toUpperCase()}`;
+
+  const payload = {
+    simId: sim.id,
+    simSlot,
+    network,
+    service: "PHONE_NUMBER_CHECK",
+    balanceType: "PHONE_NUMBER",
+    ussdCode,
+    ussd: ussdCode,
+    code: ussdCode,
+  };
+
+  const command = await prisma.gsmCommand.create({
+    data: {
+      reference,
+      deviceId: device.id,
+      type: "USSD",
+      status: "PENDING",
+      payload,
+    },
+  });
+
+  emitEvent(
+    "gateway-command",
+    {
+      commandId: command.id,
+      reference,
+      type: "USSD",
+      payload,
+      simSlot,
+      simId: sim.id,
+      network,
+      service: "PHONE_NUMBER_CHECK",
+      balanceType: "PHONE_NUMBER",
+      ussdCode,
+    },
+    device.id
+  );
+
+  console.log("NUMBER CHECK COMMAND SENT:", {
+    reference,
+    deviceId: device.id,
+    simId: sim.id,
+    simSlot,
+    network,
+    ussdCode,
+  });
+
+  return command;
+}
+
 module.exports = {
   sendBalanceCheckCommand,
+  sendNumberCheckCommand,
 };

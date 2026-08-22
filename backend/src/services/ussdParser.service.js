@@ -168,57 +168,65 @@ exports.parseDataBalance = (message = "") => {
 };
 
 /*
- * EXPIRY DATE PARSER
+ * ROBUST EXPIRY DATE PARSER (MTN, AIRTEL, GLO, 9MOBILE)
  */
 exports.parseExpiryDate = (message = "") => {
+  if (!message) return null;
   const text = normalize(message);
-  const sep = "[\\s\\/\\-\\.]+";
 
+  // 1. Gano kwanaki (misali: "valid for 30 days" ko "validity: 30 days")
+  const daysMatch = text.match(/(?:valid\s+for|validity[:\s]+)(\d+)\s*days?/i);
+  if (daysMatch && daysMatch[1]) {
+    const days = parseInt(daysMatch[1], 10);
+    const targetDate = new Date();
+    targetDate.setDate(targetDate.getDate() + days);
+    return targetDate.toISOString();
+  }
+
+  // 2. Gano Date tare da Kalmomin Telco (Expires on, Valid till, Exp Date)
   const patterns = [
-    new RegExp(
-      `(?:valid\\s+(?:until|till|to)|expires?\\s+(?:on)?|expiry(?:\\s+date)?|validity)\\s*(?:is|:|-)?\\s*` +
-        `(\\d{1,2}${sep}(?:\\d{1,2}|[A-Za-z]{3,9})${sep}\\d{2,4})`,
-      "i"
-    ),
-    new RegExp(
-      `(?:on|till|until|date)\\s*[:\\-]?\\s*` +
-        `(\\d{1,2}${sep}(?:\\d{1,2}|[A-Za-z]{3,9})${sep}\\d{2,4})`,
-      "i"
-    ),
-    new RegExp(`\\b(\\d{1,2}${sep}[A-Za-z]{3,9}${sep}\\d{2,4})`, "i"),
-    new RegExp(`\\b(\\d{4}${sep}\\d{1,2}${sep}\\d{1,2})`, "i"),
-    new RegExp(`\\b(\\d{1,2}${sep}\\d{1,2}${sep}\\d{2,4})`, "i"),
-    /\b\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}\b/,
-    /\b\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}\b/,
-    /\b\d{1,2}[\s\-]+[A-Za-z]{3,9}[\s\-]+\d{2,4}\b/,
-    /\b[A-Za-z]{3,9}[\s\-]+\d{1,2}[\s\-,]+\d{2,4}\b/,
+    /(?:expires?|expiry|valid\s+till|valid\s+until|validity|exp\.?\s*date|exp)[:\s]+(?:on\s+)?(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)/i,
+    /(?:expires?|expiry|valid\s+till|valid\s+until|validity|exp)[:\s]+(?:on\s+)?(\d{1,2}[\s\-]+[A-Za-z]{3,9}[\s\-]+\d{2,4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)/i,
+    /\b(\d{1,2}[\/\-\.][0-9]{1,2}[\/\-\.](?:20)?\d{2})\b/,
+    /\b(\d{1,2}[\s\-]+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s\-]+(?:20)?\d{2})\b/i,
   ];
 
   for (const pattern of patterns) {
     const match = text.match(pattern);
-
-    if (match) {
-      return (match[1] || match[0]).trim();
+    if (match && match[1]) {
+      return match[1].trim();
     }
   }
 
   return null;
 };
 /*
- * PHONE NUMBER PARSER
+ * UNIVERSAL PHONE NUMBER PARSER (MTN, AIRTEL, GLO, 9MOBILE)
  */
 exports.parsePhoneNumber = (message = "") => {
   if (!message) return null;
   const text = String(message)
     .replace(/\r/g, " ")
     .replace(/\n/g, " ")
+    .replace(/,/g, "")
     .trim();
 
-  // Gano lambar wayar Najeriya (misali: 08031234567, 2348031234567, ko +2348031234567)
-  const phoneMatch = text.match(/(?:\+?234|0)([789][01]\d{8})/);
-  if (phoneMatch) {
-    const rawNumber = phoneMatch[1];
-    return `0${rawNumber}`;
+  // 1. Gano saƙonni masu dauke da kalmomi kamar "MSISDN", "Number", "MDN", "Phone"
+  const labelMatch = text.match(/(?:msisdn|mdn|number|mobile|phone|no)[:\s]*(?:is\s*)?(?:\+?234|0)?([789][01]\d{8})/i);
+  if (labelMatch && labelMatch[1]) {
+    return `0${labelMatch[1]}`;
+  }
+
+  // 2. Gano lambar da ta fara da 234 (misali: 234803..., 234805..., 234802..., 234809...)
+  const intlMatch = text.match(/(?:\+?234)([789][01]\d{8})/);
+  if (intlMatch && intlMatch[1]) {
+    return `0${intlMatch[1]}`;
+  }
+
+  // 3. Gano kowace lambar Najeriya mai lambobi 11 (080, 081, 090, 091, 070)
+  const localMatch = text.match(/\b(0[789][01]\d{8})\b/);
+  if (localMatch && localMatch[1]) {
+    return localMatch[1];
   }
 
   return null;

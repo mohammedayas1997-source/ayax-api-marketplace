@@ -12,7 +12,10 @@ const {
   parseExpiryDate,
   parsePhoneNumber,
 } = require("../services/ussdParser.service");
-const { sendBalanceCheckCommand } = require("../services/balanceCheck.service");
+const {
+  sendBalanceCheckCommand,
+  sendNumberCheckCommand,
+} = require("../services/balanceCheck.service");
 
 const MONTHS = {
   jan: 0, january: 0,
@@ -38,54 +41,44 @@ const parseExpiryToDate = (value) => {
 
   const text = String(value).trim();
 
-  const dayFirstNumeric = text.match(
-    /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2}|\d{4})$/
-  );
-  if (dayFirstNumeric) {
-    const [, day, month, rawYear] = dayFirstNumeric;
+  // Idan ISO string ne daga kwanaki (valid for X days)
+  if (text.includes("T") && !Number.isNaN(new Date(text).getTime())) {
+    return new Date(text);
+  }
+
+  // 1. DD/MM/YYYY ko DD-MM-YYYY (tare da ko babu time)
+  const dmyMatch = text.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if (dmyMatch) {
+    const [, day, month, rawYear] = dmyMatch;
     const year = rawYear.length === 2 ? Number(`20${rawYear}`) : Number(rawYear);
     const date = new Date(year, Number(month) - 1, Number(day), 23, 59, 59);
     return Number.isNaN(date.getTime()) ? null : date;
   }
 
-  const yearFirstNumeric = text.match(
-    /^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/
-  );
-  if (yearFirstNumeric) {
-    const [, year, month, day] = yearFirstNumeric;
+  // 2. DD-MMM-YYYY (misali: 25-Aug-2026 ko 25 Aug 2026)
+  const dMonYMatch = text.match(/^(\d{1,2})[\s\-]+([A-Za-z]{3,9})[\s\-]+(\d{2,4})/);
+  if (dMonYMatch) {
+    const [, day, monthName, rawYear] = dMonYMatch;
+    const month = MONTHS[monthName.toLowerCase()];
+    if (month !== undefined) {
+      const year = rawYear.length === 2 ? Number(`20${rawYear}`) : Number(rawYear);
+      const date = new Date(year, month, Number(day), 23, 59, 59);
+      return Number.isNaN(date.getTime()) ? null : date;
+    }
+  }
+
+  // 3. YYYY-MM-DD
+  const ymdMatch = text.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+  if (ymdMatch) {
+    const [, year, month, day] = ymdMatch;
     const date = new Date(Number(year), Number(month) - 1, Number(day), 23, 59, 59);
     return Number.isNaN(date.getTime()) ? null : date;
   }
 
-  const dayMonthName = text.match(
-    /^(\d{1,2})[\s\-]+([A-Za-z]{3,9})[\s\-]+(\d{2,4})$/
-  );
-  if (dayMonthName) {
-    const [, day, monthName, rawYear] = dayMonthName;
-    const month = MONTHS[monthName.toLowerCase()];
-    if (month !== undefined) {
-      const year = rawYear.length === 2 ? Number(`20${rawYear}`) : Number(rawYear);
-      const date = new Date(year, month, Number(day), 23, 59, 59);
-      return Number.isNaN(date.getTime()) ? null : date;
-    }
-  }
-
-  const monthNameDay = text.match(
-    /^([A-Za-z]{3,9})[\s\-]+(\d{1,2})[\s\-,]+(\d{2,4})$/
-  );
-  if (monthNameDay) {
-    const [, monthName, day, rawYear] = monthNameDay;
-    const month = MONTHS[monthName.toLowerCase()];
-    if (month !== undefined) {
-      const year = rawYear.length === 2 ? Number(`20${rawYear}`) : Number(rawYear);
-      const date = new Date(year, month, Number(day), 23, 59, 59);
-      return Number.isNaN(date.getTime()) ? null : date;
-    }
-  }
-
-  const parsed = new Date(text);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  const directDate = new Date(text);
+  return Number.isNaN(directDate.getTime()) ? null : directDate;
 };
+
 // 1. pairDevice
 exports.pairDevice = async (req, res) => {
   try {
@@ -205,7 +198,6 @@ exports.heartbeat = async (req, res) => {
       },
     });
 
-    // Fetch any pending commands assigned to this device
     const pendingCommands = await prisma.gsmCommand.findMany({
       where: {
         OR: [
@@ -543,6 +535,23 @@ exports.syncSims = async (req, res) => {
         continue;
       }
 
+      // Idan akwai tsohon SIM a database wanda aka riga aka saita lambar wayarsa, kada a shafe ta
+      const existingSim = await prisma.gsmSim.findUnique({
+        where: {
+          deviceId_slotIndex: {
+            deviceId,
+            slotIndex,
+          },
+        },
+      });
+
+      const incomingPhone = sim.phoneNumber || sim.number;
+      let finalPhoneNumber = existingSim?.phoneNumber || null;
+
+      if (incomingPhone && incomingPhone !== "Hidden by Android" && !incomingPhone.includes("Unknown")) {
+        finalPhoneNumber = incomingPhone;
+      }
+
       const savedSim = await prisma.gsmSim.upsert({
         where: {
           deviceId_slotIndex: {
@@ -553,7 +562,7 @@ exports.syncSims = async (req, res) => {
         update: {
           carrierName: sim.carrierName || sim.displayName || "Unknown",
           displayName: sim.displayName || sim.carrierName || "Unknown",
-          phoneNumber: sim.phoneNumber || sim.number || null,
+          phoneNumber: finalPhoneNumber,
           countryIso: sim.countryIso || null,
           mcc: sim.mcc === null || sim.mcc === undefined || sim.mcc === "" ? null : Number(sim.mcc),
           mnc: sim.mnc === null || sim.mnc === undefined || sim.mnc === "" ? null : Number(sim.mnc),
@@ -565,7 +574,7 @@ exports.syncSims = async (req, res) => {
           slotIndex,
           carrierName: sim.carrierName || sim.displayName || "Unknown",
           displayName: sim.displayName || sim.carrierName || "Unknown",
-          phoneNumber: sim.phoneNumber || sim.number || null,
+          phoneNumber: finalPhoneNumber,
           countryIso: sim.countryIso || null,
           mcc: sim.mcc === null || sim.mcc === undefined || sim.mcc === "" ? null : Number(sim.mcc),
           mnc: sim.mnc === null || sim.mnc === undefined || sim.mnc === "" ? null : Number(sim.mnc),
@@ -921,7 +930,7 @@ exports.lockGatewayDevice = async (req, res) => {
   }
 };
 
-// 21. receiveCommandResult
+// 21. receiveCommandResult (AN GYARA TSARIN KARBAR NUMBER DA BALANCE)
 exports.receiveCommandResult = async (req, res) => {
   try {
     const {
@@ -1026,6 +1035,7 @@ exports.receiveCommandResult = async (req, res) => {
       payload.balanceType || req.body.balanceType || payload.service || req.body.service || payload.type || req.body.requestType || ""
     ).trim().toUpperCase();
 
+    const isPhoneNumberCommand = balanceType === "PHONE_NUMBER" || balanceType === "PHONE_NUMBER_CHECK" || existingCommand.type === "PHONE_NUMBER_CHECK";
     const isAirtimeCommand = ["AIRTIME", "AIRTIME_BALANCE", "CHECK_AIRTIME"].includes(balanceType);
     const isDataCommand = ["DATA", "DATA_BALANCE", "CHECK_DATA"].includes(balanceType);
     const isBalanceCommand = Boolean(simId) && (isAirtimeCommand || isDataCommand);
@@ -1034,7 +1044,7 @@ exports.receiveCommandResult = async (req, res) => {
     let updatedSim = null;
 
     if (
-      isBalanceCommand &&
+      (isBalanceCommand || isPhoneNumberCommand) &&
       (waitingStates.includes(normalizedStatus) || isTemporaryMessage) &&
       !successStates.includes(normalizedStatus)
     ) {
@@ -1101,7 +1111,7 @@ exports.receiveCommandResult = async (req, res) => {
       });
     }
 
-    if (isBalanceCommand && isInvalidUssdMessage && !successStates.includes(normalizedStatus)) {
+    if ((isBalanceCommand || isPhoneNumberCommand) && isInvalidUssdMessage && !successStates.includes(normalizedStatus)) {
       command = await markCommandFailed({
         reference,
         message: finalMessage || "Network rejected USSD request",
@@ -1125,7 +1135,7 @@ exports.receiveCommandResult = async (req, res) => {
       return res.status(422).json({
         success: false,
         code: "INVALID_USSD_RESPONSE",
-        message: "Network rejected the balance request",
+        message: "Network rejected the balance/number request",
         command,
         sim: null,
       });
@@ -1144,6 +1154,7 @@ exports.receiveCommandResult = async (req, res) => {
       let airtimeBalance = null;
       let dataBalance = null;
       let expiryValue = null;
+      const parsedPhone = parsePhoneNumber(finalMessage);
 
       if (isAirtimeCommand) {
         airtimeBalance = parseAirtimeBalance(finalMessage);
@@ -1160,6 +1171,22 @@ exports.receiveCommandResult = async (req, res) => {
 
       const hasAirtimeBalance = airtimeBalance !== null && airtimeBalance !== undefined && !Number.isNaN(Number(airtimeBalance));
       const hasDataBalance = dataBalance !== null && dataBalance !== undefined && String(dataBalance).trim() !== "";
+      const hasPhoneNumber = Boolean(parsedPhone);
+
+      if (isPhoneNumberCommand && !hasPhoneNumber && !isInvalidUssdMessage && !failedStates.includes(normalizedStatus)) {
+        command = await markCommandProcessing({
+          reference,
+          message: finalMessage || "Waiting for phone number response",
+        });
+
+        return res.json({
+          success: true,
+          pending: true,
+          waiting: true,
+          message: "Waiting for phone number",
+          command,
+        });
+      }
 
       if (isBalanceCommand && !hasAirtimeBalance && !hasDataBalance && !isInvalidUssdMessage && !failedStates.includes(normalizedStatus)) {
         command = await markCommandProcessing({
@@ -1186,7 +1213,7 @@ exports.receiveCommandResult = async (req, res) => {
         });
       }
 
-      if (isBalanceCommand && !hasAirtimeBalance && !hasDataBalance) {
+      if (isBalanceCommand && !hasAirtimeBalance && !hasDataBalance && !hasPhoneNumber) {
         command = await markCommandFailed({
           reference,
           message: "Could not parse balance from USSD response",
@@ -1206,18 +1233,19 @@ exports.receiveCommandResult = async (req, res) => {
         message: finalMessage || "Command executed successfully",
       });
 
-      if (isBalanceCommand && simId) {
+      if (simId) {
         const simUpdateData = {
           lastSyncAt: new Date(),
-          lastBalanceCheck: new Date(),
         };
 
         if (hasAirtimeBalance) {
           simUpdateData.airtimeBalance = Number(airtimeBalance);
+          simUpdateData.lastBalanceCheck = new Date();
         }
 
         if (hasDataBalance) {
           simUpdateData.dataBalance = dataBalance;
+          simUpdateData.lastBalanceCheck = new Date();
         }
 
         if (expiryValue) {
@@ -1225,6 +1253,12 @@ exports.receiveCommandResult = async (req, res) => {
           if (formattedExpiry) {
             simUpdateData.expiryDate = formattedExpiry;
           }
+        }
+
+        // Tabbatar da ajiye PhoneNumber da aka kamo daga USSD (MTN, Airtel, Glo, 9mobile)
+        if (hasPhoneNumber) {
+          simUpdateData.phoneNumber = parsedPhone;
+          console.log(`📱 Persisted SIM PhoneNumber: ${parsedPhone} for SIM ID: ${simId}`);
         }
 
         updatedSim = await prisma.gsmSim.update({
@@ -1237,15 +1271,26 @@ exports.receiveCommandResult = async (req, res) => {
           sims: [updatedSim],
         });
 
-        emitEvent("gsm-sim-balance-updated", {
-          deviceId,
-          simId: updatedSim.id,
-          slotIndex: updatedSim.slotIndex,
-          airtimeBalance: updatedSim.airtimeBalance,
-          dataBalance: updatedSim.dataBalance,
-          expiryDate: updatedSim.expiryDate,
-          sim: updatedSim,
-        });
+        if (hasAirtimeBalance || hasDataBalance || expiryValue) {
+          emitEvent("gsm-sim-balance-updated", {
+            deviceId,
+            simId: updatedSim.id,
+            slotIndex: updatedSim.slotIndex,
+            airtimeBalance: updatedSim.airtimeBalance,
+            dataBalance: updatedSim.dataBalance,
+            expiryDate: updatedSim.expiryDate,
+            sim: updatedSim,
+          });
+        }
+
+        if (hasPhoneNumber) {
+          emitEvent("gsm-sim-number-updated", {
+            deviceId,
+            simId: updatedSim.id,
+            phoneNumber: updatedSim.phoneNumber,
+            sim: updatedSim,
+          });
+        }
       }
     } else if (failedStates.includes(normalizedStatus)) {
       command = await markCommandFailed({
@@ -1310,7 +1355,7 @@ exports.updateSimNumber = async (req, res) => {
   }
 };
 
-// 22b. fetchSimPhoneNumber (Automatic USSD Check via *667#)
+// 22b. fetchSimPhoneNumber (Automatic USSD Check)
 exports.fetchSimPhoneNumber = async (req, res) => {
   try {
     const { simId } = req.body;
@@ -1334,7 +1379,6 @@ exports.fetchSimPhoneNumber = async (req, res) => {
       });
     }
 
-    const { sendNumberCheckCommand } = require("../services/balanceCheck.service");
     const command = await sendNumberCheckCommand({
       device: sim.device,
       sim,

@@ -1061,17 +1061,16 @@ exports.receiveCommandResult = async (req, res) => {
             },
           });
 
-          // 2. Canza status din transaction zuwa FAILED
+          // 2. Canza status din transaction da kuma description
           await prisma.transaction.update({
             where: { id: txn.id },
             data: {
               status: "FAILED",
-              gatewayResponse: reason || finalMessage,
-              remark: `Refunded: ${reason || "MoMo/Gateway failed"}`,
+              description: `Refunded: ${reason || "MoMo/Gateway unavailable"}`,
             },
           });
 
-          // 3. Emit real-time socket event don dashboard na user ya nuna kudin sun dawo
+          // 3. Emit real-time socket event
           emitEvent("wallet-updated", {
             userId: txn.userId,
             refundedAmount: refundAmount,

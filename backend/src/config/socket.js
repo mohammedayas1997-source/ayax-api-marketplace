@@ -14,85 +14,70 @@ exports.initSocket = (server) => {
   });
 
   io.on("connection", async (socket) => {
-    // 1. Extract deviceId from all possible transport layers (auth, query, headers)
-    const deviceId =
+    // 1. Duba deviceId ta handshake (auth, query, headers)
+    let deviceId =
       socket.handshake.auth?.deviceId ||
       socket.handshake.query?.deviceId ||
       socket.handshake.headers?.["x-device-id"] ||
       null;
 
-    const secretKey =
-      socket.handshake.auth?.secretKey ||
-      socket.handshake.query?.secretKey ||
-      null;
-
-    console.log(`[SOCKET CONNECTED]: ${socket.id} | Device: ${deviceId || "Unknown"}`);
-
-    if (deviceId) {
-      socket.join(deviceId);
-      socket.deviceId = deviceId;
+    const bindDeviceToSocket = async (targetDeviceId, source = "Handshake") => {
+      if (!targetDeviceId) return;
+      
+      socket.deviceId = targetDeviceId;
+      socket.join(targetDeviceId);
+      socket.join(`device_${targetDeviceId}`);
 
       try {
         await prisma.gsmDevice.updateMany({
-          where: { id: deviceId },
+          where: { id: targetDeviceId },
           data: {
             socketId: socket.id,
             status: "ONLINE",
             lastSeen: new Date(),
           },
         });
-        console.log(`[GSM DEVICE ONLINE]: ${deviceId} joined room: ${deviceId}`);
-      } catch (e) {
-        console.log("Socket connection DB error:", e.message);
+        console.log(`📱 [GSM BOUND (${source})]: ${targetDeviceId} -> Room: ${targetDeviceId}`);
+      } catch (err) {
+        console.log("DB Bind Error:", err.message);
       }
+    };
+
+    if (deviceId) {
+      await bindDeviceToSocket(deviceId, "Handshake Auth");
+    } else {
+      console.log(`[SOCKET CONNECTED]: ${socket.id} | Device: Pending Identification`);
     }
 
-    // Direct Join
+    // 2. Saurari duk wani event da Android App zai iya aiko da ID nashi
+    const registrationEvents = [
+      "register",
+      "register-device",
+      "identify",
+      "gateway-device-online",
+      "gateway-register",
+      "device-auth",
+      "pair",
+      "gateway-heartbeat",
+    ];
+
+    registrationEvents.forEach((eventName) => {
+      socket.on(eventName, async (data) => {
+        const extractedId =
+          typeof data === "string"
+            ? data
+            : data?.deviceId || data?.id || data?.device_id;
+
+        if (extractedId) {
+          await bindDeviceToSocket(extractedId, `Event: ${eventName}`);
+        }
+      });
+    });
+
     socket.on("join", (room) => {
       if (room) {
         socket.join(room);
-        console.log(`Socket ${socket.id} joined room: ${room}`);
-      }
-    });
-
-    // Explicit Device Registration from Android Client
-    socket.on("gateway-device-online", async (data) => {
-      const targetId = typeof data === "string" ? data : data?.deviceId;
-      if (!targetId) return;
-
-      socket.join(targetId);
-      socket.deviceId = targetId;
-
-      try {
-        await prisma.gsmDevice.updateMany({
-          where: { id: targetId },
-          data: {
-            socketId: socket.id,
-            status: "ONLINE",
-            lastSeen: new Date(),
-          },
-        });
-        console.log(`[EVENT: gateway-device-online]: ${targetId} bound to socket ${socket.id}`);
-      } catch (e) {
-        console.log("Device online event error:", e.message);
-      }
-    });
-
-    // Device Heartbeat via Socket
-    socket.on("gateway-heartbeat", async (data) => {
-      const targetId = typeof data === "string" ? data : data?.deviceId || socket.deviceId;
-      if (!targetId) return;
-
-      try {
-        await prisma.gsmDevice.updateMany({
-          where: { id: targetId },
-          data: {
-            lastSeen: new Date(),
-            status: "ONLINE",
-          },
-        });
-      } catch (e) {
-        console.log("Socket Heartbeat error:", e.message);
+        console.log(`Socket ${socket.id} manually joined room: ${room}`);
       }
     });
 
@@ -105,17 +90,16 @@ exports.initSocket = (server) => {
     });
 
     socket.on("disconnect", async () => {
-      const activeDevId = socket.deviceId || deviceId;
+      const activeDevId = socket.deviceId;
       console.log(`[SOCKET DISCONNECTED]: ${socket.id} | Device: ${activeDevId || "None"}`);
 
       if (activeDevId) {
         try {
-          // Check if device reconnected on another socket before marking offline
-          const currentDevice = await prisma.gsmDevice.findUnique({
+          const dev = await prisma.gsmDevice.findUnique({
             where: { id: activeDevId },
           });
 
-          if (currentDevice && currentDevice.socketId === socket.id) {
+          if (dev && dev.socketId === socket.id) {
             await prisma.gsmDevice.update({
               where: { id: activeDevId },
               data: {
@@ -127,7 +111,7 @@ exports.initSocket = (server) => {
             console.log(`[GSM DEVICE OFFLINE]: ${activeDevId}`);
           }
         } catch (e) {
-          console.log("Disconnect DB error:", e.message);
+          console.log("Disconnect DB Error:", e.message);
         }
       }
     });
@@ -147,22 +131,19 @@ exports.emitEvent = (event, payload, room = null) => {
   io.emit(event, payload);
 };
 
-// Enhanced Command Dispatcher (Multi-event broadcast to ensure Android pickup)
+// 3. Tura Command ta dukkan hanyoyi da Android App ke nema
 exports.emitGatewayCommand = (deviceId, command) => {
   if (!io) {
-    console.error("[EMIT ERROR]: Socket.io instance is not initialized.");
+    console.error("[EMIT ERROR]: Socket.io is not initialized.");
     return false;
   }
 
-  console.log(`[DISPATCHING COMMAND]: Ref ${command.reference} -> Device Room: ${deviceId}`);
+  console.log(`🚀 [DISPATCHING TO GATEWAY]: Ref: ${command.reference} -> Target Device: ${deviceId}`);
 
-  // 1. Emit to device room under standard name
+  // Watsa shi ta ko wane channel da wayar ka zata iya sauraro
   io.to(deviceId).emit("gateway-command", command);
-
-  // 2. Emit under generic 'command' name (some Android client builds use this)
   io.to(deviceId).emit("command", command);
-
-  // 3. Emit dedicated channel per device
+  io.to(`device_${deviceId}`).emit("gateway-command", command);
   io.emit(`gateway-command-${deviceId}`, command);
 
   return true;

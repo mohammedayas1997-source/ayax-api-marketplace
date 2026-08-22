@@ -930,8 +930,7 @@ exports.lockGatewayDevice = async (req, res) => {
   }
 };
 
-// 21. receiveCommandResult (AN GYARA TSARIN KARBAR NUMBER DA BALANCE)
-// 21. receiveCommandResult (DA GYARAN AUTO-REFUND GA USER IDAN NETWORK YA BA DA MATSALA)
+// receiveCommandResult: Process USSD/SMS Command Results and SIM Balances
 exports.receiveCommandResult = async (req, res) => {
   try {
     const {
@@ -965,10 +964,52 @@ exports.receiveCommandResult = async (req, res) => {
       where: { reference },
     });
 
+    // If command is not found in gsmCommand, check transaction or acknowledge to stop retry loops
     if (!existingCommand) {
-      return res.status(404).json({
-        success: false,
-        message: "Gateway command not found",
+      const fallbackTxn = await prisma.transaction.findFirst({
+        where: { reference },
+      });
+
+      if (fallbackTxn) {
+        const normStatus = String(status || "").trim().toUpperCase();
+        const finalMsg = String(message || response || "").trim();
+
+        if (["SUCCESS", "SUCCESSFUL", "COMPLETED", "DELIVERED"].includes(normStatus)) {
+          await prisma.transaction.update({
+            where: { id: fallbackTxn.id },
+            data: {
+              status: "SUCCESSFUL",
+              description: finalMsg ? `Completed: ${finalMsg.slice(0, 190)}` : undefined,
+            },
+          });
+        } else if (["FAILED", "FAILURE", "ERROR", "CANCELLED"].includes(normStatus)) {
+          if (fallbackTxn.status !== "FAILED" && fallbackTxn.status !== "REFUNDED") {
+            const refundAmount = Number(fallbackTxn.amount);
+            await prisma.wallet.updateMany({
+              where: { userId: fallbackTxn.userId },
+              data: { balance: { increment: refundAmount } },
+            });
+            await prisma.transaction.update({
+              where: { id: fallbackTxn.id },
+              data: {
+                status: "FAILED",
+                description: `Refunded: ${finalMsg || "Gateway rejected"}`,
+              },
+            });
+            emitEvent("wallet-updated", {
+              userId: fallbackTxn.userId,
+              refundedAmount: refundAmount,
+              reference,
+            });
+          }
+        }
+      }
+
+      // Return 200 OK so Android okhttp client clears its queue
+      return res.status(200).json({
+        success: true,
+        cleared: true,
+        message: "Command result acknowledged and dequeued",
       });
     }
 
@@ -1041,9 +1082,7 @@ exports.receiveCommandResult = async (req, res) => {
     const isDataCommand = ["DATA", "DATA_BALANCE", "CHECK_DATA"].includes(balanceType);
     const isBalanceCommand = Boolean(simId) && (isAirtimeCommand || isDataCommand);
 
-// ==========================================
-    // HELPER: MAYAR WA USER KUDINSA A WALLET
-    // ==========================================
+    // Automatic Refund Helper
     const refundUserTransaction = async (reason) => {
       try {
         const txn = await prisma.transaction.findFirst({
@@ -1053,7 +1092,6 @@ exports.receiveCommandResult = async (req, res) => {
         if (txn && txn.status !== "FAILED" && txn.status !== "REFUNDED") {
           const refundAmount = Number(txn.amount);
 
-          // 1. Mayar da kudi zuwa teburin Wallet na User
           await prisma.wallet.updateMany({
             where: { userId: txn.userId },
             data: {
@@ -1061,23 +1099,21 @@ exports.receiveCommandResult = async (req, res) => {
             },
           });
 
-          // 2. Canza status din transaction da kuma description
           await prisma.transaction.update({
             where: { id: txn.id },
             data: {
               status: "FAILED",
-              description: `Refunded: ${reason || "MoMo/Gateway unavailable"}`,
+              description: `Refunded: ${reason || "Network delivery failure"}`,
             },
           });
 
-          // 3. Emit real-time socket event
           emitEvent("wallet-updated", {
             userId: txn.userId,
             refundedAmount: refundAmount,
             reference,
           });
 
-          console.log(`💰 Auto-refunded ₦${refundAmount} to User Wallet (User ID: ${txn.userId}) for Ref: ${reference}`);
+          console.log(`Auto-refunded ₦${refundAmount} for Ref: ${reference}`);
         }
       } catch (refundErr) {
         console.error("Auto-refund error:", refundErr.message);
@@ -1155,14 +1191,12 @@ exports.receiveCommandResult = async (req, res) => {
       });
     }
 
-    // 1. Idan network ya ki karba ko ya ba da error
     if (isInvalidUssdMessage && !successStates.includes(normalizedStatus)) {
       command = await markCommandFailed({
         reference,
         message: finalMessage || "Network rejected request",
       });
 
-      // Mayar wa user kudinsa idan transaction ne na siyan kati/data
       await refundUserTransaction(finalMessage || "Network rejected request");
 
       await prisma.gsmDevice.update({
@@ -1170,8 +1204,8 @@ exports.receiveCommandResult = async (req, res) => {
         data: { status: "ONLINE", lastSeen: new Date() },
       });
 
-      return res.status(422).json({
-        success: false,
+      return res.status(200).json({
+        success: true,
         code: "INVALID_USSD_RESPONSE",
         message: "Network rejected the request. User refunded.",
         command,
@@ -1247,8 +1281,8 @@ exports.receiveCommandResult = async (req, res) => {
           message: "Could not parse balance from USSD response",
         });
 
-        return res.status(422).json({
-          success: false,
+        return res.status(200).json({
+          success: true,
           code: "PARSE_BALANCE_FAILED",
           message: "USSD response received but failed to parse balance",
           response: finalMessage,
@@ -1261,7 +1295,6 @@ exports.receiveCommandResult = async (req, res) => {
         message: finalMessage || "Command executed successfully",
       });
 
-      // Tabbatar da nasarar Transaction a Database
       await prisma.transaction.updateMany({
         where: { reference },
         data: {
@@ -1294,7 +1327,7 @@ exports.receiveCommandResult = async (req, res) => {
 
         if (hasPhoneNumber) {
           simUpdateData.phoneNumber = parsedPhone;
-          console.log(`📱 Persisted SIM PhoneNumber: ${parsedPhone} for SIM ID: ${simId}`);
+          console.log(`Persisted SIM phone: ${parsedPhone} for SIM: ${simId}`);
         }
 
         updatedSim = await prisma.gsmSim.update({
@@ -1329,13 +1362,11 @@ exports.receiveCommandResult = async (req, res) => {
         }
       }
     } else if (failedStates.includes(normalizedStatus)) {
-      // 2. Idan status din ya zama FAILED
       command = await markCommandFailed({
         reference,
         message: finalMessage || "Command failed",
       });
 
-      // Mayar wa user kudinsa
       await refundUserTransaction(finalMessage || "Command failed on GSM Gateway");
     }
 
@@ -1346,7 +1377,7 @@ exports.receiveCommandResult = async (req, res) => {
     });
   } catch (error) {
     console.error("receiveCommandResult error:", error);
-    return res.status(400).json({
+    return res.status(200).json({
       success: false,
       message: error.message,
     });

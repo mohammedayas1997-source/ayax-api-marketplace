@@ -1266,7 +1266,7 @@ exports.receiveCommandResult = async (req, res) => {
         where: { reference },
         data: {
           status: "SUCCESSFUL",
-          gatewayResponse: finalMessage,
+          description: finalMessage ? `Completed: ${finalMessage.slice(0, 190)}` : undefined,
         },
       });
 

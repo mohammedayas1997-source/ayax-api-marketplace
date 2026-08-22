@@ -931,6 +931,7 @@ exports.lockGatewayDevice = async (req, res) => {
 };
 
 // 21. receiveCommandResult (AN GYARA TSARIN KARBAR NUMBER DA BALANCE)
+// 21. receiveCommandResult (DA GYARAN AUTO-REFUND GA USER IDAN NETWORK YA BA DA MATSALA)
 exports.receiveCommandResult = async (req, res) => {
   try {
     const {
@@ -1008,7 +1009,7 @@ exports.receiveCommandResult = async (req, res) => {
     const invalidKeywords = [
       "invalid", "invalid choice", "invalid option", "wrong selection",
       "connection problem", "network error", "try again later", "failed",
-      "error", "problem performing request",
+      "error", "problem performing request", "timed out", "timeout"
     ];
 
     const isTemporaryMessage = waitingKeywords.some((keyword) => normalizedMessage.includes(keyword));
@@ -1039,6 +1040,39 @@ exports.receiveCommandResult = async (req, res) => {
     const isAirtimeCommand = ["AIRTIME", "AIRTIME_BALANCE", "CHECK_AIRTIME"].includes(balanceType);
     const isDataCommand = ["DATA", "DATA_BALANCE", "CHECK_DATA"].includes(balanceType);
     const isBalanceCommand = Boolean(simId) && (isAirtimeCommand || isDataCommand);
+
+    // ==========================================
+    // HELPER: MAYAR WA USER KUDINSA IDAN TRANX YA FAƊI
+    // ==========================================
+    const refundUserTransaction = async (reason) => {
+      try {
+        const txn = await prisma.transaction.findFirst({
+          where: { reference },
+        });
+
+        if (txn && txn.status !== "FAILED" && txn.status !== "REFUNDED") {
+          await prisma.user.update({
+            where: { id: txn.userId },
+            data: {
+              walletBalance: { increment: Number(txn.amount) },
+            },
+          });
+
+          await prisma.transaction.update({
+            where: { id: txn.id },
+            data: {
+              status: "FAILED",
+              gatewayResponse: reason || finalMessage,
+              remark: `Refunded: ${reason || "MoMo/Gateway failed"}`,
+            },
+          });
+
+          console.log(`💰 Auto-refunded ₦${txn.amount} to User: ${txn.userId} for Ref: ${reference}`);
+        }
+      } catch (refundErr) {
+        console.error("Auto-refund error:", refundErr.message);
+      }
+    };
 
     let command = existingCommand;
     let updatedSim = null;
@@ -1111,21 +1145,15 @@ exports.receiveCommandResult = async (req, res) => {
       });
     }
 
-    if ((isBalanceCommand || isPhoneNumberCommand) && isInvalidUssdMessage && !successStates.includes(normalizedStatus)) {
+    // 1. Idan network ya ki karba ko ya ba da error
+    if (isInvalidUssdMessage && !successStates.includes(normalizedStatus)) {
       command = await markCommandFailed({
         reference,
-        message: finalMessage || "Network rejected USSD request",
+        message: finalMessage || "Network rejected request",
       });
 
-      await prisma.gsmUssdLog.create({
-        data: {
-          id: crypto.randomUUID(),
-          deviceId,
-          reference,
-          response: finalMessage,
-          status: normalizedStatus,
-        },
-      });
+      // Mayar wa user kudinsa idan transaction ne na siyan kati/data
+      await refundUserTransaction(finalMessage || "Network rejected request");
 
       await prisma.gsmDevice.update({
         where: { id: deviceId },
@@ -1135,7 +1163,7 @@ exports.receiveCommandResult = async (req, res) => {
       return res.status(422).json({
         success: false,
         code: "INVALID_USSD_RESPONSE",
-        message: "Network rejected the balance/number request",
+        message: "Network rejected the request. User refunded.",
         command,
         sim: null,
       });
@@ -1194,16 +1222,6 @@ exports.receiveCommandResult = async (req, res) => {
           message: finalMessage || "Waiting for final balance response",
         });
 
-        await prisma.gsmUssdLog.create({
-          data: {
-            id: crypto.randomUUID(),
-            deviceId,
-            reference,
-            response: finalMessage,
-            status: normalizedStatus,
-          },
-        });
-
         return res.json({
           success: true,
           pending: true,
@@ -1233,6 +1251,15 @@ exports.receiveCommandResult = async (req, res) => {
         message: finalMessage || "Command executed successfully",
       });
 
+      // Tabbatar da nasarar Transaction a Database
+      await prisma.transaction.updateMany({
+        where: { reference },
+        data: {
+          status: "SUCCESSFUL",
+          gatewayResponse: finalMessage,
+        },
+      });
+
       if (simId) {
         const simUpdateData = {
           lastSyncAt: new Date(),
@@ -1255,7 +1282,6 @@ exports.receiveCommandResult = async (req, res) => {
           }
         }
 
-        // Tabbatar da ajiye PhoneNumber da aka kamo daga USSD (MTN, Airtel, Glo, 9mobile)
         if (hasPhoneNumber) {
           simUpdateData.phoneNumber = parsedPhone;
           console.log(`📱 Persisted SIM PhoneNumber: ${parsedPhone} for SIM ID: ${simId}`);
@@ -1293,10 +1319,14 @@ exports.receiveCommandResult = async (req, res) => {
         }
       }
     } else if (failedStates.includes(normalizedStatus)) {
+      // 2. Idan status din ya zama FAILED
       command = await markCommandFailed({
         reference,
         message: finalMessage || "Command failed",
       });
+
+      // Mayar wa user kudinsa
+      await refundUserTransaction(finalMessage || "Command failed on GSM Gateway");
     }
 
     return res.json({

@@ -175,6 +175,13 @@ exports.heartbeat = async (req, res) => {
   try {
     const { deviceId, secretKey, battery, charging, signal, internet } = req.body;
 
+    if (!deviceId || !secretKey) {
+      return res.status(400).json({
+        success: false,
+        message: "deviceId and secretKey are required",
+      });
+    }
+
     const device = await prisma.gsmDevice.findFirst({
       where: { id: deviceId, secretKey },
     });
@@ -189,21 +196,19 @@ exports.heartbeat = async (req, res) => {
     const updated = await prisma.gsmDevice.update({
       where: { id: deviceId },
       data: {
-        battery,
-        charging,
-        signal,
-        internet,
+        battery: battery !== undefined ? Number(battery) : undefined,
+        charging: charging !== undefined ? Boolean(charging) : undefined,
+        signal: signal !== undefined ? Number(signal) : undefined,
+        internet: internet !== undefined ? Boolean(internet) : undefined,
         status: "ONLINE",
         lastSeen: new Date(),
       },
     });
 
+    // 1. Dauko dukkan PENDING commands na wannan device
     const pendingCommands = await prisma.gsmCommand.findMany({
       where: {
-        OR: [
-          { deviceId: deviceId },
-          { deviceId: null }
-        ],
+        OR: [{ deviceId: deviceId }, { deviceId: null }],
         status: "PENDING",
       },
       orderBy: {
@@ -212,15 +217,43 @@ exports.heartbeat = async (req, res) => {
       take: 10,
     });
 
+    // 2. Fito da dukkan bayanan payload zuwa Root Level (Flattening)
+    const formattedCommands = pendingCommands.map((cmd) => {
+      const payloadData = typeof cmd.payload === "string" 
+        ? JSON.parse(cmd.payload || "{}") 
+        : (cmd.payload || {});
+
+      return {
+        id: cmd.id,
+        reference: cmd.reference,
+        type: cmd.type || payloadData.type || "USSD",
+        deviceId: cmd.deviceId || deviceId,
+        status: cmd.status,
+        // Wadannan sune ainihin filayen da Android app ke nema:
+        ussdCode: payloadData.ussdCode || payloadData.code || payloadData.command || "",
+        code: payloadData.ussdCode || payloadData.code || "",
+        slotIndex: payloadData.slotIndex !== undefined ? payloadData.slotIndex : (payloadData.simSlot || 0),
+        simSlot: payloadData.slotIndex !== undefined ? payloadData.slotIndex : (payloadData.simSlot || 0),
+        simId: payloadData.simId || null,
+        phoneNumber: payloadData.phoneNumber || payloadData.phone || "",
+        amount: payloadData.amount || 0,
+        reply: payloadData.reply || null,
+        sessionId: payloadData.sessionId || null,
+        step: payloadData.step || 1,
+        payload: payloadData,
+      };
+    });
+
     emitEvent("gsm-device-heartbeat", { device: updated });
 
     return res.json({
       success: true,
       message: "Heartbeat received",
       device: updated,
-      commands: pendingCommands,
+      commands: formattedCommands, // An dawo da su a yadda Android app zai gane su
     });
   } catch (error) {
+    console.error("Heartbeat processing error:", error.message);
     return res.status(400).json({ success: false, message: error.message });
   }
 };

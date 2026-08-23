@@ -1,6 +1,6 @@
 const prisma = require("../lib/prisma");
 const axios = require("axios");
-const { emitGatewayCommand } = require("../config/socket");
+const { emitEvent, emitGatewayCommand } = require("../config/socket");
 
 /* ======================================================
    1. GET AVAILABLE DATA PLANS & MARKETPLACE PRICING
@@ -75,7 +75,10 @@ exports.purchaseData = async (req, res) => {
       });
     }
 
-    // 1. Idempotency Check (Prevent Duplicate Operations)
+    const resolvedNetwork = String(network).toUpperCase().trim();
+    const targetPhone = String(phone).trim();
+
+    // 1. Idempotency Check
     if (reference) {
       const existingTx = await prisma.transaction.findUnique({
         where: { reference },
@@ -94,8 +97,8 @@ exports.purchaseData = async (req, res) => {
     // 2. Fetch Matching Service Plan
     const plan = await prisma.servicePlan.findFirst({
       where: {
-        planCode,
-        network: String(network).toUpperCase(),
+        planCode: String(planCode).trim(),
+        network: resolvedNetwork,
         isActive: true,
       },
     });
@@ -110,7 +113,7 @@ exports.purchaseData = async (req, res) => {
 
     const cost = Number(plan.apiPrice || plan.basePrice);
 
-    // 3. Verify Developer/User Wallet Balance
+    // 3. Verify Wallet Balance
     const wallet = await prisma.wallet.findUnique({
       where: { userId: user.id },
     });
@@ -125,7 +128,7 @@ exports.purchaseData = async (req, res) => {
       });
     }
 
-    // 4. Locate Active GSM Gateway Device and Compatible SIM Slot
+    // 4. Locate Active GSM Gateway Device
     const activeDevice = await prisma.gsmDevice.findFirst({
       where: { status: "ONLINE" },
       include: { sims: true },
@@ -140,15 +143,18 @@ exports.purchaseData = async (req, res) => {
       });
     }
 
+    // 5. Select Correct SIM for the Network
     const targetSim =
       activeDevice.sims.find(
-        (s) => s.network?.toUpperCase() === String(network).toUpperCase()
+        (s) =>
+          s.carrierName?.toUpperCase().includes(resolvedNetwork) ||
+          s.displayName?.toUpperCase().includes(resolvedNetwork)
       ) || activeDevice.sims[0];
 
-    const txReference =
-      reference || `AYAX_DATA_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    const slotIndex = targetSim?.slotIndex ?? 0;
+    const txReference = reference || `AYAX_DATA_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 
-    // 5. Debit Wallet and Create PENDING Transaction Record
+    // 6. Debit Wallet & Create Pending Transaction
     const { updatedWallet, transaction } = await prisma.$transaction(async (tx) => {
       const newWallet = await tx.wallet.update({
         where: { userId: user.id },
@@ -166,12 +172,12 @@ exports.purchaseData = async (req, res) => {
           reference: txReference,
           metadata: {
             platform: "ayax_marketplace",
-            network: String(network).toUpperCase(),
-            phone,
-            planCode,
+            network: resolvedNetwork,
+            phone: targetPhone,
+            planCode: plan.planCode,
             volume: plan.volume,
             deviceId: activeDevice.id,
-            simId: targetSim?.id,
+            simId: targetSim?.id || null,
           },
         },
       });
@@ -179,53 +185,91 @@ exports.purchaseData = async (req, res) => {
       return { updatedWallet: newWallet, transaction: newTx };
     });
 
-    // 6. Build Standard USSD Syntax
-    const ussdSyntax = `*312*${phone.trim()}*${plan.planCode}#`;
+    // 7. Format USSD Syntax
+    let ussdCode = `*312*${targetPhone}*${plan.planCode}*1997#`;
+    let steps = [targetPhone, plan.planCode, "1997"];
+
+    if (resolvedNetwork === "AIRTEL") {
+      ussdCode = `*141*${targetPhone}*${plan.planCode}#`;
+      steps = [targetPhone, plan.planCode];
+    } else if (resolvedNetwork === "GLO") {
+      ussdCode = `*127*${plan.planCode}*${targetPhone}#`;
+      steps = [plan.planCode, targetPhone];
+    } else if (resolvedNetwork === "9MOBILE") {
+      ussdCode = `*229*${plan.planCode}*${targetPhone}#`;
+      steps = [plan.planCode, targetPhone];
+    }
 
     const commandPayload = {
       reference: txReference,
       deviceId: activeDevice.id,
-      type: "USSD",
-      ussdCode: ussdSyntax,
-      code: ussdSyntax,
-      slotIndex: targetSim?.slotIndex ?? 0,
-      simSlot: targetSim?.slotIndex ?? 0,
+      type: "BUY_DATA", // daidai da format na BUY_AIRTIME
+      service: "DATA",
+      balanceType: "DATA",
+      ussdCode,
+      ussd: ussdCode,
+      code: ussdCode,
+      steps,
+      phoneNumber: targetPhone,
+      phone: targetPhone,
+      targetPhone: targetPhone,
+      slotIndex,
+      simSlot: slotIndex,
       simId: targetSim?.id || null,
-      phoneNumber: phone.trim(),
       amount: cost,
-      network: String(network).toUpperCase(),
+      network: resolvedNetwork,
       planCode: plan.planCode,
     };
 
-    // 7. Store Command in gsmCommand Table for GSM Execution
-    await prisma.gsmCommand.create({
+    // 8. Store Command in gsmCommand Table
+    const createdCommand = await prisma.gsmCommand.create({
       data: {
         reference: txReference,
         deviceId: activeDevice.id,
-        type: "USSD",
+        type: "BUY_DATA",
         status: "PENDING",
         payload: commandPayload,
       },
     });
 
-    // 8. Real-time Dispatch to GSM Device via Socket.io
-    emitGatewayCommand(activeDevice.id, {
-      id: transaction.id,
-      ...commandPayload,
-    });
+    // 9. Dispatch to Device across ALL Socket Channels (Same method as Airtime)
+    const eventPayload = {
+      commandId: createdCommand.id,
+      id: createdCommand.id,
+      reference: txReference,
+      type: "BUY_DATA",
+      payload: commandPayload,
+      ussdCode,
+      code: ussdCode,
+      steps,
+      phoneNumber: targetPhone,
+      slotIndex,
+      simSlot: slotIndex,
+      carrier: targetSim?.carrierName || resolvedNetwork,
+    };
 
-    console.log(
-      `[GSM DISPATCH] Queued Ref: ${txReference} for device ${activeDevice.id} (Slot: ${commandPayload.slotIndex})`
-    );
+    try {
+      emitEvent("gateway-command", eventPayload, activeDevice.id);
+      emitEvent("command", eventPayload, activeDevice.id);
+      emitEvent(`gateway-command-${activeDevice.id}`, eventPayload);
+
+      if (typeof emitGatewayCommand === "function") {
+        emitGatewayCommand(activeDevice.id, eventPayload);
+      }
+
+      console.log(`⚡ [DATA DISPATCHED] Ref: ${txReference} -> Device: ${activeDevice.id} (Slot: ${slotIndex}) Code: ${ussdCode}`);
+    } catch (socketErr) {
+      console.warn("Socket emission error:", socketErr.message);
+    }
 
     return res.status(200).json({
       status: "success",
       code: "TRANSACTION_QUEUED",
-      message: `Data purchase initiated for ${plan.name} to ${phone}. Processing on GSM Gateway.`,
+      message: `Data purchase initiated for ${plan.name} to ${targetPhone}. Dispatched to GSM Gateway.`,
       data: {
         reference: txReference,
         network: plan.network,
-        phone,
+        phone: targetPhone,
         plan: plan.name,
         amountCharged: cost,
         walletBalance: updatedWallet.balance,

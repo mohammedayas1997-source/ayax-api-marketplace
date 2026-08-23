@@ -6,7 +6,7 @@ const apiUsageService = require("./apiUsage.service");
 const calculateProfit = require("../helpers/calculateProfit");
 
 /* ======================================================
-   1. PURCHASE DATA BUNDLE (B2B API SERVICE)
+   1. PURCHASE DATA BUNDLE (B2B API & MOBILE APP SERVICE)
 ====================================================== */
 exports.purchaseData = async ({
   user,
@@ -14,19 +14,23 @@ exports.purchaseData = async ({
   network,
   planCode,
   phone,
+  phoneNumber,
   amount,
   reference,
 }) => {
-  // 1. Nemi ainihin Plan da farashinsa idan ba a turo amount ba
+  const targetPhone = String(phone || phoneNumber || "").trim();
+  const resolvedNetwork = String(network || "MTN").toUpperCase();
+
+  // 1. Nemi ainihin Plan da farashinsa
   const plan = await prisma.servicePlan?.findFirst({
     where: {
-      planCode,
-      network: network.toUpperCase(),
+      planCode: String(planCode).trim(),
+      network: resolvedNetwork,
       isActive: true,
     },
   }).catch(() => null);
 
-  const finalAmount = Number(amount || plan?.apiPrice || plan?.basePrice || 0);
+  const finalAmount = Number(amount || plan?.apiPrice || plan?.userPrice || plan?.basePrice || 0);
 
   if (!finalAmount || finalAmount <= 0) {
     const err = new Error("Invalid plan amount or plan code not found.");
@@ -35,10 +39,7 @@ exports.purchaseData = async ({
     throw err;
   }
 
-  // 2. Get Provider & Service
-  const { provider, service } = await providerService.getProviderForService("data");
-
-  // 3. Wallet Check
+  // 2. Tabbatar da Wallet Balance
   const wallet = await walletService.getOrCreateWallet(user.id);
   if (Number(wallet.balance) < finalAmount) {
     const err = new Error("Insufficient wallet balance.");
@@ -47,7 +48,7 @@ exports.purchaseData = async ({
     throw err;
   }
 
-  // 4. Create Transaction Record
+  // 3. Create Transaction Record
   const transaction = await transactionService.createTransaction({
     userId: user.id,
     type: "DEBIT",
@@ -55,45 +56,59 @@ exports.purchaseData = async ({
     amount: finalAmount,
     reference: reference || undefined,
     status: "PROCESSING",
-    description: `${network} Data Purchase (${planCode}) to ${phone}`,
+    description: `${resolvedNetwork} Data Purchase (${planCode}) to ${targetPhone}`,
     metadata: {
-      network,
-      phone,
+      network: resolvedNetwork,
+      phone: targetPhone,
       planCode,
       apiKeyId: apiKey?.id,
     },
   });
 
-  // 5. Debit Wallet da Farko (Hold Funds)
+  // 4. Debit Wallet (Hold Funds)
   await walletService.debitWallet({
     userId: user.id,
     amount: finalAmount,
     reference: transaction.reference,
-    description: `${network} Data Purchase`,
+    description: `${resolvedNetwork} Data Purchase`,
     module: "DATA",
   });
 
   try {
-    /**
-     * =====================================
-     * CALL UPSTREAM PROVIDER HERE
-     * =====================================
-     */
-    let providerResult = null;
-    if (provider && typeof provider.buyData === "function") {
-      providerResult = await provider.buyData({
-        network,
-        planCode,
-        phone,
-        reference: transaction.reference,
-      });
+    // 5. Dauko Provider tare da Safe Fallback (Idan babu slug na "data", yi amfani da gsm_gateway kai tsaye)
+    let provider = null;
+    let service = null;
+
+    try {
+      const providerData = await providerService.getProviderForService("data");
+      provider = providerData.provider;
+      service = providerData.service;
+    } catch (e) {
+      // Fallback: Dauko gsm_gateway kai tsaye idan ba a samu slug ba
+      try {
+        const fallbackData = await providerService.getProviderForService("gsm_gateway");
+        provider = fallbackData.provider;
+        service = fallbackData.service;
+      } catch (err2) {
+        // Fallback na biyu idan babu ko daya a DB
+        const defaultProviderData = await providerService.getProviderForService("BUY_AIRTIME").catch(() => null);
+        provider = defaultProviderData?.provider;
+      }
     }
 
-    // 6. Update Transaction to SUCCESSFUL
-    await transactionService.updateTransactionStatus({
+    if (!provider || typeof provider.buyData !== "function") {
+      throw new Error("GSM Gateway Provider is not configured or offline.");
+    }
+
+    // 6. TURA DATA ZUWA GATEWAY (Tare da cikakken amount da targetPhone)
+    const providerResult = await provider.buyData({
+      network: resolvedNetwork,
+      planCode,
+      planSize: plan?.volume || planCode,
+      phone: targetPhone,
+      phoneNumber: targetPhone,
+      amount: finalAmount,
       reference: transaction.reference,
-      status: "SUCCESSFUL",
-      description: "Data purchase successful",
     });
 
     // 7. Usage Log
@@ -102,7 +117,7 @@ exports.purchaseData = async ({
       endpoint: "/api/v1/data/buy",
       method: "POST",
       amount: finalAmount,
-      status: "SUCCESSFUL",
+      status: "PROCESSING",
     });
 
     // 8. Calculate Profit
@@ -115,16 +130,17 @@ exports.purchaseData = async ({
     return {
       success: true,
       reference: transaction.reference,
-      network,
-      phone,
+      network: resolvedNetwork,
+      phone: targetPhone,
       planCode,
       amount: finalAmount,
-      provider: provider?.name || "AYAX_INTERNAL",
+      provider: provider?.name || "GSM_GATEWAY",
       service: service?.name || "DATA_TOPUP",
       profit,
+      providerResult,
     };
   } catch (err) {
-    // 9. Idan Provider ya yi fail, yi REFUND na kudin wallet
+    // 9. Idan Provider ya yi fail, yi REFUND na kudin wallet nan take
     await walletService.creditWallet({
       userId: user.id,
       amount: finalAmount,
@@ -185,7 +201,6 @@ exports.getDataPlans = async (network) => {
     whereClause.network = String(network).toUpperCase();
   }
 
-  // Idan kana da ServicePlan model a schema.prisma:
   if (prisma.servicePlan) {
     return prisma.servicePlan.findMany({
       where: whereClause,

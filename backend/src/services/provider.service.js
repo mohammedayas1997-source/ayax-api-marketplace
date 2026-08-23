@@ -207,142 +207,149 @@ exports.getProviderForService = async (serviceSlug) => {
       },
 
       // ==========================================
-      // 2. DATA HANDLER (AN GYARA TSARIN DISPATCH GA GSM GATEWAY)
-      // ==========================================
-      buyData: async ({ network, phone, planSize, planCode, amount, reference }) => {
-        const resolvedNetwork = String(network || "MTN").toUpperCase();
-        const pin = "1997";
+// 2. DATA HANDLER (AN MAYAR DASHI USSD DON GATEWAY APP YA KARBA)
+// ==========================================
+buyData: async ({ network, phone, planSize, planCode, amount, reference }) => {
+  const resolvedNetwork = String(network || "MTN").toUpperCase();
+  const pin = "1997";
 
-        let dataSizeCode = "1000";
-        const rawPlan = String(planSize || planCode || "").toUpperCase();
+  let dataSizeCode = "1000";
+  const rawPlan = String(planSize || planCode || "").toUpperCase();
 
-        if (rawPlan.includes("500")) dataSizeCode = "500";
-        if (rawPlan.includes("1GB") || rawPlan.includes("1000") || rawPlan.includes("1.0GB")) dataSizeCode = "1000";
-        if (rawPlan.includes("2GB") || rawPlan.includes("2000") || rawPlan.includes("2.0GB")) dataSizeCode = "2000";
-        if (rawPlan.includes("3GB") || rawPlan.includes("3000")) dataSizeCode = "3000";
-        if (rawPlan.includes("5GB") || rawPlan.includes("5000")) dataSizeCode = "5000";
-        if (rawPlan.includes("10GB") || rawPlan.includes("10000")) dataSizeCode = "10000";
+  if (rawPlan.includes("500")) dataSizeCode = "500";
+  if (rawPlan.includes("1GB") || rawPlan.includes("1000") || rawPlan.includes("1.0GB")) dataSizeCode = "1000";
+  if (rawPlan.includes("2GB") || rawPlan.includes("2000") || rawPlan.includes("2.0GB")) dataSizeCode = "2000";
+  if (rawPlan.includes("3GB") || rawPlan.includes("3000")) dataSizeCode = "3000";
+  if (rawPlan.includes("5GB") || rawPlan.includes("5000")) dataSizeCode = "5000";
+  if (rawPlan.includes("10GB") || rawPlan.includes("10000")) dataSizeCode = "10000";
 
-        // 1. Nemo SIM din da ya dace da Network ko SIM mai aiki a Device din da yake ONLINE
-        let sim = await prisma.gsmSim.findFirst({
-          where: {
-            OR: [
-              { carrierName: { contains: resolvedNetwork, mode: "insensitive" } },
-              { displayName: { contains: resolvedNetwork, mode: "insensitive" } },
-            ],
-            status: "ACTIVE",
-          },
-          include: { device: true },
-        });
+  // 1. Nemo SIM din da ke ACTIVE na wannan network din
+  let sim = await prisma.gsmSim.findFirst({
+    where: {
+      OR: [
+        { carrierName: { contains: resolvedNetwork, mode: "insensitive" } },
+        { displayName: { contains: resolvedNetwork, mode: "insensitive" } },
+      ],
+      status: "ACTIVE",
+    },
+    include: { device: true },
+  });
 
-        // Idan babu takamaiman sunan carrier, dauko kowane active sim na farko
-        if (!sim) {
-          sim = await prisma.gsmSim.findFirst({
-            where: { status: "ACTIVE" },
-            include: { device: true },
-          });
-        }
+  if (!sim) {
+    sim = await prisma.gsmSim.findFirst({
+      where: { status: "ACTIVE" },
+      include: { device: true },
+    });
+  }
 
-        // Idan har yanzu babu, duba device da ke ONLINE
-        let deviceId = sim?.deviceId || null;
-        if (!deviceId) {
-          const onlineDevice = await prisma.gsmDevice.findFirst({
-            where: { status: "ONLINE" },
-            orderBy: { lastSeen: "desc" },
-          });
-          deviceId = onlineDevice?.id || null;
-        }
+  let deviceId = sim?.deviceId || null;
+  if (!deviceId) {
+    const onlineDevice = await prisma.gsmDevice.findFirst({
+      where: { status: "ONLINE" },
+      orderBy: { lastSeen: "desc" },
+    });
+    deviceId = onlineDevice?.id || null;
+  }
 
-        const slotIndex = sim?.slotIndex ?? 0;
-        const smsRecipient = "131";
-        const smsMessage = `SMEB ${phone} ${dataSizeCode} ${pin}`;
-        const ussdCode = `*312*${phone}*${dataSizeCode}#`;
-        const commandReference = reference || `DATA-${Date.now()}`;
+  const slotIndex = sim?.slotIndex ?? 0;
+  const commandReference = reference || `DATA-${Date.now()}`;
 
-        const commandPayload = {
-          reference: commandReference,
-          deviceId: deviceId,
-          type: "SEND_SMS",
-          phoneNumber: smsRecipient,
-          recipient: smsRecipient,
-          message: smsMessage,
-          smsText: smsMessage,
-          body: smsMessage,
-          slotIndex: slotIndex,
-          simSlot: slotIndex,
-          simId: sim?.id || null,
-          targetPhone: phone,
-          phone: phone,
-          sizeInMb: dataSizeCode,
-          network: resolvedNetwork,
-          carrier: sim?.carrierName || resolvedNetwork,
-          ussdCode: ussdCode,
-          code: ussdCode,
-          amount: Number(amount || 0),
-        };
+  // 2. Gina USSD Code kai tsaye (MTN SME / Direct USSD)
+  // MTN SME / Gifting direct code syntax:
+  let ussdCode = `*312*${phone}*${dataSizeCode}*${pin}#`;
+  let steps = [phone, dataSizeCode, pin];
 
-        // 2. Ajiye a Database a matsayin PENDING command
-        const command = await prisma.gsmCommand.create({
-          data: {
-            reference: commandReference,
-            deviceId: deviceId,
-            type: "SEND_SMS",
-            status: "PENDING",
-            payload: commandPayload,
-          },
-        });
+  if (resolvedNetwork === "AIRTEL") {
+    ussdCode = `*141*${phone}*${dataSizeCode}#`;
+    steps = [phone, dataSizeCode];
+  } else if (resolvedNetwork === "GLO") {
+    ussdCode = `*127*${dataSizeCode}*${phone}#`;
+    steps = [dataSizeCode, phone];
+  } else if (resolvedNetwork === "9MOBILE") {
+    ussdCode = `*229*${dataSizeCode}*${phone}#`;
+    steps = [dataSizeCode, phone];
+  }
 
-        // 3. Watsa Event ta Socket zuwa dakin Device da kuma duk sauran tashoshin Android Gateway
-        try {
-          const eventPayload = {
-            commandId: command.id,
-            id: command.id,
-            reference: command.reference,
-            type: "SEND_SMS",
-            payload: commandPayload,
-            phoneNumber: smsRecipient,
-            recipient: smsRecipient,
-            message: smsMessage,
-            smsText: smsMessage,
-            slotIndex: slotIndex,
-            simSlot: slotIndex,
-            targetPhone: phone,
-            ussdCode: ussdCode,
-            code: ussdCode,
-          };
+  const commandPayload = {
+    reference: commandReference,
+    deviceId: deviceId,
+    type: "USSD", // An canza daga SEND_SMS zuwa USSD
+    service: "DATA",
+    balanceType: "DATA",
+    phoneNumber: phone,
+    phone: phone,
+    targetPhone: phone,
+    ussdCode: ussdCode,
+    code: ussdCode,
+    ussd: ussdCode,
+    steps: steps,
+    slotIndex: slotIndex,
+    simSlot: slotIndex,
+    simId: sim?.id || null,
+    amount: Number(amount || 0),
+    sizeInMb: dataSizeCode,
+    network: resolvedNetwork,
+  };
 
-          emitEvent("gateway-command", eventPayload, deviceId || undefined);
-          emitEvent("command", eventPayload, deviceId || undefined);
+  // 3. Ajiye a Database a matsayin USSD command
+  const command = await prisma.gsmCommand.create({
+    data: {
+      reference: commandReference,
+      deviceId: deviceId,
+      type: "USSD",
+      status: "PENDING",
+      payload: commandPayload,
+    },
+  });
 
-          if (deviceId) {
-            emitEvent(`gateway-command-${deviceId}`, eventPayload);
-          }
+  // 4. Watsa Event ga Gateway ta Socket
+  try {
+    const eventPayload = {
+      commandId: command.id,
+      id: command.id,
+      reference: command.reference,
+      type: "USSD",
+      payload: commandPayload,
+      ussdCode: ussdCode,
+      code: ussdCode,
+      steps: steps,
+      phoneNumber: phone,
+      slotIndex: slotIndex,
+      simSlot: slotIndex,
+    };
 
-          console.log(`⚡ [DATA DISPATCHED] Ref: ${command.reference} -> Device: ${deviceId || "Broadcast"} (Slot: ${slotIndex})`);
-        } catch (socketErr) {
-          console.warn("Socket emission warning:", socketErr.message);
-        }
+    emitEvent("gateway-command", eventPayload, deviceId || undefined);
+    emitEvent("command", eventPayload, deviceId || undefined);
 
-        if (sim) {
-          await prisma.gsmTransaction.create({
-            data: {
-              simId: sim.id,
-              phoneNumber: phone,
-              network: resolvedNetwork,
-              amount: Number(amount || 0),
-              reference: commandReference,
-              status: "PENDING",
-            },
-          }).catch(() => {});
-        }
+    if (deviceId) {
+      emitEvent(`gateway-command-${deviceId}`, eventPayload);
+    }
 
-        return {
-          success: true,
-          message: "Data purchase command queued successfully",
-          commandId: command.id,
-          reference: command.reference,
-        };
+    console.log(`⚡ [DATA USSD DISPATCHED] Ref: ${command.reference} -> Device: ${deviceId || "Broadcast"} (${ussdCode})`);
+  } catch (socketErr) {
+    console.warn("Socket emission warning:", socketErr.message);
+  }
+
+  if (sim) {
+    await prisma.gsmTransaction.create({
+      data: {
+        simId: sim.id,
+        phoneNumber: phone,
+        network: resolvedNetwork,
+        amount: Number(amount || 0),
+        reference: commandReference,
+        status: "PENDING",
       },
+    }).catch(() => {});
+  }
+
+  return {
+    success: true,
+    message: "Data USSD command queued and dispatched to GSM Gateway successfully",
+    commandId: command.id,
+    reference: command.reference,
+  };
+},
     },
   };
 };

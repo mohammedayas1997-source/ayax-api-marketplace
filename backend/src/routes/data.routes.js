@@ -149,4 +149,43 @@ router.get(
   }
 );
 
+/* ======================================================
+   BUY DATA
+
+   POST /api/v1/data/buy  da  POST /api/v1/data/purchase
+   Required API-key scope: DATA
+====================================================== */
+
+const handleBuyData = async (req, res) => {
+  try {
+    const result = await dataService.purchaseData({
+      user: req.apiUser || req.user,
+      apiKey: req.apiKey,
+      network: req.body.network,
+      planCode: req.body.planCode,
+      phone: req.body.phone || req.body.phoneNumber,
+      amount: req.body.amount ? Number(req.body.amount) : undefined,
+      reference: req.body.reference,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Data purchase successful.",
+      data: result,
+    });
+  } catch (error) {
+    console.error("Data purchase error:", error);
+
+    const statusCode = Number(error.statusCode || error.status || 400);
+    return res.status(statusCode).json({
+      success: false,
+      code: error.code || "DATA_PURCHASE_FAILED",
+      message: error.message || "Unable to complete data purchase.",
+    });
+  }
+};
+
+router.post("/buy", apiKeyMiddleware("DATA"), validate(buyDataSchema), handleBuyData);
+router.post("/purchase", apiKeyMiddleware("DATA"), validate(buyDataSchema), handleBuyData);
+
 module.exports = router;

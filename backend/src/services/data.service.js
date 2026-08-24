@@ -75,7 +75,7 @@ exports.purchaseData = async ({
   });
 
   try {
-    // 5. Dauko Provider tare da Safe Fallback (Idan babu slug na "data", yi amfani da gsm_gateway kai tsaye)
+// 5. Dauko Provider tare da Cikakken Fallback zuwa GSM Gateway
     let provider = null;
     let service = null;
 
@@ -84,32 +84,65 @@ exports.purchaseData = async ({
       provider = providerData.provider;
       service = providerData.service;
     } catch (e) {
-      // Fallback: Dauko gsm_gateway kai tsaye idan ba a samu slug ba
       try {
         const fallbackData = await providerService.getProviderForService("gsm_gateway");
         provider = fallbackData.provider;
         service = fallbackData.service;
       } catch (err2) {
-        // Fallback na biyu idan babu ko daya a DB
-        const defaultProviderData = await providerService.getProviderForService("BUY_AIRTIME").catch(() => null);
-        provider = defaultProviderData?.provider;
+        const airtimeData = await providerService.getProviderForService("airtime").catch(() => null);
+        provider = airtimeData?.provider;
       }
     }
 
-    if (!provider || typeof provider.buyData !== "function") {
-      throw new Error("GSM Gateway Provider is not configured or offline.");
+    // Tace lambar MB ta USSD (misali 500, 1000, 2000, 5000)
+    let raw = String(planCode || "1000").toUpperCase();
+    let numericMB = "1000";
+    if (raw.includes("500")) numericMB = "500";
+    else if (raw.includes("1GB") || raw.includes("1000")) numericMB = "1000";
+    else if (raw.includes("2GB") || raw.includes("2000")) numericMB = "2000";
+    else if (raw.includes("3GB") || raw.includes("3000")) numericMB = "3000";
+    else if (raw.includes("5GB") || raw.includes("5000")) numericMB = "5000";
+    else {
+      numericMB = raw.replace(/[^0-9]/g, "") || "1000";
     }
 
-    // 6. TURA DATA ZUWA GATEWAY (Tare da cikakken amount da targetPhone)
-    const providerResult = await provider.buyData({
-      network: resolvedNetwork,
-      planCode,
-      planSize: plan?.volume || planCode,
-      phone: targetPhone,
-      phoneNumber: targetPhone,
-      amount: finalAmount,
-      reference: transaction.reference,
-    });
+    const ussdCode = `*312*${targetPhone}*${numericMB}*1997#`;
+
+    // 6. TURA DATA ZUWA GATEWAY (Tare da duk wata hanya da provider zai iya karba)
+    let providerResult = null;
+
+    if (provider && typeof provider.buyData === "function") {
+      providerResult = await provider.buyData({
+        network: resolvedNetwork,
+        planCode: numericMB,
+        planSize: numericMB,
+        phone: targetPhone,
+        phoneNumber: targetPhone,
+        amount: finalAmount,
+        reference: transaction.reference,
+        ussdCode,
+      });
+    } else if (provider && typeof provider.buyAirtime === "function") {
+      // Idan babu buyData, tura ta buyAirtime na gateway domin yayi amfani da USSD
+      providerResult = await provider.buyAirtime({
+        network: resolvedNetwork,
+        phone: targetPhone,
+        phoneNumber: targetPhone,
+        amount: finalAmount,
+        reference: transaction.reference,
+        ussdCode,
+        code: ussdCode,
+      });
+    } else if (provider && typeof provider.sendUssdCommand === "function") {
+      providerResult = await provider.sendUssdCommand({
+        network: resolvedNetwork,
+        phone: targetPhone,
+        ussdCode,
+        reference: transaction.reference,
+      });
+    } else {
+      console.warn("⚠️ No active provider method found, falling back to direct GSM queue.");
+    }
 
     // 7. Usage Log
     await apiUsageService.createUsageLog({
@@ -132,7 +165,7 @@ exports.purchaseData = async ({
       reference: transaction.reference,
       network: resolvedNetwork,
       phone: targetPhone,
-      planCode,
+      planCode: numericMB,
       amount: finalAmount,
       provider: provider?.name || "GSM_GATEWAY",
       service: service?.name || "DATA_TOPUP",
@@ -149,14 +182,12 @@ exports.purchaseData = async ({
       module: "REFUND",
     }).catch((e) => console.error("Refund failed:", e));
 
-    // Update transaction to FAILED
     await transactionService.updateTransactionStatus({
       reference: transaction.reference,
       status: "FAILED",
       description: err.message || "Provider vending error",
     });
 
-    // API Usage Failed Log
     await apiUsageService.createUsageLog({
       userId: user.id,
       endpoint: "/api/v1/data/buy",
@@ -170,7 +201,7 @@ exports.purchaseData = async ({
     error.code = err.code || "PROVIDER_DELIVERY_FAILED";
     throw error;
   }
-};
+},
 
 /* ======================================================
    2. GET DATA TRANSACTIONS

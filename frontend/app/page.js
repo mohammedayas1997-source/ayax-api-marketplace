@@ -25,47 +25,48 @@ export default function HomePage() {
 
   return (
     <main className="min-h-screen bg-slate-950 text-white relative">
-      {/* NAVBAR */}
-      <nav className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-3">
-            <div className="bg-white rounded-2xl p-2 shadow-sm border border-slate-100">
+      {/* NAVBAR (Sleek, Compact & Responsive) */}
+      <nav className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-slate-200/80 shadow-xs">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2.5 flex items-center justify-between">
+          <Link href="/" className="flex items-center gap-2.5">
+            <div className="bg-white rounded-xl p-1 shadow-xs border border-slate-100 flex items-center justify-center">
               <Image
                 src="/assets/logo.png"
                 alt="Ayax Logo"
-                width={52}
-                height={52}
+                width={38}
+                height={38}
+                className="w-9 h-9 object-contain"
                 priority
               />
             </div>
 
             <div>
-              <h2 className="text-xl font-extrabold text-slate-900">
+              <h2 className="text-lg font-extrabold text-slate-900 leading-tight">
                 Ayax <span className="text-blue-600">APIs</span>
               </h2>
-              <p className="text-xs text-slate-500 font-medium">
+              <p className="text-[10px] text-slate-500 font-medium leading-none">
                 Developer Marketplace
               </p>
             </div>
           </Link>
 
           {/* Desktop Navigation Links */}
-          <div className="hidden md:flex items-center gap-8 text-sm font-semibold">
-            <Link href="/pricing" className="text-slate-700 hover:text-blue-600 transition">
+          <div className="hidden md:flex items-center gap-6 text-[13px] font-semibold">
+            <Link href="/pricing" className="text-slate-600 hover:text-blue-600 transition">
               Pricing
             </Link>
-            <Link href="/docs" className="text-slate-700 hover:text-blue-600 transition">
+            <Link href="/docs" className="text-slate-600 hover:text-blue-600 transition">
               Docs
             </Link>
-            <Link href="/contact" className="text-slate-700 hover:text-blue-600 transition">
+            <Link href="/contact" className="text-slate-600 hover:text-blue-600 transition">
               Contact
             </Link>
-            <Link href="/login" className="text-slate-700 hover:text-blue-600 transition">
+            <Link href="/login" className="text-slate-600 hover:text-blue-600 transition">
               Login
             </Link>
             <Link
               href="/register"
-              className="bg-blue-600 hover:bg-blue-700 px-5 py-2.5 rounded-xl text-white font-bold shadow-md shadow-blue-600/20 transition"
+              className="bg-blue-600 hover:bg-blue-700 px-4 py-1.5 rounded-lg text-white font-bold shadow-sm shadow-blue-600/20 text-xs transition"
             >
               Get Started
             </Link>
@@ -75,49 +76,49 @@ export default function HomePage() {
           <div className="md:hidden flex items-center">
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="text-slate-800 hover:text-blue-600 p-2 rounded-xl border border-slate-200 bg-slate-50 focus:outline-none"
+              className="text-slate-800 hover:text-blue-600 p-1.5 rounded-lg border border-slate-200 bg-slate-50 focus:outline-hidden"
               aria-label="Toggle Navigation Menu"
             >
-              {mobileMenuOpen ? <X size={26} /> : <Menu size={26} />}
+              {mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
             </button>
           </div>
         </div>
 
         {/* Mobile Navigation Drawer */}
         {mobileMenuOpen && (
-          <div className="md:hidden bg-white border-b border-slate-200 px-6 pt-3 pb-6 space-y-4 animate-in fade-in slide-in-from-top-4 duration-200 shadow-xl">
+          <div className="md:hidden bg-white border-b border-slate-200 px-5 pt-2 pb-5 space-y-3 animate-in fade-in slide-in-from-top-2 duration-150 shadow-xl">
             <Link
               href="/pricing"
               onClick={() => setMobileMenuOpen(false)}
-              className="block py-2 text-base font-semibold text-slate-800 hover:text-blue-600 border-b border-slate-100"
+              className="block py-1.5 text-sm font-semibold text-slate-800 hover:text-blue-600 border-b border-slate-100"
             >
               Pricing
             </Link>
             <Link
               href="/docs"
               onClick={() => setMobileMenuOpen(false)}
-              className="block py-2 text-base font-semibold text-slate-800 hover:text-blue-600 border-b border-slate-100"
+              className="block py-1.5 text-sm font-semibold text-slate-800 hover:text-blue-600 border-b border-slate-100"
             >
               API Documentation
             </Link>
             <Link
               href="/contact"
               onClick={() => setMobileMenuOpen(false)}
-              className="block py-2 text-base font-semibold text-slate-800 hover:text-blue-600 border-b border-slate-100"
+              className="block py-1.5 text-sm font-semibold text-slate-800 hover:text-blue-600 border-b border-slate-100"
             >
               Contact Us
             </Link>
             <Link
               href="/login"
               onClick={() => setMobileMenuOpen(false)}
-              className="block py-2 text-base font-semibold text-slate-800 hover:text-blue-600 border-b border-slate-100"
+              className="block py-1.5 text-sm font-semibold text-slate-800 hover:text-blue-600 border-b border-slate-100"
             >
               Login
             </Link>
             <Link
               href="/register"
               onClick={() => setMobileMenuOpen(false)}
-              className="block w-full text-center bg-blue-600 hover:bg-blue-700 py-3 rounded-xl text-white font-bold shadow-md shadow-blue-600/20"
+              className="block w-full text-center bg-blue-600 hover:bg-blue-700 py-2.5 rounded-lg text-white text-sm font-bold shadow-md shadow-blue-600/20"
             >
               Get Started
             </Link>

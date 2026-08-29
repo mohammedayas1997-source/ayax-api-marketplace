@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import {
@@ -13,11 +16,16 @@ import {
   Mail,
   Phone,
   MessageCircle,
+  Menu,
+  X,
 } from "lucide-react";
 
 export default function HomePage() {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
   return (
     <main className="min-h-screen bg-slate-950 text-white relative">
+      {/* NAVBAR */}
       <nav className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-slate-200 shadow-sm">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-3">
@@ -41,29 +49,83 @@ export default function HomePage() {
             </div>
           </Link>
 
+          {/* Desktop Navigation Links */}
           <div className="hidden md:flex items-center gap-8 text-sm font-semibold">
-            <Link href="/pricing" className="text-slate-700 hover:text-blue-600">
+            <Link href="/pricing" className="text-slate-700 hover:text-blue-600 transition">
               Pricing
             </Link>
-            <Link href="/docs" className="text-slate-700 hover:text-blue-600">
+            <Link href="/docs" className="text-slate-700 hover:text-blue-600 transition">
               Docs
             </Link>
-            <Link href="/contact" className="text-slate-700 hover:text-blue-600">
+            <Link href="/contact" className="text-slate-700 hover:text-blue-600 transition">
               Contact
             </Link>
-            <Link href="/login" className="text-slate-700 hover:text-blue-600">
+            <Link href="/login" className="text-slate-700 hover:text-blue-600 transition">
               Login
             </Link>
             <Link
               href="/register"
-              className="bg-blue-600 hover:bg-blue-700 px-5 py-2.5 rounded-xl text-white font-bold shadow-md shadow-blue-600/20"
+              className="bg-blue-600 hover:bg-blue-700 px-5 py-2.5 rounded-xl text-white font-bold shadow-md shadow-blue-600/20 transition"
             >
               Get Started
             </Link>
           </div>
+
+          {/* Mobile Hamburger / Close Button */}
+          <div className="md:hidden flex items-center">
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="text-slate-800 hover:text-blue-600 p-2 rounded-xl border border-slate-200 bg-slate-50 focus:outline-none"
+              aria-label="Toggle Navigation Menu"
+            >
+              {mobileMenuOpen ? <X size={26} /> : <Menu size={26} />}
+            </button>
+          </div>
         </div>
+
+        {/* Mobile Navigation Drawer */}
+        {mobileMenuOpen && (
+          <div className="md:hidden bg-white border-b border-slate-200 px-6 pt-3 pb-6 space-y-4 animate-in fade-in slide-in-from-top-4 duration-200 shadow-xl">
+            <Link
+              href="/pricing"
+              onClick={() => setMobileMenuOpen(false)}
+              className="block py-2 text-base font-semibold text-slate-800 hover:text-blue-600 border-b border-slate-100"
+            >
+              Pricing
+            </Link>
+            <Link
+              href="/docs"
+              onClick={() => setMobileMenuOpen(false)}
+              className="block py-2 text-base font-semibold text-slate-800 hover:text-blue-600 border-b border-slate-100"
+            >
+              API Documentation
+            </Link>
+            <Link
+              href="/contact"
+              onClick={() => setMobileMenuOpen(false)}
+              className="block py-2 text-base font-semibold text-slate-800 hover:text-blue-600 border-b border-slate-100"
+            >
+              Contact Us
+            </Link>
+            <Link
+              href="/login"
+              onClick={() => setMobileMenuOpen(false)}
+              className="block py-2 text-base font-semibold text-slate-800 hover:text-blue-600 border-b border-slate-100"
+            >
+              Login
+            </Link>
+            <Link
+              href="/register"
+              onClick={() => setMobileMenuOpen(false)}
+              className="block w-full text-center bg-blue-600 hover:bg-blue-700 py-3 rounded-xl text-white font-bold shadow-md shadow-blue-600/20"
+            >
+              Get Started
+            </Link>
+          </div>
+        )}
       </nav>
 
+      {/* HERO SECTION */}
       <section className="relative overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,0.25),transparent_35%),radial-gradient(circle_at_bottom_right,rgba(14,165,233,0.18),transparent_35%)]" />
 
@@ -141,6 +203,7 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* FEATURES SECTION */}
       <section className="max-w-7xl mx-auto px-6 py-16 grid md:grid-cols-3 gap-6">
         <Feature
           icon={<Code2 />}
@@ -174,6 +237,7 @@ export default function HomePage() {
         />
       </section>
 
+      {/* FOOTER */}
       <footer className="border-t border-slate-800 bg-slate-900/50 pt-16 pb-12">
         <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-3 gap-8 mb-12">
           <div>

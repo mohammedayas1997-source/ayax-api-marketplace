@@ -4,7 +4,6 @@ import { useEffect, useState, useMemo } from "react";
 import { 
   Tags, 
   Search, 
-  Filter, 
   LoaderCircle, 
   CheckCircle2, 
   Zap, 
@@ -12,7 +11,8 @@ import {
   Crown,
   Smartphone,
   Wifi,
-  FileText
+  FileText,
+  AlertTriangle
 } from "lucide-react";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import api from "@/lib/api";
@@ -26,43 +26,74 @@ const formatNaira = (val) =>
 export default function PricingPage() {
   const [pricing, setPricing] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState("");
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("ALL");
   const [tierFilter, setTierFilter] = useState("ALL");
 
   useEffect(() => {
+    let isMounted = true;
+
     const fetchPricing = async () => {
       try {
         setLoading(true);
-        const res = await api.get("/pricing/public");
-        setPricing(res.data?.data || res.data || []);
+        setErrorMsg("");
+        
+        // Zai kira /pricing/public ko /service-pricing
+        const res = await api.get("/pricing/public").catch(async () => {
+          return await api.get("/service-pricing");
+        });
+
+        const rawList =
+          res.data?.data ||
+          res.data?.pricing ||
+          (Array.isArray(res.data) ? res.data : []);
+
+        if (isMounted) {
+          setPricing(Array.isArray(rawList) ? rawList : []);
+        }
       } catch (err) {
-        console.error("Failed to load pricing:", err);
+        console.error("Pricing fetch error:", err);
+        if (isMounted) {
+          setErrorMsg(err.response?.data?.message || "Unable to fetch pricing records.");
+          setPricing([]);
+        }
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
+
     fetchPricing();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
+  const safePricingList = Array.isArray(pricing) ? pricing : [];
+
   const filteredPricing = useMemo(() => {
-    return pricing.filter((item) => {
+    return safePricingList.filter((item) => {
+      if (!item) return false;
+
+      const itemCategory = String(item.category || "").toUpperCase();
+      const itemTier = String(item.tier || "REGULAR").toUpperCase();
+
       const matchesCategory =
-        categoryFilter === "ALL" ||
-        String(item.category).toUpperCase() === categoryFilter;
+        categoryFilter === "ALL" || itemCategory === categoryFilter;
 
       const matchesTier =
-        tierFilter === "ALL" ||
-        String(item.tier).toUpperCase() === tierFilter;
+        tierFilter === "ALL" || itemTier === tierFilter;
 
+      const searchTerm = search.trim().toLowerCase();
       const matchesSearch =
-        !search ||
-        item.serviceName?.toLowerCase().includes(search.toLowerCase()) ||
-        item.serviceCode?.toLowerCase().includes(search.toLowerCase());
+        !searchTerm ||
+        (item.serviceName && item.serviceName.toLowerCase().includes(searchTerm)) ||
+        (item.serviceCode && item.serviceCode.toLowerCase().includes(searchTerm));
 
       return matchesCategory && matchesTier && matchesSearch;
     });
-  }, [pricing, categoryFilter, tierFilter, search]);
+  }, [safePricingList, categoryFilter, tierFilter, search]);
 
   return (
     <DashboardLayout
@@ -70,6 +101,13 @@ export default function PricingPage() {
       description="Real-time wholesale and retail pricing across all networks, services, and tiers."
     >
       <div className="space-y-6">
+        {errorMsg && (
+          <div className="flex items-center gap-3 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-red-300 text-sm">
+            <AlertTriangle size={18} className="shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+        )}
+
         {/* FILTERS & SEARCH */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="relative flex-1 max-w-md">
@@ -108,7 +146,7 @@ export default function PricingPage() {
           </div>
         </div>
 
-        {/* PRICING TABLE / LIST */}
+        {/* PRICING TABLE */}
         {loading ? (
           <div className="flex items-center justify-center py-20 text-slate-400 gap-3">
             <LoaderCircle className="animate-spin text-blue-500" size={24} />
@@ -116,7 +154,7 @@ export default function PricingPage() {
           </div>
         ) : filteredPricing.length === 0 ? (
           <div className="rounded-3xl border border-slate-800 bg-slate-900/50 p-12 text-center text-slate-500">
-            No pricing plans match your criteria.
+            No pricing plans available at the moment.
           </div>
         ) : (
           <div className="overflow-x-auto rounded-3xl border border-slate-800 bg-slate-900/50">
@@ -131,26 +169,26 @@ export default function PricingPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
-                {filteredPricing.map((item) => {
-                  const cat = String(item.category || "").toUpperCase();
-                  const tier = String(item.tier || "REGULAR").toUpperCase();
+                {filteredPricing.map((item, idx) => {
+                  const cat = String(item?.category || "").toUpperCase();
+                  const tier = String(item?.tier || "REGULAR").toUpperCase();
 
                   return (
-                    <tr key={item.id} className="hover:bg-slate-800/30 transition-colors">
+                    <tr key={item?.id || idx} className="hover:bg-slate-800/30 transition-colors">
                       <td className="px-6 py-4 font-semibold text-white">
                         <div className="flex items-center gap-2.5">
                           {cat === "DATA" && <Wifi size={16} className="text-blue-400 shrink-0" />}
                           {cat === "AIRTIME" && <Smartphone size={16} className="text-green-400 shrink-0" />}
                           {cat === "IDENTITY" && <FileText size={16} className="text-amber-400 shrink-0" />}
                           <div>
-                            <div>{item.serviceName}</div>
-                            <div className="text-xs font-mono text-slate-500">{item.serviceCode}</div>
+                            <div>{item?.serviceName || "Service"}</div>
+                            <div className="text-xs font-mono text-slate-500">{item?.serviceCode || "-"}</div>
                           </div>
                         </div>
                       </td>
                       <td className="px-6 py-4">
                         <span className="rounded-lg bg-slate-800 px-2.5 py-1 text-xs font-medium text-slate-300">
-                          {item.category}
+                          {item?.category || "-"}
                         </span>
                       </td>
                       <td className="px-6 py-4">
@@ -170,10 +208,10 @@ export default function PricingPage() {
                         </span>
                       </td>
                       <td className="px-6 py-4 font-bold text-white text-base">
-                        {formatNaira(item.sellingPrice)}
+                        {formatNaira(item?.sellingPrice)}
                       </td>
                       <td className="px-6 py-4 text-xs text-slate-400">
-                        {item.validity || (item.validityDays ? `${item.validityDays} Days` : "-")}
+                        {item?.validity || (item?.validityDays ? `${item.validityDays} Days` : "-")}
                       </td>
                     </tr>
                   );

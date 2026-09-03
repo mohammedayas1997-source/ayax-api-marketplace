@@ -1,9 +1,9 @@
-const prisma = require("../lib/prisma");
+const prisma = require("../config/prisma");
 const axios = require("axios");
 
-// Discount kashi nawa ake baiwa API developers a kowane network (misali 2% ko 3%)
-const AIRTIME_DISCOUNTS = {
-  MTN: 0.02,     // 2% discount
+// Tsoffin discounts a matsayin madogara (Fallback) idan ba a saita a Database ba
+const DEFAULT_DISCOUNTS = {
+  MTN: 0.02,     // 2% discount (₦98 a kowane ₦100)
   AIRTEL: 0.02,  // 2% discount
   GLO: 0.03,     // 3% discount
   "9MOBILE": 0.03 // 3% discount
@@ -22,7 +22,7 @@ exports.purchaseAirtime = async (req, res) => {
     const { network, phone, amount, reference } = req.body;
 
     const numericAmount = Number(amount);
-    const normalizedNetwork = String(network || "").toUpperCase();
+    const normalizedNetwork = String(network || "").toUpperCase().trim();
 
     if (!normalizedNetwork || !phone || !numericAmount || numericAmount < 50) {
       return res.status(400).json({
@@ -32,7 +32,7 @@ exports.purchaseAirtime = async (req, res) => {
       });
     }
 
-    // 1. Hana Duplicate Transactions (Idempotency Check)
+    // 1. Hana Maimaita Transaction (Idempotency Check)
     if (reference) {
       const existingTx = await prisma.transaction.findUnique({
         where: { reference },
@@ -48,12 +48,42 @@ exports.purchaseAirtime = async (req, res) => {
       }
     }
 
-    // 2. Kididdigar Discount da ainihin kudin da za a caje Wallet
-    const discountRate = AIRTIME_DISCOUNTS[normalizedNetwork] || 0.01;
-    const discountAmount = numericAmount * discountRate;
-    const amountToCharge = numericAmount - discountAmount;
+    // 2. Gano Matsayin Developer (Tier)
+    const userTier = String(user.tier || user.role === "DEVELOPER" ? "STANDARD" : "REGULAR").toUpperCase();
 
-    // 3. Tabbatar da Wallet Balance na Developer
+    // 3. Nemi Ainihin Farashi daga ServicePricing a Database
+    const pricingPlan = await prisma.servicePricing.findFirst({
+      where: {
+        category: "AIRTIME",
+        enabled: true,
+        tier: userTier,
+        OR: [
+          { serviceCode: `${normalizedNetwork}_AIRTIME` },
+          { serviceCode: normalizedNetwork },
+          { serviceName: { contains: normalizedNetwork, mode: "insensitive" } },
+        ],
+      },
+    });
+
+    let discountAmount = 0;
+    let amountToCharge = numericAmount;
+
+    if (pricingPlan && pricingPlan.sellingPrice > 0) {
+      // Idan an saita misali ₦98 a kowane ₦100 (sellingPrice = 98 ko 0.98)
+      const rate = pricingPlan.sellingPrice <= 1 
+        ? pricingPlan.sellingPrice 
+        : (pricingPlan.sellingPrice / 100);
+      
+      amountToCharge = Number((numericAmount * rate).toFixed(2));
+      discountAmount = Number((numericAmount - amountToCharge).toFixed(2));
+    } else {
+      // Idan babu a database, yi amfani da default rate
+      const fallbackRate = DEFAULT_DISCOUNTS[normalizedNetwork] || 0.01;
+      discountAmount = Number((numericAmount * fallbackRate).toFixed(2));
+      amountToCharge = Number((numericAmount - discountAmount).toFixed(2));
+    }
+
+    // 4. Duba Kuɗin Wallet na Mai Saye
     const wallet = await prisma.wallet.findUnique({
       where: { userId: user.id },
     });
@@ -68,9 +98,10 @@ exports.purchaseAirtime = async (req, res) => {
       });
     }
 
-    const txReference = reference || `AYAX_AIRTIME_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    const txReference =
+      reference || `AYAX_AIR_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-    // 4. Rage Balance da Adana PENDING Transaction a Database
+    // 5. Cire Kuɗin Wallet da Adana Transaction (Daidai da Prisma Schema)
     const { updatedWallet, transaction } = await prisma.$transaction(async (tx) => {
       const newWallet = await tx.wallet.update({
         where: { userId: user.id },
@@ -82,57 +113,43 @@ exports.purchaseAirtime = async (req, res) => {
       const newTx = await tx.transaction.create({
         data: {
           userId: user.id,
-          type: "AIRTIME_PURCHASE",
+          type: "DEBIT",
+          service: `${normalizedNetwork} AIRTIME`,
           amount: amountToCharge,
           status: "PENDING",
           reference: txReference,
-          metadata: {
-            platform: "ayax_marketplace",
-            network: normalizedNetwork,
-            phone,
-            faceValue: numericAmount,
-            discountApplied: discountAmount,
-          },
+          description: `Airtime purchase of NGN ${numericAmount} to ${phone} (Charged: NGN ${amountToCharge})`,
         },
       });
 
       return { updatedWallet: newWallet, transaction: newTx };
     });
 
-    // 5. Tura Request zuwa Upstream VTU Gateway
+    // 6. Tura Request zuwa Upstream Gateway / GSM Modem
     let isSuccess = false;
 
     try {
-      // Idan akwai upstream provider URL:
       /*
-      const response = await axios.post(
+      const upstreamRes = await axios.post(
         `${process.env.AIRTIME_PROVIDER_URL}/api/v1/topup`,
-        {
-          network: normalizedNetwork,
-          phone,
-          amount: numericAmount,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.AIRTIME_PROVIDER_SECRET}`,
-          },
-        }
+        { network: normalizedNetwork, phone, amount: numericAmount },
+        { headers: { Authorization: `Bearer ${process.env.AIRTIME_PROVIDER_SECRET}` } }
       );
-      isSuccess = response.data?.status === "success";
+      isSuccess = upstreamRes.data?.status === "success";
       */
 
-      // Mock direct dispatch:
+      // Mock Gateway Dispatch (A canza idan an haɗa live provider):
       isSuccess = true;
     } catch (upstreamErr) {
-      console.error("Upstream Airtime Provider Error:", upstreamErr.message);
+      console.error("Upstream Gateway Error:", upstreamErr.message);
       isSuccess = false;
     }
 
-    // 6. Tabbatar da Nasara ko Mayar da Kudi (Refund)
+    // 7. Tabbatar da Nasara ko Mayar da Kuɗi (Refund)
     if (isSuccess) {
       await prisma.transaction.update({
         where: { id: transaction.id },
-        data: { status: "SUCCESS" },
+        data: { status: "SUCCESSFUL" },
       });
 
       return res.status(200).json({
@@ -146,11 +163,12 @@ exports.purchaseAirtime = async (req, res) => {
           faceValue: numericAmount,
           amountCharged: amountToCharge,
           discount: discountAmount,
+          tier: userTier,
           walletBalance: updatedWallet.balance,
         },
       });
     } else {
-      // Refund wallet idan recharge ya gaza
+      // Reversal / Refund nan take
       await prisma.$transaction([
         prisma.wallet.update({
           where: { userId: user.id },
@@ -158,14 +176,17 @@ exports.purchaseAirtime = async (req, res) => {
         }),
         prisma.transaction.update({
           where: { id: transaction.id },
-          data: { status: "FAILED" },
+          data: { 
+            status: "FAILED",
+            description: `FAILED: Airtime recharge of NGN ${numericAmount} to ${phone} (Refunded NGN ${amountToCharge})` 
+          },
         }),
       ]);
 
       return res.status(502).json({
         status: "error",
         code: "PROVIDER_FAILURE",
-        message: "Airtime vending failed. Your wallet has been refunded.",
+        message: "Airtime vending failed. Your wallet balance has been refunded.",
       });
     }
   } catch (error) {
@@ -208,10 +229,11 @@ exports.checkAirtimeStatus = async (req, res) => {
       status: "success",
       data: {
         reference: transaction.reference,
+        service: transaction.service,
         type: transaction.type,
         amount: transaction.amount,
         status: transaction.status,
-        metadata: transaction.metadata,
+        description: transaction.description,
         createdAt: transaction.createdAt,
       },
     });
@@ -236,7 +258,8 @@ exports.getAirtimeHistory = async (req, res) => {
     const history = await prisma.transaction.findMany({
       where: {
         userId: user.id,
-        type: "AIRTIME_PURCHASE",
+        type: "DEBIT",
+        service: { contains: "AIRTIME" },
       },
       orderBy: {
         createdAt: "desc",

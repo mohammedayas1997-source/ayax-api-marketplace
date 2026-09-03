@@ -54,6 +54,8 @@ const marketplaceWebhookRoutes = require("./modules/api-marketplace/webhook.rout
 const documentationRoutes = require("./modules/api-marketplace/documentation.routes");
 const apiMarketplaceDashboardRoutes = require("./modules/api-marketplace/api-marketplace-dashboard.routes");
 
+const identityRoutes = require("./routes/identity.routes");
+
 const superAdminRoutes = require("./routes/superAdminRoutes");
 const aiRoutes = require("./modules/ai/ai.routes");
 
@@ -356,6 +358,7 @@ app.use("/api/v1/marketplace", marketplaceRoutes);
 app.use("/api/v1/data", dataRoutes);
 app.use("/api/v1/airtime", airtimeRoutes);
 
+app.use("/api/v1/identity", identityRoutes);
 // Compatibility aliases for legacy/frontend calls
 app.use("/api/v1/vtu/airtime", airtimeRoutes);
 app.post("/api/v1/vtu/airtime", (req, res, next) => {

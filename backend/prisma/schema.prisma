@@ -319,6 +319,13 @@ model ServicePricing {
   serviceName  String
   category     String
   tier         PackageTier
+
+  // Sabbin filaye don tsarin Data da kwanakin aiki
+  dataType     String?     // SME, GIFTING, CORPORATE GIFTING, DIRECT
+  dataSize     String?     // 500MB, 1GB, 2GB, etc.
+  validity     String?     // 30 Days, 1 Day, etc.
+  validityDays Int?        // Lambar kwanaki (misali: 30)
+
   costPrice    Float       @default(0)
   sellingPrice Float
   currency     String      @default("NGN")
@@ -827,6 +834,7 @@ model ElectricityDisco {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
+
 
 enum PackageTier {
   REGULAR

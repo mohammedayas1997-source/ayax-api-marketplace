@@ -25,17 +25,45 @@ import SuperTopbar from "../components/SuperTopbar";
 import api from "@/lib/api";
 import { socket } from "@/lib/socket";
 
-const EMPTY_FORM = {
-  serviceCode: "",
-  serviceName: "",
-  category: "IDENTITY",
-  tier: "REGULAR",
-  costPrice: "",
-  sellingPrice: "",
-  currency: "NGN",
-  enabled: true,
-  features: "",
-};
+const PRESET_SERVICES = [
+  { label: "MTN Data", category: "DATA", code: "MTN" },
+  { label: "Airtel Data", category: "DATA", code: "AIRTEL" },
+  { label: "Glo Data", category: "DATA", code: "GLO" },
+  { label: "9mobile Data", category: "DATA", code: "9MOBILE" },
+  { label: "Airtime Topup", category: "AIRTIME", code: "AIRTIME" },
+  { label: "NIN Verification", category: "IDENTITY", code: "NIN_VERIFY" },
+  { label: "BVN Verification", category: "IDENTITY", code: "BVN_VERIFY" },
+  { label: "Electricity Bill", category: "ELECTRICITY", code: "ELECTRICITY" },
+  { label: "Cable TV Subscription", category: "CABLE", code: "CABLE_TV" },
+];
+
+const DATA_TYPES = ["SME", "GIFTING", "CORPORATE GIFTING", "DIRECT"];
+
+const DATA_SIZES = [
+  "500MB",
+  "1GB",
+  "1.5GB",
+  "2GB",
+  "3GB",
+  "5GB",
+  "10GB",
+  "15GB",
+  "20GB",
+  "40GB",
+  "50GB",
+  "75GB",
+  "100GB",
+];
+
+const VALIDITY_OPTIONS = [
+  { label: "1 Day", value: "1 Day", days: 1 },
+  { label: "2 Days", value: "2 Days", days: 2 },
+  { label: "7 Days (1 Week)", value: "7 Days", days: 7 },
+  { label: "14 Days (2 Weeks)", value: "14 Days", days: 14 },
+  { label: "30 Days (1 Month)", value: "30 Days", days: 30 },
+  { label: "60 Days (2 Months)", value: "60 Days", days: 60 },
+  { label: "90 Days (3 Months)", value: "90 Days", days: 90 },
+];
 
 const CATEGORIES = [
   "GSM",
@@ -52,6 +80,22 @@ const CATEGORIES = [
 ];
 
 const TIERS = ["REGULAR", "STANDARD", "PREMIUM"];
+
+const EMPTY_FORM = {
+  selectedService: "MTN Data",
+  dataType: "SME",
+  dataSize: "1GB",
+  validity: "30 Days",
+  serviceCode: "MTN_DATA_SME_1GB_30DAYS",
+  serviceName: "MTN Data SME 1GB (30 Days)",
+  category: "DATA",
+  tier: "REGULAR",
+  costPrice: "",
+  sellingPrice: "",
+  currency: "NGN",
+  enabled: true,
+  features: "Instant Automation\nValidity: 30 Days\n24/7 API Dispatch",
+};
 
 const formatNaira = (amount) =>
   `₦${Number(amount || 0).toLocaleString("en-NG", {
@@ -148,7 +192,8 @@ export default function SuperPricingPage() {
   useEffect(() => {
     loadPricing();
 
-    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    const token =
+      typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
     if (token) {
       socket.auth = { token };
@@ -174,6 +219,47 @@ export default function SuperPricingPage() {
       socket.off("pricing-deleted", handlePricingUpdate);
     };
   }, [loadPricing, fetchPricing]);
+
+  // Tsarin sarrafa sunan da code din service kai tsaye (Automatic Generation)
+  const syncServiceDetails = (updated) => {
+    const isData = updated.category === "DATA";
+
+    let sName = updated.selectedService;
+    let sCode = normalizeCode(updated.selectedService);
+
+    if (isData) {
+      sName = `${updated.selectedService} ${updated.dataType} ${updated.dataSize} (${updated.validity})`;
+      sCode = normalizeCode(
+        `${updated.selectedService}_${updated.dataType}_${updated.dataSize}_${updated.validity}`
+      );
+    }
+
+    const autoFeatures = isData
+      ? `Instant Delivery\nValidity: ${updated.validity}\nType: ${updated.dataType}\nAPI Automated`
+      : `High Speed Verification\nAutomated Response\n24/7 Uptime`;
+
+    return {
+      ...updated,
+      serviceName: sName,
+      serviceCode: sCode,
+      features: autoFeatures,
+    };
+  };
+
+  const handleSelectionChange = (field, value) => {
+    setForm((current) => {
+      let updated = { ...current, [field]: value };
+
+      if (field === "selectedService") {
+        const found = PRESET_SERVICES.find((s) => s.label === value);
+        if (found) {
+          updated.category = found.category;
+        }
+      }
+
+      return syncServiceDetails(updated);
+    });
+  };
 
   const filteredPricing = useMemo(() => {
     const searchValue = query.trim().toLowerCase();
@@ -230,7 +316,7 @@ export default function SuperPricingPage() {
 
   const openCreateModal = () => {
     setSelectedPricing(null);
-    setForm(EMPTY_FORM);
+    setForm(syncServiceDetails(EMPTY_FORM));
     setMessage("");
     setModalOpen(true);
   };
@@ -239,6 +325,10 @@ export default function SuperPricingPage() {
     setSelectedPricing(item);
 
     setForm({
+      selectedService: item.serviceName,
+      dataType: "SME",
+      dataSize: "1GB",
+      validity: "30 Days",
       serviceCode: item.serviceCode,
       serviceName: item.serviceName,
       category: item.category,
@@ -772,7 +862,7 @@ export default function SuperPricingPage() {
                   </h2>
 
                   <p className="mt-2 text-sm text-slate-400">
-                    Set cost, selling price and package tier.
+                    Choose service options, validity and pricing tiers.
                   </p>
                 </div>
 
@@ -787,34 +877,80 @@ export default function SuperPricingPage() {
               </div>
 
               <form onSubmit={submitPricing} className="space-y-5">
-                <div className="grid gap-5 sm:grid-cols-2">
-                  <FormInput
-                    label="Service Name"
-                    value={form.serviceName}
+                {/* SASHE NA 1: ZAƁAR SERVICE DA TSARIN DATA */}
+                <div className="grid gap-5 rounded-2xl border border-slate-800/80 bg-slate-950/50 p-4 sm:grid-cols-2">
+                  <FormSelect
+                    label="Service Name (Zaɓi Service)"
+                    value={form.selectedService}
                     onChange={(value) =>
-                      updateForm("serviceName", value)
+                      handleSelectionChange("selectedService", value)
                     }
-                    placeholder="NIN Verification"
-                    required
-                  />
-
-                  <FormInput
-                    label="Service Code"
-                    value={form.serviceCode}
-                    onChange={(value) =>
-                      updateForm("serviceCode", normalizeCode(value))
-                    }
-                    placeholder="NIN_VERIFY"
-                    required
+                    options={PRESET_SERVICES.map((s) => s.label)}
                   />
 
                   <FormSelect
                     label="Category"
                     value={form.category}
                     onChange={(value) =>
-                      updateForm("category", value)
+                      handleSelectionChange("category", value)
                     }
                     options={CATEGORIES}
+                  />
+
+                  {form.category === "DATA" && (
+                    <>
+                      <FormSelect
+                        label="Data Plan Type"
+                        value={form.dataType}
+                        onChange={(value) =>
+                          handleSelectionChange("dataType", value)
+                        }
+                        options={DATA_TYPES}
+                      />
+
+                      <FormSelect
+                        label="Data Volume / Size"
+                        value={form.dataSize}
+                        onChange={(value) =>
+                          handleSelectionChange("dataSize", value)
+                        }
+                        options={DATA_SIZES}
+                      />
+
+                      <div className="sm:col-span-2">
+                        <FormSelect
+                          label="Kwanakin Aiki (Validity / Expiring Days)"
+                          value={form.validity}
+                          onChange={(value) =>
+                            handleSelectionChange("validity", value)
+                          }
+                          options={VALIDITY_OPTIONS.map((v) => v.value)}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* SASHE NA 2: AUTOMATIC GENERATED NAMES & CODES */}
+                <div className="grid gap-5 sm:grid-cols-2">
+                  <FormInput
+                    label="Generated Service Name (Auto)"
+                    value={form.serviceName}
+                    onChange={(value) =>
+                      updateForm("serviceName", value)
+                    }
+                    placeholder="Auto generated"
+                    required
+                  />
+
+                  <FormInput
+                    label="Generated Service Code (Auto)"
+                    value={form.serviceCode}
+                    onChange={(value) =>
+                      updateForm("serviceCode", normalizeCode(value))
+                    }
+                    placeholder="AUTO_CODE"
+                    required
                   />
 
                   <FormSelect
@@ -824,8 +960,17 @@ export default function SuperPricingPage() {
                     options={TIERS}
                   />
 
+                  <FormSelect
+                    label="Status"
+                    value={form.enabled ? "ACTIVE" : "DISABLED"}
+                    onChange={(value) =>
+                      updateForm("enabled", value === "ACTIVE")
+                    }
+                    options={["ACTIVE", "DISABLED"]}
+                  />
+
                   <FormInput
-                    label="Cost Price"
+                    label="Cost Price (Naira)"
                     type="number"
                     min="0"
                     step="0.01"
@@ -838,7 +983,7 @@ export default function SuperPricingPage() {
                   />
 
                   <FormInput
-                    label="Selling Price"
+                    label="Selling Price (Naira)"
                     type="number"
                     min="0"
                     step="0.01"
@@ -862,20 +1007,12 @@ export default function SuperPricingPage() {
                     placeholder="NGN"
                     required
                   />
-
-                  <FormSelect
-                    label="Status"
-                    value={form.enabled ? "ACTIVE" : "DISABLED"}
-                    onChange={(value) =>
-                      updateForm("enabled", value === "ACTIVE")
-                    }
-                    options={["ACTIVE", "DISABLED"]}
-                  />
                 </div>
 
+                {/* SASHE NA 3: FEATURES */}
                 <div>
                   <label className="text-sm text-slate-300">
-                    Features
+                    Package Features (Auto Generated)
                   </label>
 
                   <textarea
@@ -883,16 +1020,10 @@ export default function SuperPricingPage() {
                     onChange={(event) =>
                       updateForm("features", event.target.value)
                     }
-                    placeholder={
-                      "JSON response\nPrintable slip\nWebhook notification"
-                    }
-                    rows={5}
-                    className="mt-2 w-full resize-none rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 outline-none focus:border-blue-500"
+                    placeholder={"Validity: 30 Days\nInstant Notification"}
+                    rows={4}
+                    className="mt-2 w-full resize-none rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3 text-sm outline-none focus:border-blue-500"
                   />
-
-                  <p className="mt-2 text-xs text-slate-500">
-                    Write one feature per line.
-                  </p>
                 </div>
 
                 <button

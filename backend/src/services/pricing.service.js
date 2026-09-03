@@ -1,5 +1,58 @@
 const prisma = require("../config/prisma");
 
+const extractMetadata = (data = {}) => {
+  const meta =
+    typeof data.metadata === "object" && data.metadata !== null
+      ? { ...data.metadata }
+      : {};
+
+  if (data.dataType) meta.dataType = data.dataType;
+  if (data.dataSize) meta.dataSize = data.dataSize;
+  if (data.validity) meta.validity = data.validity;
+
+  return Object.keys(meta).length > 0 ? meta : null;
+};
+
+// ==========================================
+// 1. PUBLIC PRICING (LANDING PAGE & VTU CLIENTS)
+// ==========================================
+exports.getPublicPricing = async ({ category, tier = "REGULAR" } = {}) => {
+  const where = {
+    enabled: true,
+  };
+
+  if (category && category !== "ALL") {
+    where.category = String(category).trim().toUpperCase();
+  }
+
+  if (tier && tier !== "ALL") {
+    where.tier = String(tier).trim().toUpperCase();
+  }
+
+  return prisma.servicePricing.findMany({
+    where,
+    select: {
+      id: true,
+      serviceCode: true,
+      serviceName: true,
+      category: true,
+      tier: true,
+      sellingPrice: true,
+      currency: true,
+      features: true,
+      metadata: true,
+      updatedAt: true,
+    },
+    orderBy: [
+      { category: "asc" },
+      { sellingPrice: "asc" },
+    ],
+  });
+};
+
+// ==========================================
+// 2. ADMIN LOOKUPS & CRUD OPERATIONS
+// ==========================================
 exports.getAllPricing = async () => {
   return prisma.servicePricing.findMany({
     orderBy: [
@@ -29,6 +82,8 @@ exports.getPricingById = async (id) => {
 };
 
 exports.createPricing = async (data) => {
+  const metadata = extractMetadata(data);
+
   return prisma.servicePricing.create({
     data: {
       serviceCode: data.serviceCode,
@@ -47,7 +102,7 @@ exports.createPricing = async (data) => {
           : Boolean(data.enabled),
 
       features: data.features || null,
-      metadata: data.metadata || null,
+      metadata,
 
       createdBy: data.createdBy || null,
       updatedBy: data.createdBy || null,
@@ -56,6 +111,8 @@ exports.createPricing = async (data) => {
 };
 
 exports.upsertPricing = async (data) => {
+  const metadata = extractMetadata(data);
+
   return prisma.servicePricing.upsert({
     where: {
       serviceCode_tier: {
@@ -66,12 +123,15 @@ exports.upsertPricing = async (data) => {
     update: {
       serviceName: data.serviceName,
       category: data.category,
-      costPrice: data.costPrice !== undefined ? Number(data.costPrice) : undefined,
-      sellingPrice: data.sellingPrice !== undefined ? Number(data.sellingPrice) : undefined,
+      costPrice:
+        data.costPrice !== undefined ? Number(data.costPrice) : undefined,
+      sellingPrice:
+        data.sellingPrice !== undefined ? Number(data.sellingPrice) : undefined,
       currency: data.currency,
-      enabled: data.enabled !== undefined ? Boolean(data.enabled) : undefined,
+      enabled:
+        data.enabled !== undefined ? Boolean(data.enabled) : undefined,
       features: data.features,
-      metadata: data.metadata,
+      metadata,
       updatedBy: data.updatedBy || null,
     },
     create: {
@@ -84,7 +144,7 @@ exports.upsertPricing = async (data) => {
       currency: data.currency || "NGN",
       enabled: data.enabled === undefined ? true : Boolean(data.enabled),
       features: data.features || null,
-      metadata: data.metadata || null,
+      metadata,
       createdBy: data.createdBy || null,
       updatedBy: data.createdBy || null,
     },
@@ -92,35 +152,41 @@ exports.upsertPricing = async (data) => {
 };
 
 exports.updatePricing = async (id, data) => {
+  const metadata = extractMetadata(data);
+
+  const updateData = {
+    serviceName: data.serviceName,
+    category: data.category,
+    tier: data.tier,
+
+    costPrice:
+      data.costPrice !== undefined
+        ? Number(data.costPrice)
+        : undefined,
+
+    sellingPrice:
+      data.sellingPrice !== undefined
+        ? Number(data.sellingPrice)
+        : undefined,
+
+    currency: data.currency,
+
+    enabled:
+      data.enabled !== undefined
+        ? Boolean(data.enabled)
+        : undefined,
+
+    features: data.features,
+    updatedBy: data.updatedBy || null,
+  };
+
+  if (metadata) {
+    updateData.metadata = metadata;
+  }
+
   return prisma.servicePricing.update({
     where: { id },
-    data: {
-      serviceName: data.serviceName,
-      category: data.category,
-      tier: data.tier,
-
-      costPrice:
-        data.costPrice !== undefined
-          ? Number(data.costPrice)
-          : undefined,
-
-      sellingPrice:
-        data.sellingPrice !== undefined
-          ? Number(data.sellingPrice)
-          : undefined,
-
-      currency: data.currency,
-
-      enabled:
-        data.enabled !== undefined
-          ? Boolean(data.enabled)
-          : undefined,
-
-      features: data.features,
-      metadata: data.metadata,
-
-      updatedBy: data.updatedBy || null,
-    },
+    data: updateData,
   });
 };
 

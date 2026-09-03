@@ -1,14 +1,9 @@
 const prisma = require("../config/prisma");
 const { emitEvent } = require("../config/socket");
 
-const ALLOWED_TIERS = [
-  "REGULAR",
-  "STANDARD",
-  "PREMIUM",
-];
+const ALLOWED_TIERS = ["REGULAR", "STANDARD", "PREMIUM"];
 
-const normalizeText = (value = "") =>
-  String(value).trim();
+const normalizeText = (value = "") => String(value).trim();
 
 const normalizeCode = (value = "") =>
   String(value)
@@ -18,42 +13,19 @@ const normalizeCode = (value = "") =>
     .replace(/_+/g, "_")
     .replace(/^_+|_+$/g, "");
 
-const normalizeTier = (value = "") =>
-  String(value).trim().toUpperCase();
+const normalizeTier = (value = "") => String(value).trim().toUpperCase();
 
 const parseBoolean = (value, fallback = true) => {
-  if (value === undefined || value === null) {
-    return fallback;
-  }
-
-  if (typeof value === "boolean") {
-    return value;
-  }
-
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === "boolean") return value;
   return ["true", "1", "yes", "on"].includes(
     String(value).trim().toLowerCase()
   );
 };
 
 const parseJsonValue = (value) => {
-  if (
-    value === undefined ||
-    value === null ||
-    value === ""
-  ) {
-    return undefined;
-  }
-
-  if (
-    typeof value === "object" &&
-    !Array.isArray(value)
-  ) {
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    return value;
-  }
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value === "object") return value;
 
   try {
     return JSON.parse(value);
@@ -63,23 +35,15 @@ const parseJsonValue = (value) => {
 };
 
 const getAuthenticatedUserId = (req) =>
-  req.user?.id ||
-  req.user?.userId ||
-  req.auth?.userId ||
-  null;
+  req.user?.id || req.user?.userId || req.auth?.userId || null;
 
-const sendControllerError = (
-  res,
-  error,
-  fallbackMessage
-) => {
+const sendControllerError = (res, error, fallbackMessage) => {
   console.error("PRICING_CONTROLLER_ERROR:", error);
 
   if (error?.code === "P2002") {
     return res.status(409).json({
       success: false,
-      message:
-        "Pricing already exists for this service and tier.",
+      message: "Pricing already exists for this service and tier.",
     });
   }
 
@@ -92,50 +56,83 @@ const sendControllerError = (
 
   return res.status(500).json({
     success: false,
-    message:
-      error?.message ||
-      fallbackMessage ||
-      "Pricing operation failed.",
+    message: error?.message || fallbackMessage || "Pricing operation failed.",
   });
 };
 
-/*
- * GET /api/v1/pricing
- */
+/* ======================================================
+   PUBLIC PRICING (LANDING PAGE & VTU APP LOOKUP)
+   GET /api/v1/pricing/public
+====================================================== */
+exports.getPublicPricing = async (req, res) => {
+  try {
+    const { category, tier = "REGULAR" } = req.query;
+
+    const where = {
+      enabled: true,
+    };
+
+    if (category) {
+      where.category = normalizeCode(category);
+    }
+
+    if (tier) {
+      where.tier = normalizeTier(tier);
+    }
+
+    const pricing = await prisma.servicePricing.findMany({
+      where,
+      select: {
+        id: true,
+        serviceCode: true,
+        serviceName: true,
+        category: true,
+        tier: true,
+        costPrice: false,
+        sellingPrice: true,
+        currency: true,
+        features: true,
+        metadata: true,
+      },
+      orderBy: [{ category: "asc" }, { sellingPrice: "asc" }],
+    });
+
+    return res.status(200).json({
+      success: true,
+      count: pricing.length,
+      pricing,
+    });
+  } catch (error) {
+    return sendControllerError(res, error, "Unable to load public pricing.");
+  }
+};
+
+/* ======================================================
+   GET ALL PRICING (ADMIN / DASHBOARD)
+   GET /api/v1/pricing
+====================================================== */
 exports.getPricing = async (req, res) => {
   try {
-    const {
-      serviceCode,
-      category,
-      tier,
-      enabled,
-      search,
-    } = req.query;
+    const { serviceCode, category, tier, enabled, search } = req.query;
 
     const where = {};
 
     if (serviceCode) {
-      where.serviceCode =
-        normalizeCode(serviceCode);
+      where.serviceCode = normalizeCode(serviceCode);
     }
 
     if (category) {
-      where.category =
-        normalizeCode(category);
+      where.category = normalizeCode(category);
     }
 
     if (tier) {
-      const normalizedTier =
-        normalizeTier(tier);
-
+      const normalizedTier = normalizeTier(tier);
       if (!ALLOWED_TIERS.includes(normalizedTier)) {
         return res.status(400).json({
           success: false,
-          message:
-            "Tier must be REGULAR, STANDARD or PREMIUM.",
+          message: "Tier must be REGULAR, STANDARD or PREMIUM.",
         });
       }
-
       where.tier = normalizedTier;
     }
 
@@ -144,46 +141,22 @@ exports.getPricing = async (req, res) => {
     }
 
     if (search) {
-      const searchValue =
-        normalizeText(search);
-
+      const searchValue = normalizeText(search);
       where.OR = [
-        {
-          serviceName: {
-            contains: searchValue,
-            mode: "insensitive",
-          },
-        },
-        {
-          serviceCode: {
-            contains: searchValue,
-            mode: "insensitive",
-          },
-        },
-        {
-          category: {
-            contains: searchValue,
-            mode: "insensitive",
-          },
-        },
+        { serviceName: { contains: searchValue, mode: "insensitive" } },
+        { serviceCode: { contains: searchValue, mode: "insensitive" } },
+        { category: { contains: searchValue, mode: "insensitive" } },
       ];
     }
 
-    const pricing =
-      await prisma.servicePricing.findMany({
-        where,
-        orderBy: [
-          {
-            category: "asc",
-          },
-          {
-            serviceCode: "asc",
-          },
-          {
-            tier: "asc",
-          },
-        ],
-      });
+    const pricing = await prisma.servicePricing.findMany({
+      where,
+      orderBy: [
+        { category: "asc" },
+        { serviceCode: "asc" },
+        { tier: "asc" },
+      ],
+    });
 
     return res.status(200).json({
       success: true,
@@ -191,25 +164,21 @@ exports.getPricing = async (req, res) => {
       pricing,
     });
   } catch (error) {
-    return sendControllerError(
-      res,
-      error,
-      "Unable to load pricing."
-    );
+    return sendControllerError(res, error, "Unable to load pricing.");
   }
 };
 
-/*
- * GET /api/v1/pricing/:id
- */
+/* ======================================================
+   GET PRICING BY ID
+   GET /api/v1/pricing/:id
+====================================================== */
 exports.getPricingById = async (req, res) => {
   try {
-    const pricing =
-      await prisma.servicePricing.findUnique({
-        where: {
-          id: req.params.id,
-        },
-      });
+    const pricing = await prisma.servicePricing.findUnique({
+      where: {
+        id: req.params.id,
+      },
+    });
 
     if (!pricing) {
       return res.status(404).json({
@@ -223,25 +192,17 @@ exports.getPricingById = async (req, res) => {
       pricing,
     });
   } catch (error) {
-    return sendControllerError(
-      res,
-      error,
-      "Unable to load pricing."
-    );
+    return sendControllerError(res, error, "Unable to load pricing.");
   }
 };
 
-/*
- * GET /api/v1/pricing/service/:serviceCode
- */
-exports.getServicePricing = async (
-  req,
-  res
-) => {
+/* ======================================================
+   GET SERVICE PRICING
+   GET /api/v1/pricing/service/:serviceCode
+====================================================== */
+exports.getServicePricing = async (req, res) => {
   try {
-    const serviceCode = normalizeCode(
-      req.params.serviceCode
-    );
+    const serviceCode = normalizeCode(req.params.serviceCode);
 
     if (!serviceCode) {
       return res.status(400).json({
@@ -250,16 +211,15 @@ exports.getServicePricing = async (
       });
     }
 
-    const pricing =
-      await prisma.servicePricing.findMany({
-        where: {
-          serviceCode,
-          enabled: true,
-        },
-        orderBy: {
-          tier: "asc",
-        },
-      });
+    const pricing = await prisma.servicePricing.findMany({
+      where: {
+        serviceCode,
+        enabled: true,
+      },
+      orderBy: {
+        tier: "asc",
+      },
+    });
 
     return res.status(200).json({
       success: true,
@@ -268,18 +228,14 @@ exports.getServicePricing = async (
       pricing,
     });
   } catch (error) {
-    return sendControllerError(
-      res,
-      error,
-      "Unable to load service pricing."
-    );
+    return sendControllerError(res, error, "Unable to load service pricing.");
   }
 };
 
-/*
- * POST /api/v1/pricing
- * Supports creating single data plans (e.g. 1GB to 100GB individually)
- */
+/* ======================================================
+   CREATE SINGLE PRICING
+   POST /api/v1/pricing
+====================================================== */
 exports.createPricing = async (req, res) => {
   try {
     const {
@@ -295,17 +251,10 @@ exports.createPricing = async (req, res) => {
       metadata,
     } = req.body;
 
-    const normalizedServiceCode =
-      normalizeCode(serviceCode);
-
-    const normalizedServiceName =
-      normalizeText(serviceName);
-
-    const normalizedCategory =
-      normalizeCode(category);
-
-    const normalizedTier =
-      normalizeTier(tier || "REGULAR");
+    const normalizedServiceCode = normalizeCode(serviceCode);
+    const normalizedServiceName = normalizeText(serviceName);
+    const normalizedCategory = normalizeCode(category);
+    const normalizedTier = normalizeTier(tier || "REGULAR");
 
     if (
       !normalizedServiceCode ||
@@ -315,148 +264,95 @@ exports.createPricing = async (req, res) => {
     ) {
       return res.status(400).json({
         success: false,
-        message:
-          "serviceCode, serviceName, category and tier are required.",
+        message: "serviceCode, serviceName, category and tier are required.",
       });
     }
 
     if (!ALLOWED_TIERS.includes(normalizedTier)) {
       return res.status(400).json({
         success: false,
-        message:
-          "Tier must be REGULAR, STANDARD or PREMIUM.",
+        message: "Tier must be REGULAR, STANDARD or PREMIUM.",
       });
     }
 
-    const numericCostPrice = Number(
-      costPrice || 0
-    );
+    const numericCostPrice = Number(costPrice || 0);
+    const numericSellingPrice = Number(sellingPrice);
 
-    const numericSellingPrice = Number(
-      sellingPrice
-    );
-
-    if (
-      !Number.isFinite(numericCostPrice) ||
-      numericCostPrice < 0
-    ) {
+    if (!Number.isFinite(numericCostPrice) || numericCostPrice < 0) {
       return res.status(400).json({
         success: false,
-        message:
-          "Cost price must be a valid amount.",
+        message: "Cost price must be a valid amount.",
       });
     }
 
-    if (
-      !Number.isFinite(numericSellingPrice) ||
-      numericSellingPrice < 0
-    ) {
+    if (!Number.isFinite(numericSellingPrice) || numericSellingPrice < 0) {
       return res.status(400).json({
         success: false,
-        message:
-          "Selling price must be a valid amount.",
+        message: "Selling price must be a valid amount.",
       });
     }
 
-    if (
-      numericSellingPrice <
-      numericCostPrice
-    ) {
+    if (numericSellingPrice < numericCostPrice) {
       return res.status(400).json({
         success: false,
-        message:
-          "Selling price cannot be lower than cost price.",
+        message: "Selling price cannot be lower than cost price.",
       });
     }
 
-    const existing =
-      await prisma.servicePricing.findUnique({
-        where: {
-          serviceCode_tier: {
-            serviceCode:
-              normalizedServiceCode,
-            tier: normalizedTier,
-          },
+    const existing = await prisma.servicePricing.findUnique({
+      where: {
+        serviceCode_tier: {
+          serviceCode: normalizedServiceCode,
+          tier: normalizedTier,
         },
-      });
+      },
+    });
 
     if (existing) {
       return res.status(409).json({
         success: false,
-        message:
-          "Pricing already exists for this service and tier.",
+        message: "Pricing already exists for this service and tier.",
       });
     }
 
-    const userId =
-      getAuthenticatedUserId(req);
+    const userId = getAuthenticatedUserId(req);
 
-    const pricing =
-      await prisma.servicePricing.create({
-        data: {
-          serviceCode:
-            normalizedServiceCode,
-
-          serviceName:
-            normalizedServiceName,
-
-          category:
-            normalizedCategory,
-
-          tier:
-            normalizedTier,
-
-          costPrice:
-            numericCostPrice,
-
-          sellingPrice:
-            numericSellingPrice,
-
-          currency:
-            normalizeCode(currency || "NGN"),
-
-          enabled:
-            parseBoolean(enabled, true),
-
-          features:
-            parseJsonValue(features),
-
-          metadata:
-            parseJsonValue(metadata),
-
-          createdBy:
-            userId,
-
-          updatedBy:
-            userId,
-        },
-      });
+    const pricing = await prisma.servicePricing.create({
+      data: {
+        serviceCode: normalizedServiceCode,
+        serviceName: normalizedServiceName,
+        category: normalizedCategory,
+        tier: normalizedTier,
+        costPrice: numericCostPrice,
+        sellingPrice: numericSellingPrice,
+        currency: normalizeCode(currency || "NGN"),
+        enabled: parseBoolean(enabled, true),
+        features: parseJsonValue(features),
+        metadata: parseJsonValue(metadata),
+        createdBy: userId,
+        updatedBy: userId,
+      },
+    });
 
     emitEvent("pricing-created", {
-      message:
-        "Service pricing created.",
+      message: "Service pricing created.",
       pricing,
     });
 
     return res.status(201).json({
       success: true,
-      message:
-        "Service pricing created successfully.",
+      message: "Service pricing created successfully.",
       pricing,
     });
   } catch (error) {
-    return sendControllerError(
-      res,
-      error,
-      "Unable to create pricing."
-    );
+    return sendControllerError(res, error, "Unable to create pricing.");
   }
 };
 
-/*
- * POST /api/v1/pricing/bulk
- * Yana ba da damar admin ya tura adadin data (misali daga 1GB zuwa 100GB) a lokaci guda ko daya bayan daya
- */
+/* ======================================================
+   CREATE BULK PRICING
+   POST /api/v1/pricing/bulk
+====================================================== */
 exports.createBulkPricing = async (req, res) => {
   try {
     const { items } = req.body;
@@ -469,7 +365,7 @@ exports.createBulkPricing = async (req, res) => {
     }
 
     const userId = getAuthenticatedUserId(req);
-    const results = [];
+    const operations = [];
 
     for (const item of items) {
       const normalizedServiceCode = normalizeCode(item.serviceCode);
@@ -479,11 +375,24 @@ exports.createBulkPricing = async (req, res) => {
       const numericCostPrice = Number(item.costPrice || 0);
       const numericSellingPrice = Number(item.sellingPrice || 0);
 
-      if (!normalizedServiceCode || !normalizedServiceName || !normalizedCategory) {
+      if (
+        !normalizedServiceCode ||
+        !normalizedServiceName ||
+        !normalizedCategory ||
+        !ALLOWED_TIERS.includes(normalizedTier)
+      ) {
         continue;
       }
 
-      const pricing = await prisma.servicePricing.upsert({
+      if (
+        !Number.isFinite(numericCostPrice) ||
+        !Number.isFinite(numericSellingPrice) ||
+        numericSellingPrice < numericCostPrice
+      ) {
+        continue;
+      }
+
+      const operation = prisma.servicePricing.upsert({
         where: {
           serviceCode_tier: {
             serviceCode: normalizedServiceCode,
@@ -497,6 +406,8 @@ exports.createBulkPricing = async (req, res) => {
           sellingPrice: numericSellingPrice,
           currency: normalizeCode(item.currency || "NGN"),
           enabled: parseBoolean(item.enabled, true),
+          features: parseJsonValue(item.features),
+          metadata: parseJsonValue(item.metadata),
           updatedBy: userId,
         },
         create: {
@@ -508,13 +419,24 @@ exports.createBulkPricing = async (req, res) => {
           sellingPrice: numericSellingPrice,
           currency: normalizeCode(item.currency || "NGN"),
           enabled: parseBoolean(item.enabled, true),
+          features: parseJsonValue(item.features),
+          metadata: parseJsonValue(item.metadata),
           createdBy: userId,
           updatedBy: userId,
         },
       });
 
-      results.push(pricing);
+      operations.push(operation);
     }
+
+    if (operations.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid pricing items were provided.",
+      });
+    }
+
+    const results = await prisma.$transaction(operations);
 
     emitEvent("pricing-bulk-updated", {
       message: "Bulk service pricing updated.",
@@ -528,25 +450,21 @@ exports.createBulkPricing = async (req, res) => {
       pricing: results,
     });
   } catch (error) {
-    return sendControllerError(
-      res,
-      error,
-      "Unable to process bulk pricing."
-    );
+    return sendControllerError(res, error, "Unable to process bulk pricing.");
   }
 };
 
-/*
- * PATCH /api/v1/pricing/:id
- */
+/* ======================================================
+   UPDATE PRICING
+   PATCH /api/v1/pricing/:id
+====================================================== */
 exports.updatePricing = async (req, res) => {
   try {
-    const existing =
-      await prisma.servicePricing.findUnique({
-        where: {
-          id: req.params.id,
-        },
-      });
+    const existing = await prisma.servicePricing.findUnique({
+      where: {
+        id: req.params.id,
+      },
+    });
 
     if (!existing) {
       return res.status(404).json({
@@ -558,68 +476,46 @@ exports.updatePricing = async (req, res) => {
     const data = {};
 
     if (req.body.serviceCode !== undefined) {
-      const serviceCode =
-        normalizeCode(
-          req.body.serviceCode
-        );
-
+      const serviceCode = normalizeCode(req.body.serviceCode);
       if (!serviceCode) {
         return res.status(400).json({
           success: false,
-          message:
-            "Service code cannot be empty.",
+          message: "Service code cannot be empty.",
         });
       }
-
       data.serviceCode = serviceCode;
     }
 
     if (req.body.serviceName !== undefined) {
-      const serviceName =
-        normalizeText(
-          req.body.serviceName
-        );
-
+      const serviceName = normalizeText(req.body.serviceName);
       if (!serviceName) {
         return res.status(400).json({
           success: false,
-          message:
-            "Service name cannot be empty.",
+          message: "Service name cannot be empty.",
         });
       }
-
       data.serviceName = serviceName;
     }
 
     if (req.body.category !== undefined) {
-      const category =
-        normalizeCode(
-          req.body.category
-        );
-
+      const category = normalizeCode(req.body.category);
       if (!category) {
         return res.status(400).json({
           success: false,
-          message:
-            "Category cannot be empty.",
+          message: "Category cannot be empty.",
         });
       }
-
       data.category = category;
     }
 
     if (req.body.tier !== undefined) {
-      const tier =
-        normalizeTier(req.body.tier);
-
+      const tier = normalizeTier(req.body.tier);
       if (!ALLOWED_TIERS.includes(tier)) {
         return res.status(400).json({
           success: false,
-          message:
-            "Tier must be REGULAR, STANDARD or PREMIUM.",
+          message: "Tier must be REGULAR, STANDARD or PREMIUM.",
         });
       }
-
       data.tier = tier;
     }
 
@@ -633,119 +529,77 @@ exports.updatePricing = async (req, res) => {
         ? Number(req.body.sellingPrice)
         : Number(existing.sellingPrice);
 
-    if (
-      !Number.isFinite(nextCostPrice) ||
-      nextCostPrice < 0
-    ) {
+    if (!Number.isFinite(nextCostPrice) || nextCostPrice < 0) {
       return res.status(400).json({
         success: false,
-        message:
-          "Cost price must be a valid amount.",
+        message: "Cost price must be a valid amount.",
       });
     }
 
-    if (
-      !Number.isFinite(nextSellingPrice) ||
-      nextSellingPrice < 0
-    ) {
+    if (!Number.isFinite(nextSellingPrice) || nextSellingPrice < 0) {
       return res.status(400).json({
         success: false,
-        message:
-          "Selling price must be a valid amount.",
+        message: "Selling price must be a valid amount.",
       });
     }
 
     if (nextSellingPrice < nextCostPrice) {
       return res.status(400).json({
         success: false,
-        message:
-          "Selling price cannot be lower than cost price.",
+        message: "Selling price cannot be lower than cost price.",
       });
     }
 
-    if (req.body.costPrice !== undefined) {
-      data.costPrice = nextCostPrice;
-    }
-
-    if (
-      req.body.sellingPrice !== undefined
-    ) {
-      data.sellingPrice =
-        nextSellingPrice;
-    }
-
+    if (req.body.costPrice !== undefined) data.costPrice = nextCostPrice;
+    if (req.body.sellingPrice !== undefined) data.sellingPrice = nextSellingPrice;
     if (req.body.currency !== undefined) {
-      data.currency =
-        normalizeCode(
-          req.body.currency || "NGN"
-        );
+      data.currency = normalizeCode(req.body.currency || "NGN");
     }
-
     if (req.body.enabled !== undefined) {
-      data.enabled =
-        parseBoolean(req.body.enabled);
+      data.enabled = parseBoolean(req.body.enabled);
     }
-
     if (req.body.features !== undefined) {
-      data.features =
-        parseJsonValue(
-          req.body.features
-        );
+      data.features = parseJsonValue(req.body.features);
     }
-
     if (req.body.metadata !== undefined) {
-      data.metadata =
-        parseJsonValue(
-          req.body.metadata
-        );
+      data.metadata = parseJsonValue(req.body.metadata);
     }
 
-    data.updatedBy =
-      getAuthenticatedUserId(req);
+    data.updatedBy = getAuthenticatedUserId(req);
 
-    const pricing =
-      await prisma.servicePricing.update({
-        where: {
-          id: req.params.id,
-        },
-        data,
-      });
+    const pricing = await prisma.servicePricing.update({
+      where: {
+        id: req.params.id,
+      },
+      data,
+    });
 
     emitEvent("pricing-updated", {
-      message:
-        "Service pricing updated.",
+      message: "Service pricing updated.",
       pricing,
     });
 
     return res.status(200).json({
       success: true,
-      message:
-        "Service pricing updated successfully.",
+      message: "Service pricing updated successfully.",
       pricing,
     });
   } catch (error) {
-    return sendControllerError(
-      res,
-      error,
-      "Unable to update pricing."
-    );
+    return sendControllerError(res, error, "Unable to update pricing.");
   }
 };
 
-/*
- * PATCH /api/v1/pricing/:id/status
- */
-exports.togglePricingStatus = async (
-  req,
-  res
-) => {
+/* ======================================================
+   TOGGLE PRICING STATUS
+   PATCH /api/v1/pricing/:id/status
+====================================================== */
+exports.togglePricingStatus = async (req, res) => {
   try {
-    const existing =
-      await prisma.servicePricing.findUnique({
-        where: {
-          id: req.params.id,
-        },
-      });
+    const existing = await prisma.servicePricing.findUnique({
+      where: {
+        id: req.params.id,
+      },
+    });
 
     if (!existing) {
       return res.status(404).json({
@@ -757,60 +611,46 @@ exports.togglePricingStatus = async (
     const nextEnabled =
       req.body.enabled === undefined
         ? !existing.enabled
-        : parseBoolean(
-            req.body.enabled,
-            existing.enabled
-          );
+        : parseBoolean(req.body.enabled, existing.enabled);
 
-    const pricing =
-      await prisma.servicePricing.update({
-        where: {
-          id: req.params.id,
-        },
-        data: {
-          enabled: nextEnabled,
-          updatedBy:
-            getAuthenticatedUserId(req),
-        },
-      });
+    const pricing = await prisma.servicePricing.update({
+      where: {
+        id: req.params.id,
+      },
+      data: {
+        enabled: nextEnabled,
+        updatedBy: getAuthenticatedUserId(req),
+      },
+    });
 
-    emitEvent(
-      "pricing-status-updated",
-      {
-        message:
-          "Pricing status updated.",
-        pricing,
-      }
-    );
+    emitEvent("pricing-status-updated", {
+      message: "Pricing status updated.",
+      pricing,
+    });
 
     return res.status(200).json({
       success: true,
-      message:
-        nextEnabled
-          ? "Pricing enabled successfully."
-          : "Pricing disabled successfully.",
+      message: nextEnabled
+        ? "Pricing enabled successfully."
+        : "Pricing disabled successfully.",
       pricing,
     });
   } catch (error) {
-    return sendControllerError(
-      res,
-      error,
-      "Unable to update pricing status."
-    );
+    return sendControllerError(res, error, "Unable to update pricing status.");
   }
 };
 
-/*
- * DELETE /api/v1/pricing/:id
- */
+/* ======================================================
+   DELETE PRICING
+   DELETE /api/v1/pricing/:id
+====================================================== */
 exports.deletePricing = async (req, res) => {
   try {
-    const existing =
-      await prisma.servicePricing.findUnique({
-        where: {
-          id: req.params.id,
-        },
-      });
+    const existing = await prisma.servicePricing.findUnique({
+      where: {
+        id: req.params.id,
+      },
+    });
 
     if (!existing) {
       return res.status(404).json({
@@ -826,24 +666,17 @@ exports.deletePricing = async (req, res) => {
     });
 
     emitEvent("pricing-deleted", {
-      message:
-        "Service pricing deleted.",
+      message: "Service pricing deleted.",
       pricingId: req.params.id,
-      serviceCode:
-        existing.serviceCode,
+      serviceCode: existing.serviceCode,
       tier: existing.tier,
     });
 
     return res.status(200).json({
       success: true,
-      message:
-        "Service pricing deleted successfully.",
+      message: "Service pricing deleted successfully.",
     });
   } catch (error) {
-    return sendControllerError(
-      res,
-      error,
-      "Unable to delete pricing."
-    );
+    return sendControllerError(res, error, "Unable to delete pricing.");
   }
 };

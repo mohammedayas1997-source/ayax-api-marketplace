@@ -1,13 +1,24 @@
 const prisma = require("../config/prisma");
 const axios = require("axios");
+const prembly = require("../services/prembly.service");
+
+/* ======================================================
+   HELPER FUNCTIONS
+====================================================== */
 
 // Helper don kiran Upstream Identity Provider
 async function callIdentityProvider(provider, endpoint, payload) {
   const url = `${provider.baseUrl.replace(/\/+$/, "")}/${endpoint.replace(/^\/+/, "")}`;
-  
+
   const headers = {
     "Content-Type": "application/json",
-    ...(provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {}),
+    ...(provider.appId ? { "app-id": provider.appId } : {}),
+    ...(provider.apiKey
+      ? {
+          Authorization: `Bearer ${provider.apiKey}`,
+          "x-api-key": provider.apiKey,
+        }
+      : {}),
     ...(provider.secretKey ? { "x-secret-key": provider.secretKey } : {}),
   };
 
@@ -19,21 +30,21 @@ async function callIdentityProvider(provider, endpoint, payload) {
   return response.data;
 }
 
-// Helper don nemo active provider mai mafi daraja
-async function getActiveProvider() {
-  const providers = await prisma.apiProvider.findMany({
-    where: {
-      category: "IDENTITY",
-      status: "ACTIVE",
-    },
-    orderBy: { priority: "asc" },
-  });
-
-  if (!providers || providers.length === 0) {
-    throw new Error("No active identity provider configured on the system.");
+// Helper don nemo active provider ko dawowa Prembly Env
+async function getActiveProviders() {
+  try {
+    const providers = await prisma.apiProvider.findMany({
+      where: {
+        category: "IDENTITY",
+        status: "ACTIVE",
+      },
+      orderBy: { priority: "asc" },
+    });
+    return providers || [];
+  } catch (err) {
+    console.warn("Could not query apiProvider table, using default adapter:", err.message);
+    return [];
   }
-
-  return providers;
 }
 
 /* ======================================================
@@ -45,11 +56,20 @@ exports.verifyNin = async (req, res) => {
     const user = req.user || req.apiKeyUser;
     const { nin, slipType = "Standard Slip", reference } = req.body;
 
-    if (!nin || String(nin).trim().length !== 11) {
+    const cleanNin = String(nin || "").trim();
+    if (!cleanNin || cleanNin.length !== 11) {
       return res.status(400).json({
         status: "error",
         code: "VALIDATION_ERROR",
         message: "A valid 11-digit National Identity Number (NIN) is required.",
+      });
+    }
+
+    if (!user || !user.id) {
+      return res.status(401).json({
+        status: "error",
+        code: "UNAUTHORIZED",
+        message: "Authentication is required.",
       });
     }
 
@@ -63,7 +83,7 @@ exports.verifyNin = async (req, res) => {
         tier: userTier,
         OR: [
           { serviceCode: "NIN_VERIFY" },
-          { serviceCode: { contains: "NIN_VERIFY" } },
+          { serviceCode: { contains: "NIN" } },
           { serviceName: { contains: "NIN Verification", mode: "insensitive" } },
         ],
       },
@@ -98,7 +118,7 @@ exports.verifyNin = async (req, res) => {
           amount: cost,
           status: "PENDING",
           reference: txRef,
-          description: `NIN Verification for [${nin}] (${slipType})`,
+          description: `NIN Verification for [${cleanNin}] (${slipType})`,
         },
       });
 
@@ -106,24 +126,22 @@ exports.verifyNin = async (req, res) => {
     });
 
     // 4. Dynamic Provider Dispatch tare da Fallback
-    const providers = await getActiveProvider();
+    const providers = await getActiveProviders();
     let upstreamData = null;
-    let selectedProvider = null;
 
     for (const provider of providers) {
       try {
         upstreamData = await callIdentityProvider(provider, "/nin/verify", {
-          nin,
+          nin: cleanNin,
           slipType,
           reference: txRef,
         });
 
-        if (upstreamData && (upstreamData.status === "success" || upstreamData.success)) {
-          selectedProvider = provider;
+        if (upstreamData && (upstreamData.status === "success" || upstreamData.success || upstreamData.status === true)) {
           await prisma.apiProvider.update({
             where: { id: provider.id },
             data: { successCount: { increment: 1 }, lastSuccessAt: new Date() },
-          });
+          }).catch(() => null);
           break;
         }
       } catch (err) {
@@ -131,12 +149,37 @@ exports.verifyNin = async (req, res) => {
         await prisma.apiProvider.update({
           where: { id: provider.id },
           data: { failureCount: { increment: 1 }, lastFailureAt: new Date() },
-        });
+        }).catch(() => null);
       }
     }
 
-    if (!upstreamData) {
-      // Refund idan duk providers sun fadi
+    // Direct Prembly Fallback idan database providers sun gaza ko babu su
+    if (!upstreamData || (!upstreamData.success && upstreamData.status !== "success" && upstreamData.status !== true)) {
+      console.log(`[NIN VERIFY] Falling back to default Prembly integration for ${cleanNin}...`);
+      const premblyRes = await prembly.verifyNIN(cleanNin);
+
+      if (premblyRes && premblyRes.success) {
+        upstreamData = {
+          success: true,
+          status: "success",
+          data: {
+            nin: premblyRes.nin,
+            firstName: premblyRes.firstName,
+            surname: premblyRes.surname,
+            middleName: premblyRes.middleName,
+            phone: premblyRes.phone,
+            gender: premblyRes.gender,
+            dob: premblyRes.dob,
+            photo: premblyRes.photo,
+            address: premblyRes.address,
+            raw: premblyRes.raw,
+          },
+        };
+      }
+    }
+
+    // 5. Refund idan dukkan providers sun fadi
+    if (!upstreamData || (!upstreamData.success && upstreamData.status !== "success" && upstreamData.status !== true)) {
       await prisma.$transaction([
         prisma.wallet.update({
           where: { userId: user.id },
@@ -144,18 +187,18 @@ exports.verifyNin = async (req, res) => {
         }),
         prisma.transaction.update({
           where: { id: transaction.id },
-          data: { status: "FAILED", description: `FAILED: NIN Verification for [${nin}] (Refunded NGN ${cost})` },
+          data: { status: "FAILED", description: `FAILED: NIN Verification for [${cleanNin}] (Refunded NGN ${cost})` },
         }),
       ]);
 
       return res.status(502).json({
         status: "error",
         code: "GATEWAY_ERROR",
-        message: "Identity verification gateway currently unavailable. Your wallet was refunded.",
+        message: "Identity verification gateway currently unavailable or NIN not found. Your wallet was refunded.",
       });
     }
 
-    // 5. Update Status zuwa SUCCESSFUL
+    // 6. Tabbatar da Nasara (SUCCESSFUL)
     await prisma.transaction.update({
       where: { id: transaction.id },
       data: { status: "SUCCESSFUL" },
@@ -167,7 +210,7 @@ exports.verifyNin = async (req, res) => {
       message: "NIN verified successfully.",
       data: {
         reference: txRef,
-        nin,
+        nin: cleanNin,
         slipType,
         details: upstreamData.data || upstreamData,
         amountCharged: cost,
@@ -184,7 +227,7 @@ exports.verifyNin = async (req, res) => {
 };
 
 /* ======================================================
-   2. BVN VERIFICATION (SLIP PRINTING)
+   2. BVN VERIFICATION
    POST /api/v1/identity/bvn/verify
 ====================================================== */
 exports.verifyBvn = async (req, res) => {
@@ -192,11 +235,20 @@ exports.verifyBvn = async (req, res) => {
     const user = req.user || req.apiKeyUser;
     const { bvn, reference } = req.body;
 
-    if (!bvn || String(bvn).trim().length !== 11) {
+    const cleanBvn = String(bvn || "").trim();
+    if (!cleanBvn || cleanBvn.length !== 11) {
       return res.status(400).json({
         status: "error",
         code: "VALIDATION_ERROR",
         message: "A valid 11-digit Bank Verification Number (BVN) is required.",
+      });
+    }
+
+    if (!user || !user.id) {
+      return res.status(401).json({
+        status: "error",
+        code: "UNAUTHORIZED",
+        message: "Authentication is required.",
       });
     }
 
@@ -209,7 +261,7 @@ exports.verifyBvn = async (req, res) => {
         tier: userTier,
         OR: [
           { serviceCode: "BVN_VERIFY" },
-          { serviceCode: { contains: "BVN_VERIFY" } },
+          { serviceCode: { contains: "BVN" } },
           { serviceName: { contains: "BVN Verification", mode: "insensitive" } },
         ],
       },
@@ -242,24 +294,24 @@ exports.verifyBvn = async (req, res) => {
           amount: cost,
           status: "PENDING",
           reference: txRef,
-          description: `BVN Verification for [${bvn}]`,
+          description: `BVN Verification for [${cleanBvn}]`,
         },
       });
 
       return { updatedWallet: w, transaction: t };
     });
 
-    const providers = await getActiveProvider();
+    const providers = await getActiveProviders();
     let upstreamData = null;
 
     for (const provider of providers) {
       try {
         upstreamData = await callIdentityProvider(provider, "/bvn/verify", {
-          bvn,
+          bvn: cleanBvn,
           reference: txRef,
         });
 
-        if (upstreamData && (upstreamData.status === "success" || upstreamData.success)) {
+        if (upstreamData && (upstreamData.status === "success" || upstreamData.success || upstreamData.status === true)) {
           break;
         }
       } catch (err) {
@@ -267,7 +319,31 @@ exports.verifyBvn = async (req, res) => {
       }
     }
 
-    if (!upstreamData) {
+    // Direct Prembly Fallback
+    if (!upstreamData || (!upstreamData.success && upstreamData.status !== "success" && upstreamData.status !== true)) {
+      console.log(`[BVN VERIFY] Falling back to Prembly for ${cleanBvn}...`);
+      const premblyRes = await prembly.verifyBVN(cleanBvn);
+
+      if (premblyRes && premblyRes.success) {
+        upstreamData = {
+          success: true,
+          status: "success",
+          data: {
+            bvn: premblyRes.bvn,
+            firstName: premblyRes.firstName,
+            surname: premblyRes.surname,
+            middleName: premblyRes.middleName,
+            phone: premblyRes.phone,
+            gender: premblyRes.gender,
+            dob: premblyRes.dob,
+            photo: premblyRes.photo,
+            raw: premblyRes.raw,
+          },
+        };
+      }
+    }
+
+    if (!upstreamData || (!upstreamData.success && upstreamData.status !== "success" && upstreamData.status !== true)) {
       await prisma.$transaction([
         prisma.wallet.update({
           where: { userId: user.id },
@@ -275,14 +351,14 @@ exports.verifyBvn = async (req, res) => {
         }),
         prisma.transaction.update({
           where: { id: transaction.id },
-          data: { status: "FAILED", description: `FAILED: BVN Verification for [${bvn}] (Refunded NGN ${cost})` },
+          data: { status: "FAILED", description: `FAILED: BVN Verification for [${cleanBvn}] (Refunded NGN ${cost})` },
         }),
       ]);
 
       return res.status(502).json({
         status: "error",
         code: "GATEWAY_ERROR",
-        message: "BVN validation gateway currently unavailable. Your wallet was refunded.",
+        message: "BVN validation gateway currently unavailable or BVN not found. Your wallet was refunded.",
       });
     }
 
@@ -297,7 +373,7 @@ exports.verifyBvn = async (req, res) => {
       message: "BVN verified successfully.",
       data: {
         reference: txRef,
-        bvn,
+        bvn: cleanBvn,
         details: upstreamData.data || upstreamData,
         amountCharged: cost,
         walletBalance: updatedWallet.balance,
@@ -321,7 +397,8 @@ exports.validateNinIssue = async (req, res) => {
     const user = req.user || req.apiKeyUser;
     const { nin, issueType = "BANK_MISMATCH", reference } = req.body;
 
-    if (!nin || String(nin).trim().length !== 11) {
+    const cleanNin = String(nin || "").trim();
+    if (!cleanNin || cleanNin.length !== 11) {
       return res.status(400).json({
         status: "error",
         code: "VALIDATION_ERROR",
@@ -329,9 +406,16 @@ exports.validateNinIssue = async (req, res) => {
       });
     }
 
+    if (!user || !user.id) {
+      return res.status(401).json({
+        status: "error",
+        code: "UNAUTHORIZED",
+        message: "Authentication is required.",
+      });
+    }
+
     const userTier = String(user.tier || (user.role === "DEVELOPER" ? "STANDARD" : "REGULAR")).toUpperCase();
 
-    // Nemo ainihin farashin wannan matsalar daga ServicePricing
     const pricing = await prisma.servicePricing.findFirst({
       where: {
         category: "IDENTITY",
@@ -372,25 +456,25 @@ exports.validateNinIssue = async (req, res) => {
           amount: cost,
           status: "PENDING",
           reference: txRef,
-          description: `NIN Validation Issue: ${issueType} for [${nin}]`,
+          description: `NIN Validation Issue: ${issueType} for [${cleanNin}]`,
         },
       });
 
       return { updatedWallet: w, transaction: t };
     });
 
-    const providers = await getActiveProvider();
+    const providers = await getActiveProviders();
     let upstreamData = null;
 
     for (const provider of providers) {
       try {
         upstreamData = await callIdentityProvider(provider, "/nin/validate", {
-          nin,
+          nin: cleanNin,
           issueType,
           reference: txRef,
         });
 
-        if (upstreamData && (upstreamData.status === "success" || upstreamData.success)) {
+        if (upstreamData && (upstreamData.status === "success" || upstreamData.success || upstreamData.status === true)) {
           break;
         }
       } catch (err) {
@@ -398,7 +482,7 @@ exports.validateNinIssue = async (req, res) => {
       }
     }
 
-    if (!upstreamData) {
+    if (!upstreamData || (!upstreamData.success && upstreamData.status !== "success" && upstreamData.status !== true)) {
       await prisma.$transaction([
         prisma.wallet.update({
           where: { userId: user.id },
@@ -406,7 +490,7 @@ exports.validateNinIssue = async (req, res) => {
         }),
         prisma.transaction.update({
           where: { id: transaction.id },
-          data: { status: "FAILED", description: `FAILED: NIN Validation for [${nin}] (Refunded NGN ${cost})` },
+          data: { status: "FAILED", description: `FAILED: NIN Validation for [${cleanNin}] (Refunded NGN ${cost})` },
         }),
       ]);
 
@@ -428,7 +512,7 @@ exports.validateNinIssue = async (req, res) => {
       message: "NIN validation issue submitted successfully for clearance.",
       data: {
         reference: txRef,
-        nin,
+        nin: cleanNin,
         issueType,
         result: upstreamData.data || upstreamData,
         amountCharged: cost,

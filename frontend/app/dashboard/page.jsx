@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   Wallet,
   PlusCircle,
@@ -14,6 +15,7 @@ import {
   AlertCircle,
   CheckCircle2,
   ShieldCheck,
+  Tags,
 } from "lucide-react";
 
 import DashboardLayout from "@/components/layouts/DashboardLayout";
@@ -324,12 +326,21 @@ export default function WalletPage() {
         </div>
       )}
 
+      {/* ACTION BUTTONS WITH PRICE ICON */}
       <div className="mb-10 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-end">
+        <Link
+          href="/dashboard/pricing"
+          className="flex items-center justify-center gap-2 rounded-xl border border-slate-800 bg-slate-900 px-5 py-3 font-semibold text-slate-200 hover:border-slate-700 hover:bg-slate-800 transition-all text-sm"
+        >
+          <Tags size={18} className="text-blue-400" />
+          API Rates & Pricing
+        </Link>
+
         <button
           type="button"
           onClick={() => loadWalletPage({ silent: true })}
           disabled={refreshing}
-          className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-5 py-3 font-semibold text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60 transition-all"
+          className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-5 py-3 font-semibold text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60 transition-all text-sm"
         >
           <RefreshCcw
             size={18}
@@ -341,7 +352,7 @@ export default function WalletPage() {
         <button
           type="button"
           onClick={() => openFundingModal()}
-          className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-3 font-semibold text-white hover:bg-blue-500 shadow-lg shadow-blue-600/20 transition-all"
+          className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-3 font-semibold text-white hover:bg-blue-500 shadow-lg shadow-blue-600/20 transition-all text-sm"
         >
           <PlusCircle size={18} />
           Fund Wallet

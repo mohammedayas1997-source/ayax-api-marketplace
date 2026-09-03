@@ -356,6 +356,8 @@ app.use("/api/v1/api-docs", documentationRoutes);
 app.use("/api/v1/api-marketplace", apiMarketplaceDashboardRoutes);
 app.use("/api/v1/marketplace", marketplaceRoutes);
 
+app.use("/api/v1/settings", require("./routes/setting.routes"));
+
 /* Digital Services */
 app.use("/api/v1/data", dataRoutes);
 app.use("/api/v1/airtime", airtimeRoutes);

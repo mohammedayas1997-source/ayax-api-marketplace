@@ -3,10 +3,30 @@ const axios = require("axios");
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY;
 
-const TIER_UPGRADE_FEES = {
-  STANDARD: 2500, // ₦2,500
-  PREMIUM: 5000,  // ₦5,000
-};
+// Taimakon nemo ainihin farashin da Super Admin ya saita a Database
+async function getDynamicTierFees() {
+  try {
+    const [standardSetting, premiumSetting] = await Promise.all([
+      prisma.systemSetting.findUnique({
+        where: { key: "TIER_FEE_STANDARD" },
+      }),
+      prisma.systemSetting.findUnique({
+        where: { key: "TIER_FEE_PREMIUM" },
+      }),
+    ]);
+
+    return {
+      STANDARD: standardSetting ? Number(standardSetting.value) : 2500,
+      PREMIUM: premiumSetting ? Number(premiumSetting.value) : 5000,
+    };
+  } catch (err) {
+    console.error("Failed to read dynamic tier settings, using fallback:", err.message);
+    return {
+      STANDARD: 2500,
+      PREMIUM: 5000,
+    };
+  }
+}
 
 /* ======================================================
    1. GET TIER PLANS
@@ -16,6 +36,9 @@ exports.getTierPlans = async (req, res) => {
   try {
     const user = req.user;
     const currentTier = user?.tier || "REGULAR";
+
+    // Karanta sabbin farashin da Super Admin ya saita
+    const tierFees = await getDynamicTierFees();
 
     const plans = [
       {
@@ -33,7 +56,7 @@ exports.getTierPlans = async (req, res) => {
       {
         tier: "STANDARD",
         name: "Standard Reseller",
-        fee: TIER_UPGRADE_FEES.STANDARD,
+        fee: tierFees.STANDARD,
         isCurrent: currentTier === "STANDARD",
         features: [
           "Discounted Data Plans (SME, CG, Gifting)",
@@ -45,7 +68,7 @@ exports.getTierPlans = async (req, res) => {
       {
         tier: "PREMIUM",
         name: "Premium Enterprise",
-        fee: TIER_UPGRADE_FEES.PREMIUM,
+        fee: tierFees.PREMIUM,
         isCurrent: currentTier === "PREMIUM",
         features: [
           "Lowest Wholesale Rates Across All Services",
@@ -97,7 +120,10 @@ exports.initializeTierPaystack = async (req, res) => {
       });
     }
 
-    const fee = TIER_UPGRADE_FEES[normalizedTier];
+    // Dauko dynamic fee daga Database
+    const tierFees = await getDynamicTierFees();
+    const fee = tierFees[normalizedTier];
+
     const amountInKobo = fee * 100;
     const reference = `TIER_${normalizedTier}_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 
@@ -182,7 +208,7 @@ exports.verifyTierPaystack = async (req, res) => {
     const targetTier = paymentData.metadata?.targetTier;
     const amountPaid = paymentData.amount / 100;
 
-    if (!targetTier || !TIER_UPGRADE_FEES[targetTier]) {
+    if (!targetTier || !["STANDARD", "PREMIUM"].includes(targetTier)) {
       return res.status(400).json({
         status: "error",
         message: "Invalid tier metadata in payment record.",

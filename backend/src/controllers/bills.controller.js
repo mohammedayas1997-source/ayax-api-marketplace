@@ -9,26 +9,7 @@ const prisma = require("../config/prisma");
 exports.getCablePackages = async (req, res) => {
   try {
     const { cableTv } = req.query;
-    const where = { isActive: true };
-
-    if (cableTv) {
-      where.cableTv = String(cableTv).toLowerCase();
-    }
-
-    const packages = await prisma.cablePlan.findMany({
-      where,
-      select: {
-        id: true,
-        cableTv: true,
-        packageCode: true,
-        name: true,
-        apiPrice: true,
-        price: true,
-      },
-      orderBy: {
-        apiPrice: "asc",
-      },
-    });
+    const packages = await billsService.getCablePlans(cableTv);
 
     return res.status(200).json({
       success: true,
@@ -92,22 +73,10 @@ exports.purchaseCable = async (req, res) => {
    ELECTRICITY CONTROLLERS
 ====================================================== */
 
-// 1. Jerin DISCOs na Wuta
+// 1. Jerin DISCOs na Wuta (All 12 Providers)
 exports.getElectricityDiscos = async (req, res) => {
   try {
-    const discos = await prisma.electricityDisco.findMany({
-      where: { isActive: true },
-      select: {
-        id: true,
-        discoCode: true,
-        name: true,
-        supportsPrepaid: true,
-        supportsPostpaid: true,
-        minAmount: true,
-        maxAmount: true,
-      },
-      orderBy: { name: "asc" },
-    });
+    const discos = await billsService.getElectricityDiscos();
 
     return res.status(200).json({
       success: true,

@@ -1,5 +1,6 @@
 const prisma = require("../config/prisma");
 const { emitEvent, emitGatewayCommand } = require("../config/socket");
+const clubkonnect = require("../services/clubkonnect.service");
 
 /* ======================================================
    1. GET AVAILABLE DATA PLANS & MARKETPLACE PRICING
@@ -62,7 +63,7 @@ exports.getDataPlans = async (req, res) => {
 };
 
 /* ======================================================
-   2. UNIVERSAL DATA PURCHASE WITH EXPIRY & WALLET DEBIT
+   2. UNIVERSAL DATA PURCHASE (HYBRID ROUTING)
 ====================================================== */
 exports.purchaseData = async (req, res) => {
   try {
@@ -144,67 +145,9 @@ exports.purchaseData = async (req, res) => {
       });
     }
 
-    // 4. Nemo Active GSM Device
-    const activeDevice = await prisma.gsmDevice.findFirst({
-      where: { status: "ONLINE" },
-      include: { sims: true },
-      orderBy: { lastSeen: "desc" },
-    });
-
-    if (!activeDevice) {
-      return res.status(503).json({
-        status: "error",
-        code: "NO_GATEWAY_ONLINE",
-        message: "All GSM Gateway lines are currently offline. Please retry shortly.",
-      });
-    }
-
-    const targetSim =
-      activeDevice.sims.find(
-        (s) =>
-          s.carrierName?.toUpperCase().includes(resolvedNetwork) ||
-          s.displayName?.toUpperCase().includes(resolvedNetwork)
-      ) || activeDevice.sims[0];
-
-    const slotIndex = targetSim?.slotIndex ?? 1;
-
-    // 5. Tace MB don USSD Template
-    const numericMB =
-      pricingPlan.dataSize?.replace(/[^0-9]/g, "") ||
-      (targetCode.match(/\d+/) ? targetCode.match(/\d+/)[0] : "1000");
-
-    // 6. Dynamic Universal Multi-Plan USSD Router
-    const pin = "1997";
-    let ussdCode = "";
-    let steps = [];
-
-    const planIdentifier = `${pricingPlan.serviceCode} ${planName}`.toUpperCase();
-
-    if (resolvedNetwork === "MTN") {
-      if (planIdentifier.includes("SME")) {
-        ussdCode = `*461*1*${targetPhone}*${numericMB}*${pin}#`;
-        steps = ["1", targetPhone, numericMB, pin];
-      } else if (planIdentifier.includes("CG") || planIdentifier.includes("CORP")) {
-        ussdCode = `*460*6*1*${targetPhone}*${numericMB}*${pin}#`;
-        steps = ["6", "1", targetPhone, numericMB, pin];
-      } else {
-        ussdCode = `*312*${targetPhone}*${numericMB}*${pin}#`;
-        steps = [targetPhone, numericMB, pin];
-      }
-    } else if (resolvedNetwork === "AIRTEL") {
-      ussdCode = `*141*${targetPhone}*${numericMB}#`;
-      steps = [targetPhone, numericMB];
-    } else if (resolvedNetwork === "GLO") {
-      ussdCode = `*127*${numericMB}*${targetPhone}#`;
-      steps = [numericMB, targetPhone];
-    } else if (resolvedNetwork === "9MOBILE") {
-      ussdCode = `*229*${numericMB}*${targetPhone}#`;
-      steps = [numericMB, targetPhone];
-    }
-
     const txReference = reference || `AYAX_DATA_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-    // 7. Cire Kudin Wallet da Bude Transaction (Prisma Transaction)
+    // 4. Cire Kudin Wallet da Bude Transaction (Prisma Transaction)
     const { updatedWallet, transaction } = await prisma.$transaction(async (tx) => {
       const newWallet = await tx.wallet.update({
         where: { userId: user.id },
@@ -226,67 +169,178 @@ exports.purchaseData = async (req, res) => {
       return { updatedWallet: newWallet, transaction: newTx };
     });
 
-    const commandPayload = {
-      reference: txReference,
-      deviceId: activeDevice.id,
-      type: "USSD",
-      service: "DATA",
-      ussdCode,
-      steps,
-      phone: targetPhone,
-      slotIndex: Number(slotIndex),
-      amount: cost,
-      network: resolvedNetwork,
-      expiryDate: expiryDate.toISOString(),
-    };
+    // 5. ROUTE 1: DUBA GSM GATEWAY
+    const activeDevice = await prisma.gsmDevice.findFirst({
+      where: { status: "ONLINE" },
+      include: { sims: true },
+      orderBy: { lastSeen: "desc" },
+    });
 
-    // 8. Tura GSM Command
-    const createdCommand = await prisma.gsmCommand.create({
-      data: {
+    const targetSim = activeDevice?.sims?.find(
+      (s) =>
+        s.carrierName?.toUpperCase().includes(resolvedNetwork) ||
+        s.displayName?.toUpperCase().includes(resolvedNetwork)
+    );
+
+    if (activeDevice && targetSim) {
+      const slotIndex = targetSim.slotIndex ?? 1;
+
+      // Tace MB don USSD Template
+      const numericMB =
+        pricingPlan.dataSize?.replace(/[^0-9]/g, "") ||
+        (targetCode.match(/\d+/) ? targetCode.match(/\d+/)[0] : "1000");
+
+      const pin = "1997";
+      let ussdCode = "";
+      let steps = [];
+
+      const planIdentifier = `${pricingPlan.serviceCode} ${planName}`.toUpperCase();
+
+      if (resolvedNetwork === "MTN") {
+        if (planIdentifier.includes("SME")) {
+          ussdCode = `*461*1*${targetPhone}*${numericMB}*${pin}#`;
+          steps = ["1", targetPhone, numericMB, pin];
+        } else if (planIdentifier.includes("CG") || planIdentifier.includes("CORP")) {
+          ussdCode = `*460*6*1*${targetPhone}*${numericMB}*${pin}#`;
+          steps = ["6", "1", targetPhone, numericMB, pin];
+        } else {
+          ussdCode = `*312*${targetPhone}*${numericMB}*${pin}#`;
+          steps = [targetPhone, numericMB, pin];
+        }
+      } else if (resolvedNetwork === "AIRTEL") {
+        ussdCode = `*141*${targetPhone}*${numericMB}#`;
+        steps = [targetPhone, numericMB];
+      } else if (resolvedNetwork === "GLO") {
+        ussdCode = `*127*${numericMB}*${targetPhone}#`;
+        steps = [numericMB, targetPhone];
+      } else if (resolvedNetwork === "9MOBILE") {
+        ussdCode = `*229*${numericMB}*${targetPhone}#`;
+        steps = [numericMB, targetPhone];
+      }
+
+      const commandPayload = {
         reference: txReference,
         deviceId: activeDevice.id,
         type: "USSD",
-        status: "PENDING",
+        service: "DATA",
+        ussdCode,
+        steps,
+        phone: targetPhone,
+        slotIndex: Number(slotIndex),
+        amount: cost,
+        network: resolvedNetwork,
+        expiryDate: expiryDate.toISOString(),
+      };
+
+      const createdCommand = await prisma.gsmCommand.create({
+        data: {
+          reference: txReference,
+          deviceId: activeDevice.id,
+          type: "USSD",
+          status: "PENDING",
+          payload: commandPayload,
+        },
+      }).catch(() => null);
+
+      const eventPayload = {
+        commandId: createdCommand ? createdCommand.id : txReference,
+        reference: txReference,
+        type: "USSD",
         payload: commandPayload,
-      },
-    }).catch(() => null);
+        ussdCode,
+        steps,
+        phoneNumber: targetPhone,
+        slotIndex: Number(slotIndex),
+        carrier: targetSim?.carrierName || resolvedNetwork,
+      };
 
-    const eventPayload = {
-      commandId: createdCommand ? createdCommand.id : txReference,
-      reference: txReference,
-      type: "USSD",
-      payload: commandPayload,
-      ussdCode,
-      steps,
-      phoneNumber: targetPhone,
-      slotIndex: Number(slotIndex),
-      carrier: targetSim?.carrierName || resolvedNetwork,
-    };
-
-    try {
-      emitEvent("gateway-command", eventPayload, activeDevice.id);
-      if (typeof emitGatewayCommand === "function") {
-        emitGatewayCommand(activeDevice.id, eventPayload);
+      try {
+        emitEvent("gateway-command", eventPayload, activeDevice.id);
+        if (typeof emitGatewayCommand === "function") {
+          emitGatewayCommand(activeDevice.id, eventPayload);
+        }
+      } catch (socketErr) {
+        console.warn("Socket emission error:", socketErr.message);
       }
-    } catch (socketErr) {
-      console.warn("Socket emission error:", socketErr.message);
+
+      return res.status(200).json({
+        status: "success",
+        code: "TRANSACTION_QUEUED",
+        route: "GSM_GATEWAY",
+        message: `Data purchase queued for ${planName} to ${targetPhone}.`,
+        data: {
+          reference: txReference,
+          network: resolvedNetwork,
+          phone: targetPhone,
+          plan: planName,
+          validity: `${validityDays} Days`,
+          expiryDate: expiryDate.toISOString(),
+          amountCharged: cost,
+          walletBalance: updatedWallet.balance,
+        },
+      });
     }
 
-    return res.status(200).json({
-      status: "success",
-      code: "TRANSACTION_QUEUED",
-      message: `Data purchase queued for ${planName} to ${targetPhone}.`,
-      data: {
-        reference: txReference,
+    // 6. ROUTE 2: FALLBACK ZUWA CLUBKONNECT
+    console.log(`[DATA: CLUBKONNECT] GSM Gateway offline. Routing ${txReference} to Clubkonnect API...`);
+
+    try {
+      const ckResult = await clubkonnect.vendData({
         network: resolvedNetwork,
         phone: targetPhone,
-        plan: planName,
-        validity: `${validityDays} Days`,
-        expiryDate: expiryDate.toISOString(),
-        amountCharged: cost,
-        walletBalance: updatedWallet.balance,
-      },
-    });
+        planCode: targetCode,
+        reference: txReference,
+      });
+
+      if (ckResult.success) {
+        await prisma.transaction.update({
+          where: { id: transaction.id },
+          data: { status: "SUCCESSFUL" },
+        });
+
+        return res.status(200).json({
+          status: "success",
+          code: "PURCHASE_SUCCESSFUL",
+          route: "CLUBKONNECT",
+          message: `Data successfully credited to ${targetPhone} via Clubkonnect.`,
+          data: {
+            reference: txReference,
+            network: resolvedNetwork,
+            phone: targetPhone,
+            plan: planName,
+            validity: `${validityDays} Days`,
+            expiryDate: expiryDate.toISOString(),
+            amountCharged: cost,
+            walletBalance: updatedWallet.balance,
+          },
+        });
+      } else {
+        throw new Error(JSON.stringify(ckResult.rawResponse || "Clubkonnect rejected request"));
+      }
+    } catch (vendorErr) {
+      console.error("Clubkonnect error, refunding user:", vendorErr.message);
+
+      // Auto-Refund nan take
+      await prisma.$transaction([
+        prisma.wallet.update({
+          where: { userId: user.id },
+          data: { balance: { increment: cost } },
+        }),
+        prisma.transaction.update({
+          where: { id: transaction.id },
+          data: {
+            status: "FAILED",
+            description: `FAILED: ${planName} to ${targetPhone} (Refunded ₦${cost})`,
+          },
+        }),
+      ]);
+
+      return res.status(502).json({
+        status: "error",
+        code: "VENDOR_ERROR",
+        message: "Data vendor could not process this order. Wallet balance has been refunded.",
+      });
+    }
   } catch (error) {
     console.error("Marketplace data purchase error:", error);
     return res.status(500).json({

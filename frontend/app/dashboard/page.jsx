@@ -16,6 +16,7 @@ import {
   CheckCircle2,
   ShieldCheck,
   Tags,
+  Crown,
 } from "lucide-react";
 
 import DashboardLayout from "@/components/layouts/DashboardLayout";
@@ -65,6 +66,7 @@ export default function WalletPage() {
   const paymentReference = searchParams.get("reference");
 
   const [wallet, setWallet] = useState(null);
+  const [userProfile, setUserProfile] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const socket = useSocket();
   const connected = Boolean(socket?.connected);
@@ -79,6 +81,21 @@ export default function WalletPage() {
 
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("info");
+
+  const fetchUserProfile = useCallback(async () => {
+    try {
+      const response = await api.get("/auth/me");
+      const user =
+        response.data?.user ||
+        response.data?.data?.user ||
+        response.data?.data ||
+        null;
+      setUserProfile(user);
+      return user;
+    } catch {
+      return null;
+    }
+  }, []);
 
   const fetchWallet = useCallback(async () => {
     const response = await api.get("/wallet");
@@ -114,6 +131,7 @@ export default function WalletPage() {
         }
 
         const results = await Promise.allSettled([
+          fetchUserProfile(),
           fetchWallet(),
           fetchTransactions(),
         ]);
@@ -136,7 +154,7 @@ export default function WalletPage() {
         setRefreshing(false);
       }
     },
-    [fetchWallet, fetchTransactions]
+    [fetchUserProfile, fetchWallet, fetchTransactions]
   );
 
   useEffect(() => {
@@ -326,11 +344,19 @@ export default function WalletPage() {
         </div>
       )}
 
-      {/* ACTION BUTTONS WITH PRICE ICON */}
-      <div className="mb-10 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-end">
+      {/* ACTION BUTTONS TARE DA ICONS NA PRICING DA UPGRADE TIER */}
+      <div className="mb-10 flex flex-wrap items-center justify-end gap-3">
+        <Link
+          href="/dashboard/upgrade"
+          className="flex items-center justify-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 font-semibold text-amber-300 hover:bg-amber-500/20 transition-all text-sm shadow-md shadow-amber-950/20"
+        >
+          <Crown size={18} className="text-amber-400" />
+          Upgrade Tier
+        </Link>
+
         <Link
           href="/dashboard/pricing"
-          className="flex items-center justify-center gap-2 rounded-xl border border-slate-800 bg-slate-900 px-5 py-3 font-semibold text-slate-200 hover:border-slate-700 hover:bg-slate-800 transition-all text-sm"
+          className="flex items-center justify-center gap-2 rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 font-semibold text-slate-200 hover:border-slate-700 hover:bg-slate-800 transition-all text-sm"
         >
           <Tags size={18} className="text-blue-400" />
           API Rates & Pricing
@@ -340,7 +366,7 @@ export default function WalletPage() {
           type="button"
           onClick={() => loadWalletPage({ silent: true })}
           disabled={refreshing}
-          className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-5 py-3 font-semibold text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60 transition-all text-sm"
+          className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-4 py-3 font-semibold text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60 transition-all text-sm"
         >
           <RefreshCcw
             size={18}
@@ -352,7 +378,7 @@ export default function WalletPage() {
         <button
           type="button"
           onClick={() => openFundingModal()}
-          className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-3 font-semibold text-white hover:bg-blue-500 shadow-lg shadow-blue-600/20 transition-all text-sm"
+          className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 font-semibold text-white hover:bg-blue-500 shadow-lg shadow-blue-600/20 transition-all text-sm"
         >
           <PlusCircle size={18} />
           Fund Wallet
@@ -373,11 +399,26 @@ export default function WalletPage() {
               <div className="absolute right-[-20px] bottom-[-20px] opacity-10 pointer-events-none">
                 <Wallet size={200} />
               </div>
-              <div className="flex items-center gap-3 text-blue-100">
-                <Wallet size={28} />
-                <span className="font-medium uppercase tracking-wider text-sm">
-                  Available Balance
-                </span>
+
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3 text-blue-100">
+                  <Wallet size={28} />
+                  <span className="font-medium uppercase tracking-wider text-sm">
+                    Available Balance
+                  </span>
+                </div>
+
+                {/* TIER STATUS BADGE DA CROWN ICON */}
+                <Link
+                  href="/dashboard/upgrade"
+                  className="flex items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/20 px-3 py-1 text-xs font-bold text-amber-200 hover:bg-amber-400/30 transition-all backdrop-blur-sm"
+                >
+                  <Crown size={14} className="text-amber-300" />
+                  <span>TIER: {userProfile?.tier || "REGULAR"}</span>
+                  <span className="text-[10px] text-amber-300/80 font-normal">
+                    (Upgrade)
+                  </span>
+                </Link>
               </div>
 
               <h2 className="mt-6 break-all text-4xl font-extrabold text-white sm:text-5xl">

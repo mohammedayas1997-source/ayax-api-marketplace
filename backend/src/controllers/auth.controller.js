@@ -846,40 +846,20 @@ exports.login = async (req, res) => {
     const passwordMatches = await bcrypt.compare(password, user.password);
 
     if (!passwordMatches) {
-      const failedAttempts = Number(user.failedLoginAttempts || 0) + 1;
-      const shouldLock = failedAttempts >= MAX_FAILED_LOGIN_ATTEMPTS;
-      const lockedUntil = shouldLock ? getLockExpiry() : null;
-
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          failedLoginAttempts: shouldLock ? 0 : failedAttempts,
-          lockedUntil,
-        },
-      });
-
       await recordLoginHistory({ userId: user.id, req, successful: false });
 
       await recordSecurityLog({
         userId: user.id,
         req,
-        event: shouldLock ? "ACCOUNT_LOCKED" : "LOGIN_FAILED",
+        event: "LOGIN_FAILED",
         successful: false,
-        description: shouldLock
-          ? `Account temporarily locked after ${MAX_FAILED_LOGIN_ATTEMPTS} failed login attempts.`
-          : `Failed login attempt ${failedAttempts} of ${MAX_FAILED_LOGIN_ATTEMPTS}.`,
+        description: "Failed login attempt with incorrect password.",
       });
 
       return res.status(401).json({
         success: false,
-        code: shouldLock ? "ACCOUNT_TEMPORARILY_LOCKED" : "INVALID_CREDENTIALS",
-        message: shouldLock
-          ? "Too many failed login attempts. This account has been temporarily locked."
-          : "Invalid email or password.",
-        remainingAttempts: shouldLock
-          ? 0
-          : Math.max(MAX_FAILED_LOGIN_ATTEMPTS - failedAttempts, 0),
-        lockedUntil,
+        code: "INVALID_CREDENTIALS",
+        message: "Invalid email or password.",
       });
     }
 

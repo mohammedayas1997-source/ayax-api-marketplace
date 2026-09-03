@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { Save, Crown, Zap, LoaderCircle, CheckCircle2, AlertCircle } from "lucide-react";
 import api from "@/lib/api";
-import DashboardLayout from "@/components/layouts/DashboardLayout";
+import SuperSidebar from "../components/SuperSidebar";
+import SuperTopbar from "../components/SuperTopbar";
 
 export default function AdminTierSettingsPage() {
   const [standardFee, setStandardFee] = useState("");
@@ -23,7 +24,7 @@ export default function AdminTierSettingsPage() {
           setPremiumFee(res.data.data.PREMIUM);
         }
       } catch (err) {
-        console.error(err);
+        console.error("Failed to load tier fees:", err);
       } finally {
         setLoading(false);
       }
@@ -51,11 +52,12 @@ export default function AdminTierSettingsPage() {
   };
 
   return (
-    <DashboardLayout
-      title="Tier Pricing Configuration"
-      description="Configure dynamic subscription fees for Standard and Premium developer tiers."
-    >
-      <div className="max-w-4xl py-2">
+    <main className="min-h-screen bg-slate-950 text-white flex">
+      <SuperSidebar />
+
+      <section className="min-w-0 flex-1 p-6 lg:p-10">
+        <SuperTopbar title="Account Tier Pricing Configuration" />
+
         {message && (
           <div
             className={`mb-6 flex items-center gap-3 rounded-2xl border p-4 max-w-xl ${
@@ -132,7 +134,7 @@ export default function AdminTierSettingsPage() {
             </button>
           </form>
         )}
-      </div>
-    </DashboardLayout>
+      </section>
+    </main>
   );
 }

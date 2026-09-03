@@ -56,6 +56,8 @@ const apiMarketplaceDashboardRoutes = require("./modules/api-marketplace/api-mar
 
 const identityRoutes = require("./routes/identity.routes");
 
+const tierRoutes = require("./routes/tier.routes");
+
 const superAdminRoutes = require("./routes/superAdminRoutes");
 const aiRoutes = require("./modules/ai/ai.routes");
 
@@ -357,6 +359,8 @@ app.use("/api/v1/marketplace", marketplaceRoutes);
 /* Digital Services */
 app.use("/api/v1/data", dataRoutes);
 app.use("/api/v1/airtime", airtimeRoutes);
+
+app.use("/api/v1/tiers", tierRoutes);
 
 app.use("/api/v1/identity", identityRoutes);
 // Compatibility aliases for legacy/frontend calls

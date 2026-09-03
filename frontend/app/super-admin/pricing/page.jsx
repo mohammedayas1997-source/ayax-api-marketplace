@@ -206,7 +206,6 @@ export default function SuperPricingPage() {
     };
   }, [loadPricing, fetchPricing]);
 
-  // Tsarin sarrafa sunan da code din service kai tsaye (Automatic Generation)
   const syncServiceDetails = (updated) => {
     const isData = updated.category === "DATA";
     let sName = updated.selectedService;
@@ -349,7 +348,6 @@ export default function SuperPricingPage() {
       setSubmitting(true);
       setMessage("");
 
-      // Idan Edit ne ko kuma ba a kunna tsarin All Tiers ba
       if (selectedPricing || !form.applyToAllTiers) {
         const sellingPrice = Number(
           selectedPricing ? form.singleSellingPrice : form.singleSellingPrice
@@ -380,7 +378,6 @@ export default function SuperPricingPage() {
           await api.post("/pricing", payload);
         }
       } else {
-        // Idan za a tura REGULAR, STANDARD, PREMIUM gaba daya a lokaci guda
         const regPrice = Number(form.regularPrice);
         const stdPrice = Number(form.standardPrice);
         const prmPrice = Number(form.premiumPrice);
@@ -774,7 +771,7 @@ export default function SuperPricingPage() {
                     {selectedPricing ? "Edit Service Pricing" : "Add Service Pricing"}
                   </h2>
                   <p className="mt-2 text-sm text-slate-400">
-                    Automatic package builder da tsarin saita farashi a lokaci guda.
+                    Automatic package builder and multi-tier pricing configuration.
                   </p>
                 </div>
                 <button
@@ -788,10 +785,10 @@ export default function SuperPricingPage() {
               </div>
 
               <form onSubmit={submitPricing} className="space-y-5">
-                {/* SASHE NA 1: ZAƁAR SERVICE DA TSARIN DATA */}
+                {/* SECTION 1: SERVICE & DATA CONFIGURATION */}
                 <div className="grid gap-5 rounded-2xl border border-slate-800/80 bg-slate-950/50 p-4 sm:grid-cols-2">
                   <FormSelect
-                    label="Service Name (Zaɓi Service)"
+                    label="Service Name (Select Service)"
                     value={form.selectedService}
                     onChange={(value) => handleSelectionChange("selectedService", value)}
                     options={PRESET_SERVICES.map((s) => s.label)}
@@ -822,7 +819,7 @@ export default function SuperPricingPage() {
 
                       <div className="sm:col-span-2">
                         <FormSelect
-                          label="Kwanakin Aiki (Validity / Expiring Days)"
+                          label="Validity (Expiring Days)"
                           value={form.validity}
                           onChange={(value) => handleSelectionChange("validity", value)}
                           options={VALIDITY_OPTIONS.map((v) => v.value)}
@@ -832,7 +829,7 @@ export default function SuperPricingPage() {
                   )}
                 </div>
 
-                {/* SASHE NA 2: TSARIN SA FARASHI GUDA KO DUKKAN TIERS A LOKACI GUDA */}
+                {/* SECTION 2: SINGLE TIER OR BATCH MULTI-TIER PRICING */}
                 {!selectedPricing && (
                   <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4">
                     <label className="flex cursor-pointer items-center gap-3">
@@ -844,7 +841,7 @@ export default function SuperPricingPage() {
                       />
                       <span className="flex items-center gap-2 font-medium text-blue-300">
                         <Layers size={18} />
-                        Saita & Tura Dukkan Tiers (Regular, Standard, Premium) a Lokaci Ɗaya
+                        Configure & Create All Tiers (Regular, Standard, Premium) at Once
                       </span>
                     </label>
                   </div>
@@ -862,11 +859,11 @@ export default function SuperPricingPage() {
                     required
                   />
 
-                  {/* IDAN BATCH PRICING CE (DUKKAN TIERS) */}
+                  {/* BATCH PRICING (ALL TIERS) */}
                   {!selectedPricing && form.applyToAllTiers ? (
                     <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-950 p-4 sm:col-span-2">
                       <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                        Farashin Sayarwa na Kowanne Tier (Selling Prices)
+                        Tier Selling Prices
                       </p>
                       <div className="grid gap-4 sm:grid-cols-3">
                         <FormInput
@@ -957,7 +954,7 @@ export default function SuperPricingPage() {
                   />
                 </div>
 
-                {/* SASHE NA 3: FEATURES */}
+                {/* SECTION 3: FEATURES */}
                 <div>
                   <label className="text-sm text-slate-300">
                     Package Features (Auto Generated)

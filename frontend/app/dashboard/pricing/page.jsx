@@ -18,7 +18,8 @@ import {
   CheckCircle2,
   AlertCircle,
   TrendingUp,
-  Layers,
+  FileText,
+  Fingerprint,
 } from "lucide-react";
 
 import SuperSidebar from "../components/SuperSidebar";
@@ -26,18 +27,84 @@ import SuperTopbar from "../components/SuperTopbar";
 import api from "@/lib/api";
 import { socket } from "@/lib/socket";
 
+// 1. Jerin manyan Services da ake bayarwa
 const PRESET_SERVICES = [
-  { label: "MTN Data", category: "DATA", code: "MTN" },
-  { label: "Airtel Data", category: "DATA", code: "AIRTEL" },
-  { label: "Glo Data", category: "DATA", code: "GLO" },
-  { label: "9mobile Data", category: "DATA", code: "9MOBILE" },
-  { label: "Airtime Topup", category: "AIRTIME", code: "AIRTIME" },
-  { label: "NIN Verification", category: "IDENTITY", code: "NIN_VERIFY" },
-  { label: "BVN Verification", category: "IDENTITY", code: "BVN_VERIFY" },
+  // DATA SERVICES
+  { label: "MTN Data", category: "DATA", code: "MTN_DATA" },
+  { label: "Airtel Data", category: "DATA", code: "AIRTEL_DATA" },
+  { label: "Glo Data", category: "DATA", code: "GLO_DATA" },
+  { label: "9mobile Data", category: "DATA", code: "9MOBILE_DATA" },
+
+  // AIRTIME & UTILITY
+  { label: "Airtime Topup", category: "AIRTIME", code: "AIRTIME_VTU" },
   { label: "Electricity Bill", category: "ELECTRICITY", code: "ELECTRICITY" },
   { label: "Cable TV Subscription", category: "CABLE", code: "CABLE_TV" },
+
+  // IDENTITY SERVICES (BVN & NIN)
+  {
+    label: "BVN Verification (Print Slip)",
+    category: "IDENTITY",
+    code: "BVN_VERIFY",
+  },
+  {
+    label: "NIN Verification (Print Slip)",
+    category: "IDENTITY",
+    code: "NIN_VERIFY",
+  },
+  {
+    label: "NIN Validation (Issue Resolution)",
+    category: "IDENTITY",
+    code: "NIN_VALIDATION",
+  },
 ];
 
+// 2. Jerin Matsalolin NIN Validation daki-daki
+const NIN_VALIDATION_ISSUES = [
+  {
+    id: "BANK_MISMATCH",
+    label: "Bank Mismatch / BVN Linking Issue",
+    desc: "Resolves NIN rejected by commercial banks due to BVN record mismatch.",
+  },
+  {
+    id: "IMMIGRATION_PASSPORT",
+    label: "Immigration / Passport Clearance (IPE)",
+    desc: "Enables unverified NIN on Nigeria Immigration Service (NIS) portal.",
+  },
+  {
+    id: "NO_RECORD_FOUND",
+    label: "No Record Found / Unactivated NIN",
+    desc: "Activates newly enrolled NIN missing from national central database.",
+  },
+  {
+    id: "PHOTO_BIOMETRIC_ERROR",
+    label: "Photo / Biometric Capture Error",
+    desc: "Fixes missing photo or corrupt biometric payload on NIMC query.",
+  },
+  {
+    id: "VNIN_BYPASS",
+    label: "Virtual NIN (VNIN) Validation Bypass",
+    desc: "Direct verification bypass for enterprise & corporate integration.",
+  },
+  {
+    id: "TELCO_SIM_BARRING",
+    label: "SIM Link / Telco Barring Validation",
+    desc: "Resolves SIM registration block on MTN, Airtel, Glo, 9mobile.",
+  },
+  {
+    id: "GENERAL_RECORD_MATCH",
+    label: "General Record & Verification Sync",
+    desc: "Global re-validation across all government & financial agencies.",
+  },
+];
+
+// 3. Zaɓin Nau'in Slip don Verification
+const SLIP_TYPES = [
+  "Standard Slip",
+  "Premium Plastic Slip (PVC Look)",
+  "Basic Details Slip",
+];
+
+// 4. Zaɓin Tsarin Data
 const DATA_TYPES = ["SME", "GIFTING", "CORPORATE GIFTING", "DIRECT"];
 
 const DATA_SIZES = [
@@ -57,13 +124,13 @@ const DATA_SIZES = [
 ];
 
 const VALIDITY_OPTIONS = [
-  { label: "1 Day", value: "1 Day", days: 1 },
-  { label: "2 Days", value: "2 Days", days: 2 },
-  { label: "7 Days (1 Week)", value: "7 Days", days: 7 },
-  { label: "14 Days (2 Weeks)", value: "14 Days", days: 14 },
-  { label: "30 Days (1 Month)", value: "30 Days", days: 30 },
-  { label: "60 Days (2 Months)", value: "60 Days", days: 60 },
-  { label: "90 Days (3 Months)", value: "90 Days", days: 90 },
+  "1 Day",
+  "2 Days",
+  "7 Days (1 Week)",
+  "14 Days (2 Weeks)",
+  "30 Days (1 Month)",
+  "60 Days (2 Months)",
+  "90 Days (3 Months)",
 ];
 
 const CATEGORIES = [
@@ -87,16 +154,14 @@ const EMPTY_FORM = {
   dataType: "SME",
   dataSize: "1GB",
   validity: "30 Days",
+  slipType: "Standard Slip",
+  validationIssue: "BANK_MISMATCH",
   serviceCode: "MTN_DATA_SME_1GB_30DAYS",
   serviceName: "MTN Data SME 1GB (30 Days)",
   category: "DATA",
-  applyToAllTiers: true,
-  singleTier: "REGULAR",
+  tier: "REGULAR",
   costPrice: "",
-  regularPrice: "",
-  standardPrice: "",
-  premiumPrice: "",
-  singleSellingPrice: "",
+  sellingPrice: "",
   currency: "NGN",
   enabled: true,
   features: "Instant Automation\nValidity: 30 Days\n24/7 API Dispatch",
@@ -130,6 +195,7 @@ const normalizePricing = (item = {}) => ({
   currency: item.currency || "NGN",
   enabled: Boolean(item.enabled),
   features: item.features || [],
+  metadata: item.metadata || {},
   createdAt: item.createdAt,
   updatedAt: item.updatedAt,
 });
@@ -155,11 +221,13 @@ export default function SuperPricingPage() {
 
   const fetchPricing = useCallback(async () => {
     const response = await api.get("/pricing");
+
     const list =
       response.data?.pricing ||
       response.data?.data?.pricing ||
       response.data?.data ||
       [];
+
     const normalized = Array.isArray(list) ? list.map(normalizePricing) : [];
     setPricing(normalized);
     return normalized;
@@ -168,8 +236,12 @@ export default function SuperPricingPage() {
   const loadPricing = useCallback(
     async ({ silent = false } = {}) => {
       try {
-        if (silent) setRefreshing(true);
-        else setLoading(true);
+        if (silent) {
+          setRefreshing(true);
+        } else {
+          setLoading(true);
+        }
+
         setMessage("");
         await fetchPricing();
       } catch (error) {
@@ -188,10 +260,18 @@ export default function SuperPricingPage() {
 
     const token =
       typeof window !== "undefined" ? localStorage.getItem("token") : null;
-    if (token) socket.auth = { token };
-    if (!socket.connected) socket.connect();
 
-    const handlePricingUpdate = () => fetchPricing().catch(console.error);
+    if (token) {
+      socket.auth = { token };
+    }
+
+    if (!socket.connected) {
+      socket.connect();
+    }
+
+    const handlePricingUpdate = () => {
+      fetchPricing().catch(console.error);
+    };
 
     socket.on("pricing-created", handlePricingUpdate);
     socket.on("pricing-updated", handlePricingUpdate);
@@ -206,22 +286,55 @@ export default function SuperPricingPage() {
     };
   }, [loadPricing, fetchPricing]);
 
-  // Tsarin sarrafa sunan da code din service kai tsaye (Automatic Generation)
+  // Tsarin sarrafa sunan sabis da Service Code kai tsaye (100% AUTOMATIC)
   const syncServiceDetails = (updated) => {
     const isData = updated.category === "DATA";
+    const isIdentity = updated.category === "IDENTITY";
+
     let sName = updated.selectedService;
     let sCode = normalizeCode(updated.selectedService);
+    let autoFeatures = "";
 
     if (isData) {
       sName = `${updated.selectedService} ${updated.dataType} ${updated.dataSize} (${updated.validity})`;
       sCode = normalizeCode(
         `${updated.selectedService}_${updated.dataType}_${updated.dataSize}_${updated.validity}`
       );
-    }
+      autoFeatures = `Instant Delivery\nValidity: ${updated.validity}\nPlan Type: ${updated.dataType}\nAPI Automated`;
+    } else if (isIdentity) {
+      if (updated.selectedService.includes("BVN")) {
+        // BVN Verification & Slip Printing
+        sName = `BVN Verification (${updated.slipType || "Standard Slip"})`;
+        sCode = normalizeCode(
+          `BVN_VERIFY_${updated.slipType || "STANDARD_SLIP"}`
+        );
+        autoFeatures = `Direct NIBSS Integration\nPrintable Slip: ${
+          updated.slipType || "Standard Slip"
+        }\nInstant Automated Slip Generation\nIncludes Photo & Biometric Details`;
+      } else if (updated.selectedService.includes("NIN Verification")) {
+        // NIN Verification & Slip Printing
+        sName = `NIN Verification (${updated.slipType || "Standard Slip"})`;
+        sCode = normalizeCode(
+          `NIN_VERIFY_${updated.slipType || "STANDARD_SLIP"}`
+        );
+        autoFeatures = `Direct NIMC Verification\nHigh Quality Slip: ${
+          updated.slipType || "Standard Slip"
+        }\nInstant PDF / Slip Return\nFull KYC Demographic Data`;
+      } else if (updated.selectedService.includes("NIN Validation")) {
+        // NIN Validation Dangane da kowace irin Matsala
+        const issueObj =
+          NIN_VALIDATION_ISSUES.find(
+            (i) => i.id === updated.validationIssue
+          ) || NIN_VALIDATION_ISSUES[0];
 
-    const autoFeatures = isData
-      ? `Instant Delivery\nValidity: ${updated.validity}\nType: ${updated.dataType}\nAPI Automated`
-      : `High Speed Verification\nAutomated Response\n24/7 Uptime`;
+        sName = `NIN Validation - ${issueObj.label}`;
+        sCode = normalizeCode(`NIN_VALIDATION_${issueObj.id}`);
+        autoFeatures = `Issue Fixed: ${issueObj.label}\nDescription: ${issueObj.desc}\nAutomated Clearance & Activation\nStatus Sync with NIMC Database`;
+      }
+    } else {
+      autoFeatures =
+        "24/7 Instant Execution\nAutomated Webhook Notification\nHigh Reliability";
+    }
 
     return {
       ...updated,
@@ -234,20 +347,21 @@ export default function SuperPricingPage() {
   const handleSelectionChange = (field, value) => {
     setForm((current) => {
       let updated = { ...current, [field]: value };
+
       if (field === "selectedService") {
         const found = PRESET_SERVICES.find((s) => s.label === value);
-        if (found) updated.category = found.category;
+        if (found) {
+          updated.category = found.category;
+        }
       }
+
       return syncServiceDetails(updated);
     });
   };
 
-  const updateForm = (field, value) => {
-    setForm((current) => ({ ...current, [field]: value }));
-  };
-
   const filteredPricing = useMemo(() => {
     const searchValue = query.trim().toLowerCase();
+
     return pricing.filter((item) => {
       const matchesSearch =
         !searchValue ||
@@ -258,8 +372,9 @@ export default function SuperPricingPage() {
 
       const matchesCategory =
         categoryFilter === "ALL" || item.category === categoryFilter;
-      const matchesTier =
-        tierFilter === "ALL" || item.tier === tierFilter;
+
+      const matchesTier = tierFilter === "ALL" || item.tier === tierFilter;
+
       const matchesStatus =
         statusFilter === "ALL" ||
         (statusFilter === "ACTIVE" && item.enabled) ||
@@ -274,6 +389,7 @@ export default function SuperPricingPage() {
       (sum, item) => sum + (item.sellingPrice - item.costPrice),
       0
     );
+
     return {
       total: pricing.length,
       active: pricing.filter((item) => item.enabled).length,
@@ -281,6 +397,13 @@ export default function SuperPricingPage() {
       profit: totalProfit,
     };
   }, [pricing]);
+
+  const updateForm = (field, value) => {
+    setForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  };
 
   const openCreateModal = () => {
     setSelectedPricing(null);
@@ -291,31 +414,32 @@ export default function SuperPricingPage() {
 
   const openEditModal = (item) => {
     setSelectedPricing(item);
+
     setForm({
       selectedService: item.serviceName,
-      dataType: "SME",
-      dataSize: "1GB",
-      validity: "30 Days",
+      dataType: item.metadata?.dataType || "SME",
+      dataSize: item.metadata?.dataSize || "1GB",
+      validity: item.metadata?.validity || "30 Days",
+      slipType: item.metadata?.slipType || "Standard Slip",
+      validationIssue: item.metadata?.validationIssue || "BANK_MISMATCH",
       serviceCode: item.serviceCode,
       serviceName: item.serviceName,
       category: item.category,
-      applyToAllTiers: false,
-      singleTier: item.tier,
+      tier: item.tier,
       costPrice: String(item.costPrice),
-      regularPrice: "",
-      standardPrice: "",
-      premiumPrice: "",
-      singleSellingPrice: String(item.sellingPrice),
+      sellingPrice: String(item.sellingPrice),
       currency: item.currency,
       enabled: item.enabled,
       features: Array.isArray(item.features) ? item.features.join("\n") : "",
     });
+
     setMessage("");
     setModalOpen(true);
   };
 
   const closeModal = () => {
     if (submitting) return;
+
     setModalOpen(false);
     setSelectedPricing(null);
     setForm(EMPTY_FORM);
@@ -327,6 +451,7 @@ export default function SuperPricingPage() {
     const serviceCode = normalizeCode(form.serviceCode);
     const serviceName = form.serviceName.trim();
     const costPrice = Number(form.costPrice);
+    const sellingPrice = Number(form.sellingPrice);
 
     if (!serviceCode || !serviceName) {
       setMessageType("error");
@@ -340,91 +465,87 @@ export default function SuperPricingPage() {
       return;
     }
 
+    if (!Number.isFinite(sellingPrice) || sellingPrice < 0) {
+      setMessageType("error");
+      setMessage("Enter a valid selling price.");
+      return;
+    }
+
+    if (sellingPrice < costPrice) {
+      setMessageType("error");
+      setMessage("Selling price cannot be lower than cost price.");
+      return;
+    }
+
     const features = form.features
       .split("\n")
       .map((item) => item.trim())
       .filter(Boolean);
 
+    // Tattara dukkan Metadata
+    const metadata = {
+      ...(form.category === "DATA"
+        ? {
+            dataType: form.dataType,
+            dataSize: form.dataSize,
+            validity: form.validity,
+          }
+        : {}),
+      ...(form.category === "IDENTITY" &&
+      form.selectedService.includes("Verification")
+        ? { slipType: form.slipType }
+        : {}),
+      ...(form.category === "IDENTITY" &&
+      form.selectedService.includes("Validation")
+        ? { validationIssue: form.validationIssue }
+        : {}),
+    };
+
+    const payload = {
+      serviceCode,
+      serviceName,
+      category: form.category,
+      tier: form.tier,
+      costPrice,
+      sellingPrice,
+      currency: form.currency,
+      enabled: form.enabled,
+      features,
+      metadata,
+    };
+
     try {
       setSubmitting(true);
       setMessage("");
 
-      // Idan Edit ne ko kuma ba a kunna tsarin All Tiers ba
-      if (selectedPricing || !form.applyToAllTiers) {
-        const sellingPrice = Number(
-          selectedPricing ? form.singleSellingPrice : form.singleSellingPrice
-        );
+      let response;
 
-        if (!Number.isFinite(sellingPrice) || sellingPrice < 0) {
-          throw new Error("Enter a valid selling price.");
-        }
-        if (sellingPrice < costPrice) {
-          throw new Error("Selling price cannot be lower than cost price.");
-        }
-
-        const payload = {
-          serviceCode,
-          serviceName,
-          category: form.category,
-          tier: selectedPricing ? form.singleTier : form.singleTier,
-          costPrice,
-          sellingPrice,
-          currency: form.currency,
-          enabled: form.enabled,
-          features,
-        };
-
-        if (selectedPricing?.id) {
-          await api.patch(`/pricing/${selectedPricing.id}`, payload);
-        } else {
-          await api.post("/pricing", payload);
-        }
+      if (selectedPricing?.id) {
+        response = await api.patch(`/pricing/${selectedPricing.id}`, payload);
       } else {
-        // Idan za a tura REGULAR, STANDARD, PREMIUM gaba daya a lokaci guda
-        const regPrice = Number(form.regularPrice);
-        const stdPrice = Number(form.standardPrice);
-        const prmPrice = Number(form.premiumPrice);
-
-        if (
-          !Number.isFinite(regPrice) ||
-          !Number.isFinite(stdPrice) ||
-          !Number.isFinite(prmPrice)
-        ) {
-          throw new Error("Please provide selling prices for all 3 tiers.");
-        }
-
-        if (regPrice < costPrice || stdPrice < costPrice || prmPrice < costPrice) {
-          throw new Error("Selling price cannot be lower than cost price on any tier.");
-        }
-
-        const tierPayloads = [
-          { tier: "REGULAR", sellingPrice: regPrice },
-          { tier: "STANDARD", sellingPrice: stdPrice },
-          { tier: "PREMIUM", sellingPrice: prmPrice },
-        ].map((t) => ({
-          serviceCode,
-          serviceName,
-          category: form.category,
-          tier: t.tier,
-          costPrice,
-          sellingPrice: t.sellingPrice,
-          currency: form.currency,
-          enabled: form.enabled,
-          features,
-        }));
-
-        await Promise.all(
-          tierPayloads.map((payload) => api.post("/pricing", payload))
-        );
+        response = await api.post("/pricing", payload);
       }
 
       setMessageType("success");
-      setMessage("Pricing configured and updated successfully.");
+      setMessage(
+        response.data?.message ||
+          (selectedPricing
+            ? "Pricing updated successfully."
+            : "Pricing created successfully.")
+      );
+
       closeModal();
       await fetchPricing();
     } catch (error) {
       setMessageType("error");
-      setMessage(getErrorMessage(error, "Unable to save pricing configurations."));
+      setMessage(
+        getErrorMessage(
+          error,
+          selectedPricing
+            ? "Unable to update pricing."
+            : "Unable to create pricing."
+        )
+      );
     } finally {
       setSubmitting(false);
     }
@@ -434,15 +555,22 @@ export default function SuperPricingPage() {
     try {
       setWorkingId(item.id);
       setMessage("");
+
       const response = await api.patch(`/pricing/${item.id}/status`, {
         enabled: !item.enabled,
       });
+
       setMessageType("success");
-      setMessage(response.data?.message || "Pricing status updated successfully.");
+      setMessage(
+        response.data?.message || "Pricing status updated successfully."
+      );
+
       await fetchPricing();
     } catch (error) {
       setMessageType("error");
-      setMessage(getErrorMessage(error, "Unable to update pricing status."));
+      setMessage(
+        getErrorMessage(error, "Unable to update pricing status.")
+      );
     } finally {
       setWorkingId("");
     }
@@ -450,16 +578,22 @@ export default function SuperPricingPage() {
 
   const deletePricing = async (item) => {
     const confirmed = window.confirm(
-      `Delete ${item.serviceName} (${item.tier}) permanently?`
+      `Delete ${item.serviceName} ${item.tier} pricing permanently?`
     );
+
     if (!confirmed) return;
 
     try {
       setWorkingId(item.id);
       setMessage("");
+
       const response = await api.delete(`/pricing/${item.id}`);
+
       setMessageType("success");
-      setMessage(response.data?.message || "Pricing deleted successfully.");
+      setMessage(
+        response.data?.message || "Pricing deleted successfully."
+      );
+
       await fetchPricing();
     } catch (error) {
       setMessageType("error");
@@ -500,20 +634,30 @@ export default function SuperPricingPage() {
       item.enabled ? "ACTIVE" : "DISABLED",
     ]);
 
-    const escapeCsv = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const escapeCsv = (value) =>
+      `"${String(value ?? "").replace(/"/g, '""')}"`;
+
     const csv = [
       headers.map(escapeCsv).join(","),
       ...rows.map((row) => row.map(escapeCsv).join(",")),
     ].join("\n");
 
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const blob = new Blob([csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
+
     link.href = url;
-    link.download = `service-pricing-${new Date().toISOString().split("T")[0]}.csv`;
+    link.download = `ayax-service-pricing-${
+      new Date().toISOString().split("T")[0]
+    }.csv`;
+
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+
     URL.revokeObjectURL(url);
   };
 
@@ -542,6 +686,7 @@ export default function SuperPricingPage() {
               ) : (
                 <AlertTriangle size={20} className="mt-0.5 shrink-0" />
               )}
+
               <span>{message}</span>
             </div>
           )}
@@ -549,7 +694,11 @@ export default function SuperPricingPage() {
           <section className="mb-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
             <Stat title="Total Pricing" value={stats.total} icon={<Tags />} />
             <Stat title="Active" value={stats.active} icon={<Power />} />
-            <Stat title="Disabled" value={stats.disabled} icon={<AlertTriangle />} />
+            <Stat
+              title="Disabled"
+              value={stats.disabled}
+              icon={<AlertTriangle />}
+            />
             <Stat
               title="Combined Margin"
               value={formatNaira(stats.profit)}
@@ -561,11 +710,12 @@ export default function SuperPricingPage() {
             <div className="grid gap-4 xl:grid-cols-[1fr_180px_180px_180px_auto_auto]">
               <div className="flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950 px-4">
                 <Search size={18} className="text-slate-500" />
+
                 <input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="Search service, code, category or tier..."
-                  className="w-full bg-transparent py-4 outline-none"
+                  className="w-full bg-transparent py-4 outline-none text-sm"
                 />
               </div>
 
@@ -591,7 +741,7 @@ export default function SuperPricingPage() {
                 type="button"
                 onClick={() => loadPricing({ silent: true })}
                 disabled={refreshing}
-                className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-5 py-3 font-semibold hover:bg-slate-700 disabled:opacity-50"
+                className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-5 py-3 font-semibold hover:bg-slate-700 disabled:opacity-50 text-sm"
               >
                 <RefreshCcw
                   size={18}
@@ -603,7 +753,7 @@ export default function SuperPricingPage() {
               <button
                 type="button"
                 onClick={openCreateModal}
-                className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 font-semibold hover:bg-blue-700"
+                className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 font-semibold hover:bg-blue-700 text-sm shadow-lg shadow-blue-600/20"
               >
                 <PlusCircle size={18} />
                 Add Pricing
@@ -615,7 +765,7 @@ export default function SuperPricingPage() {
             <button
               type="button"
               onClick={exportCsv}
-              className="flex items-center gap-2 rounded-xl bg-slate-800 px-5 py-3 font-semibold hover:bg-slate-700"
+              className="flex items-center gap-2 rounded-xl bg-slate-800 px-5 py-3 font-semibold hover:bg-slate-700 text-sm"
             >
               <Download size={18} />
               Export CSV
@@ -632,14 +782,19 @@ export default function SuperPricingPage() {
           ) : filteredPricing.length === 0 ? (
             <div className="rounded-3xl border border-dashed border-slate-700 bg-slate-900 p-10 text-center">
               <Tags size={44} className="mx-auto text-slate-600" />
-              <h2 className="mt-5 text-xl font-bold">No pricing record found</h2>
-              <p className="mt-2 text-slate-400">
-                Create Regular, Standard or Premium pricing for a service.
+
+              <h2 className="mt-5 text-xl font-bold">
+                No pricing record found
+              </h2>
+
+              <p className="mt-2 text-slate-400 text-sm">
+                Create Regular, Standard or Premium pricing for services.
               </p>
+
               <button
                 type="button"
                 onClick={openCreateModal}
-                className="mx-auto mt-6 flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 font-semibold hover:bg-blue-700"
+                className="mx-auto mt-6 flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 font-semibold hover:bg-blue-700 text-sm"
               >
                 <PlusCircle size={18} />
                 Add First Pricing
@@ -649,8 +804,10 @@ export default function SuperPricingPage() {
             <section className="grid gap-5 xl:grid-cols-2">
               {filteredPricing.map((item) => {
                 const profit = item.sellingPrice - item.costPrice;
+
                 const profitPercent =
                   item.costPrice > 0 ? (profit / item.costPrice) * 100 : 0;
+
                 const working = workingId === item.id;
 
                 return (
@@ -661,25 +818,30 @@ export default function SuperPricingPage() {
                     <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
                       <div>
                         <div className="flex flex-wrap items-center gap-3">
-                          <h2 className="text-xl font-bold">
+                          <h2 className="text-lg font-bold text-white">
                             {item.serviceName}
                           </h2>
+
                           <TierBadge tier={item.tier} />
+
                           <span
-                            className={`rounded-full px-3 py-1 text-xs ${
+                            className={`rounded-full px-3 py-1 text-xs font-semibold ${
                               item.enabled
-                                ? "bg-green-500/10 text-green-400"
-                                : "bg-red-500/10 text-red-400"
+                                ? "bg-green-500/10 text-green-400 border border-green-500/20"
+                                : "bg-red-500/10 text-red-400 border border-red-500/20"
                             }`}
                           >
                             {item.enabled ? "ACTIVE" : "DISABLED"}
                           </span>
                         </div>
-                        <p className="mt-2 text-sm text-slate-500">
-                          {item.serviceCode} • {item.category}
+
+                        <p className="mt-2 text-xs font-mono text-slate-400">
+                          {item.serviceCode} •{" "}
+                          <span className="text-blue-400">{item.category}</span>
                         </p>
                       </div>
-                      <ShieldCheck className="text-blue-400" />
+
+                      <ShieldCheck className="text-blue-400 shrink-0" />
                     </div>
 
                     <div className="mt-6 grid gap-4 sm:grid-cols-3">
@@ -687,44 +849,48 @@ export default function SuperPricingPage() {
                         label="Cost Price"
                         value={formatNaira(item.costPrice)}
                       />
+
                       <PriceInfo
                         label="Selling Price"
                         value={formatNaira(item.sellingPrice)}
                       />
+
                       <PriceInfo
-                        label="Profit"
+                        label="Profit Margin"
                         value={`${formatNaira(profit)} (${profitPercent.toFixed(
                           1
                         )}%)`}
                       />
                     </div>
 
-                    {Array.isArray(item.features) && item.features.length > 0 && (
-                      <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950 p-4">
-                        <p className="text-xs uppercase tracking-wide text-slate-500">
-                          Features
-                        </p>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {item.features.map((feature) => (
-                            <span
-                              key={feature}
-                              className="rounded-full bg-blue-500/10 px-3 py-1 text-xs text-blue-300"
-                            >
-                              {feature}
-                            </span>
-                          ))}
+                    {Array.isArray(item.features) &&
+                      item.features.length > 0 && (
+                        <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950 p-4">
+                          <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">
+                            Configured Features
+                          </p>
+
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {item.features.map((feature) => (
+                              <span
+                                key={feature}
+                                className="rounded-lg bg-blue-500/10 border border-blue-500/20 px-3 py-1 text-xs text-blue-300"
+                              >
+                                {feature}
+                              </span>
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
 
                     <div className="mt-6 grid gap-3 sm:grid-cols-3">
                       <button
                         type="button"
                         onClick={() => openEditModal(item)}
                         disabled={working}
-                        className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 py-3 font-semibold hover:bg-slate-700 disabled:opacity-50"
+                        className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 py-3 text-sm font-semibold hover:bg-slate-700 disabled:opacity-50"
                       >
-                        <Pencil size={17} />
+                        <Pencil size={15} />
                         Edit
                       </button>
 
@@ -732,17 +898,18 @@ export default function SuperPricingPage() {
                         type="button"
                         onClick={() => toggleStatus(item)}
                         disabled={working}
-                        className={`flex items-center justify-center gap-2 rounded-xl py-3 font-semibold disabled:opacity-50 ${
+                        className={`flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-semibold disabled:opacity-50 ${
                           item.enabled
-                            ? "bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20"
-                            : "bg-green-500/10 text-green-400 hover:bg-green-500/20"
+                            ? "bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20 border border-yellow-500/20"
+                            : "bg-green-500/10 text-green-400 hover:bg-green-500/20 border border-green-500/20"
                         }`}
                       >
                         {working ? (
-                          <LoaderCircle size={17} className="animate-spin" />
+                          <LoaderCircle size={15} className="animate-spin" />
                         ) : (
-                          <Power size={17} />
+                          <Power size={15} />
                         )}
+
                         {item.enabled ? "Disable" : "Enable"}
                       </button>
 
@@ -750,9 +917,9 @@ export default function SuperPricingPage() {
                         type="button"
                         onClick={() => deletePricing(item)}
                         disabled={working}
-                        className="flex items-center justify-center gap-2 rounded-xl bg-red-500/10 py-3 font-semibold text-red-400 hover:bg-red-500/20 disabled:opacity-50"
+                        className="flex items-center justify-center gap-2 rounded-xl bg-red-500/10 py-3 text-sm font-semibold text-red-400 hover:bg-red-500/20 border border-red-500/20 disabled:opacity-50"
                       >
-                        <Trash2 size={17} />
+                        <Trash2 size={15} />
                         Delete
                       </button>
                     </div>
@@ -764,165 +931,145 @@ export default function SuperPricingPage() {
         </section>
       </div>
 
+      {/* CREATE & EDIT MODAL */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/75 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 p-4 backdrop-blur-sm">
           <div className="flex min-h-full items-center justify-center py-8">
             <div className="w-full max-w-2xl rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
               <div className="mb-6 flex items-start justify-between gap-4">
                 <div>
-                  <h2 className="text-2xl font-bold">
-                    {selectedPricing ? "Edit Service Pricing" : "Add Service Pricing"}
+                  <h2 className="text-2xl font-bold text-white">
+                    {selectedPricing
+                      ? "Edit Service Pricing"
+                      : "Add Service Pricing"}
                   </h2>
-                  <p className="mt-2 text-sm text-slate-400">
-                    Automatic package builder da tsarin saita farashi a lokaci guda.
+
+                  <p className="mt-1 text-sm text-slate-400">
+                    Automated pricing generation for Data, BVN & NIN Validation
+                    issues.
                   </p>
                 </div>
+
                 <button
                   type="button"
                   onClick={closeModal}
                   disabled={submitting}
-                  className="rounded-xl bg-slate-800 p-2 hover:bg-slate-700 disabled:opacity-50"
+                  className="rounded-xl bg-slate-800 p-2 text-slate-400 hover:text-white disabled:opacity-50"
                 >
                   <X size={20} />
                 </button>
               </div>
 
               <form onSubmit={submitPricing} className="space-y-5">
-                {/* SASHE NA 1: ZAƁAR SERVICE DA TSARIN DATA */}
-                <div className="grid gap-5 rounded-2xl border border-slate-800/80 bg-slate-950/50 p-4 sm:grid-cols-2">
-                  <FormSelect
-                    label="Service Name (Zaɓi Service)"
-                    value={form.selectedService}
-                    onChange={(value) => handleSelectionChange("selectedService", value)}
-                    options={PRESET_SERVICES.map((s) => s.label)}
-                  />
+                {/* SASHE NA 1: DYNAMIC SERVICE CONTROLS */}
+                <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4 space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <FormSelect
+                      label="Select Service (Zaɓi Sabis)"
+                      value={form.selectedService}
+                      onChange={(value) =>
+                        handleSelectionChange("selectedService", value)
+                      }
+                      options={PRESET_SERVICES.map((s) => s.label)}
+                    />
 
-                  <FormSelect
-                    label="Category"
-                    value={form.category}
-                    onChange={(value) => handleSelectionChange("category", value)}
-                    options={CATEGORIES}
-                  />
+                    <FormSelect
+                      label="Category"
+                      value={form.category}
+                      onChange={(value) =>
+                        handleSelectionChange("category", value)
+                      }
+                      options={CATEGORIES}
+                    />
+                  </div>
 
+                  {/* IDAN TSARIN DATA NE */}
                   {form.category === "DATA" && (
-                    <>
+                    <div className="grid gap-4 sm:grid-cols-3 pt-2 border-t border-slate-800/80">
                       <FormSelect
                         label="Data Plan Type"
                         value={form.dataType}
-                        onChange={(value) => handleSelectionChange("dataType", value)}
+                        onChange={(value) =>
+                          handleSelectionChange("dataType", value)
+                        }
                         options={DATA_TYPES}
                       />
 
                       <FormSelect
                         label="Data Volume / Size"
                         value={form.dataSize}
-                        onChange={(value) => handleSelectionChange("dataSize", value)}
+                        onChange={(value) =>
+                          handleSelectionChange("dataSize", value)
+                        }
                         options={DATA_SIZES}
                       />
 
-                      <div className="sm:col-span-2">
+                      <FormSelect
+                        label="Validity / Kwanaki"
+                        value={form.validity}
+                        onChange={(value) =>
+                          handleSelectionChange("validity", value)
+                        }
+                        options={VALIDITY_OPTIONS}
+                      />
+                    </div>
+                  )}
+
+                  {/* IDAN VERIFICATION NE NA BVN KO NIN (PRINT SLIP) */}
+                  {form.category === "IDENTITY" &&
+                    form.selectedService.includes("Verification") && (
+                      <div className="pt-2 border-t border-slate-800/80">
                         <FormSelect
-                          label="Kwanakin Aiki (Validity / Expiring Days)"
-                          value={form.validity}
-                          onChange={(value) => handleSelectionChange("validity", value)}
-                          options={VALIDITY_OPTIONS.map((v) => v.value)}
+                          label="Nau'in Slip (Slip Type for Printing)"
+                          value={form.slipType}
+                          onChange={(value) =>
+                            handleSelectionChange("slipType", value)
+                          }
+                          options={SLIP_TYPES}
                         />
                       </div>
-                    </>
-                  )}
+                    )}
+
+                  {/* IDAN NIN VALIDATION NE (ALL ISSUES IN NIGERIA) */}
+                  {form.category === "IDENTITY" &&
+                    form.selectedService.includes("Validation") && (
+                      <div className="pt-2 border-t border-slate-800/80 space-y-3">
+                        <label className="text-xs font-semibold uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
+                          <Fingerprint size={14} /> Zaɓi Matsalar NIN Validation
+                          (Issue Type)
+                        </label>
+
+                        <select
+                          value={form.validationIssue}
+                          onChange={(e) =>
+                            handleSelectionChange(
+                              "validationIssue",
+                              e.target.value
+                            )
+                          }
+                          className="w-full rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3.5 text-sm text-white outline-none focus:border-blue-500"
+                        >
+                          {NIN_VALIDATION_ISSUES.map((issue) => (
+                            <option key={issue.id} value={issue.id}>
+                              {issue.label}
+                            </option>
+                          ))}
+                        </select>
+
+                        <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-blue-300">
+                          <strong>Bayani: </strong>
+                          {
+                            NIN_VALIDATION_ISSUES.find(
+                              (i) => i.id === form.validationIssue
+                            )?.desc
+                          }
+                        </div>
+                      </div>
+                    )}
                 </div>
 
-                {/* SASHE NA 2: TSARIN SA FARASHI GUDA KO DUKKAN TIERS A LOKACI GUDA */}
-                {!selectedPricing && (
-                  <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4">
-                    <label className="flex cursor-pointer items-center gap-3">
-                      <input
-                        type="checkbox"
-                        checked={form.applyToAllTiers}
-                        onChange={(e) => updateForm("applyToAllTiers", e.target.checked)}
-                        className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-blue-600 focus:ring-0"
-                      />
-                      <span className="flex items-center gap-2 font-medium text-blue-300">
-                        <Layers size={18} />
-                        Saita & Tura Dukkan Tiers (Regular, Standard, Premium) a Lokaci Ɗaya
-                      </span>
-                    </label>
-                  </div>
-                )}
-
-                <div className="grid gap-5 sm:grid-cols-2">
-                  <FormInput
-                    label="Cost Price (Naira)"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={form.costPrice}
-                    onChange={(value) => updateForm("costPrice", value)}
-                    placeholder="e.g. 210"
-                    required
-                  />
-
-                  {/* IDAN BATCH PRICING CE (DUKKAN TIERS) */}
-                  {!selectedPricing && form.applyToAllTiers ? (
-                    <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-950 p-4 sm:col-span-2">
-                      <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                        Farashin Sayarwa na Kowanne Tier (Selling Prices)
-                      </p>
-                      <div className="grid gap-4 sm:grid-cols-3">
-                        <FormInput
-                          label="Regular Tier"
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={form.regularPrice}
-                          onChange={(val) => updateForm("regularPrice", val)}
-                          placeholder="250"
-                          required
-                        />
-                        <FormInput
-                          label="Standard Tier"
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={form.standardPrice}
-                          onChange={(val) => updateForm("standardPrice", val)}
-                          placeholder="240"
-                          required
-                        />
-                        <FormInput
-                          label="Premium Tier"
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={form.premiumPrice}
-                          onChange={(val) => updateForm("premiumPrice", val)}
-                          placeholder="230"
-                          required
-                        />
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <FormSelect
-                        label="Package Tier"
-                        value={form.singleTier}
-                        onChange={(value) => updateForm("singleTier", value)}
-                        options={TIERS}
-                      />
-
-                      <FormInput
-                        label="Selling Price (Naira)"
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={form.singleSellingPrice}
-                        onChange={(value) => updateForm("singleSellingPrice", value)}
-                        placeholder="250"
-                        required
-                      />
-                    </>
-                  )}
-
+                {/* SASHE NA 2: AUTOMATIC GENERATED NAMES & CODES */}
+                <div className="grid gap-4 sm:grid-cols-2">
                   <FormInput
                     label="Generated Service Name (Auto)"
                     value={form.serviceName}
@@ -934,47 +1081,72 @@ export default function SuperPricingPage() {
                   <FormInput
                     label="Generated Service Code (Auto)"
                     value={form.serviceCode}
-                    onChange={(value) => updateForm("serviceCode", normalizeCode(value))}
+                    onChange={(value) =>
+                      updateForm("serviceCode", normalizeCode(value))
+                    }
                     placeholder="AUTO_CODE"
                     required
                   />
 
                   <FormSelect
+                    label="Package Tier"
+                    value={form.tier}
+                    onChange={(value) => updateForm("tier", value)}
+                    options={TIERS}
+                  />
+
+                  <FormSelect
                     label="Status"
                     value={form.enabled ? "ACTIVE" : "DISABLED"}
-                    onChange={(value) => updateForm("enabled", value === "ACTIVE")}
+                    onChange={(value) =>
+                      updateForm("enabled", value === "ACTIVE")
+                    }
                     options={["ACTIVE", "DISABLED"]}
                   />
 
                   <FormInput
-                    label="Currency"
-                    value={form.currency}
-                    onChange={(value) =>
-                      updateForm("currency", normalizeCode(value).slice(0, 3))
-                    }
-                    placeholder="NGN"
+                    label="Cost Price (Naira)"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.costPrice}
+                    onChange={(value) => updateForm("costPrice", value)}
+                    placeholder="100"
+                    required
+                  />
+
+                  <FormInput
+                    label="Selling Price (Naira)"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.sellingPrice}
+                    onChange={(value) => updateForm("sellingPrice", value)}
+                    placeholder="200"
                     required
                   />
                 </div>
 
-                {/* SASHE NA 3: FEATURES */}
+                {/* SASHE NA 3: AUTOMATIC FEATURES DESCRIPTION */}
                 <div>
-                  <label className="text-sm text-slate-300">
-                    Package Features (Auto Generated)
+                  <label className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    Package Features (Auto-Generated Details)
                   </label>
+
                   <textarea
                     value={form.features}
-                    onChange={(event) => updateForm("features", event.target.value)}
-                    placeholder={"Validity: 30 Days\nInstant Notification"}
-                    rows={3}
-                    className="mt-2 w-full resize-none rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3 text-sm outline-none focus:border-blue-500"
+                    onChange={(event) =>
+                      updateForm("features", event.target.value)
+                    }
+                    rows={4}
+                    className="mt-2 w-full resize-none rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3 text-xs font-mono text-slate-300 outline-none focus:border-blue-500"
                   />
                 </div>
 
                 <button
                   type="submit"
                   disabled={submitting}
-                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 py-4 font-semibold hover:bg-blue-700 disabled:opacity-50"
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 py-4 font-semibold hover:bg-blue-500 disabled:opacity-50 shadow-lg shadow-blue-600/20 text-sm"
                 >
                   {submitting ? (
                     <>
@@ -984,11 +1156,7 @@ export default function SuperPricingPage() {
                   ) : (
                     <>
                       <Save size={18} />
-                      {selectedPricing
-                        ? "Save Changes"
-                        : form.applyToAllTiers
-                        ? "Create All 3 Tiers (Regular, Standard, Premium)"
-                        : "Create Pricing"}
+                      {selectedPricing ? "Save Changes" : "Create Pricing"}
                     </>
                   )}
                 </button>
@@ -1005,8 +1173,12 @@ function Stat({ title, value, icon }) {
   return (
     <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
       <div className="mb-4 text-blue-400">{icon}</div>
-      <p className="text-slate-400">{title}</p>
-      <h2 className="mt-2 break-all text-3xl font-extrabold">{value}</h2>
+      <p className="text-slate-400 text-xs font-medium uppercase tracking-wider">
+        {title}
+      </p>
+      <h2 className="mt-2 break-all text-2xl sm:text-3xl font-extrabold text-white">
+        {value}
+      </h2>
     </div>
   );
 }
@@ -1014,22 +1186,25 @@ function Stat({ title, value, icon }) {
 function PriceInfo({ label, value }) {
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
-      <p className="text-xs uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-2 break-all font-bold text-slate-200">{value}</p>
+      <p className="text-xs uppercase tracking-wide text-slate-500 font-semibold">
+        {label}
+      </p>
+
+      <p className="mt-2 break-all font-bold text-slate-200 text-sm">{value}</p>
     </div>
   );
 }
 
 function TierBadge({ tier }) {
   const classes = {
-    REGULAR: "bg-slate-500/10 text-slate-300",
-    STANDARD: "bg-blue-500/10 text-blue-400",
-    PREMIUM: "bg-purple-500/10 text-purple-400",
+    REGULAR: "bg-slate-500/10 text-slate-300 border-slate-500/20",
+    STANDARD: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+    PREMIUM: "bg-purple-500/10 text-purple-400 border-purple-500/20",
   };
 
   return (
     <span
-      className={`rounded-full px-3 py-1 text-xs ${
+      className={`rounded-full border px-3 py-0.5 text-xs font-semibold ${
         classes[tier] || classes.REGULAR
       }`}
     >
@@ -1043,7 +1218,7 @@ function FilterSelect({ value, onChange, options }) {
     <select
       value={value}
       onChange={(event) => onChange(event.target.value)}
-      className="rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 outline-none"
+      className="rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 outline-none text-sm text-slate-300"
     >
       {options.map((option) => (
         <option key={option} value={option}>
@@ -1066,7 +1241,8 @@ function FormInput({
 }) {
   return (
     <div>
-      <label className="text-sm text-slate-300">{label}</label>
+      <label className="text-xs font-semibold text-slate-300">{label}</label>
+
       <input
         type={type}
         value={value}
@@ -1075,7 +1251,7 @@ function FormInput({
         required={required}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="mt-2 w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 outline-none focus:border-blue-500"
+        className="mt-2 w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3.5 text-sm text-white outline-none focus:border-blue-500"
       />
     </div>
   );
@@ -1084,11 +1260,12 @@ function FormInput({
 function FormSelect({ label, value, onChange, options }) {
   return (
     <div>
-      <label className="text-sm text-slate-300">{label}</label>
+      <label className="text-xs font-semibold text-slate-300">{label}</label>
+
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="mt-2 w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 outline-none focus:border-blue-500"
+        className="mt-2 w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3.5 text-sm text-white outline-none focus:border-blue-500"
       >
         {options.map((option) => (
           <option key={option} value={option}>

@@ -233,7 +233,7 @@ exports.getServicePricing = async (req, res) => {
 };
 
 /* ======================================================
-   CREATE SINGLE PRICING
+   CREATE OR UPSERT PRICING
    POST /api/v1/pricing
 ====================================================== */
 exports.createPricing = async (req, res) => {
@@ -299,26 +299,28 @@ exports.createPricing = async (req, res) => {
       });
     }
 
-    const existing = await prisma.servicePricing.findUnique({
+    const userId = getAuthenticatedUserId(req);
+
+    // Amfani da upsert maimakon create domin kaucewa matsalar Duplicate Error yayin tura dukkan tiers
+    const pricing = await prisma.servicePricing.upsert({
       where: {
         serviceCode_tier: {
           serviceCode: normalizedServiceCode,
           tier: normalizedTier,
         },
       },
-    });
-
-    if (existing) {
-      return res.status(409).json({
-        success: false,
-        message: "Pricing already exists for this service and tier.",
-      });
-    }
-
-    const userId = getAuthenticatedUserId(req);
-
-    const pricing = await prisma.servicePricing.create({
-      data: {
+      update: {
+        serviceName: normalizedServiceName,
+        category: normalizedCategory,
+        costPrice: numericCostPrice,
+        sellingPrice: numericSellingPrice,
+        currency: normalizeCode(currency || "NGN"),
+        enabled: parseBoolean(enabled, true),
+        features: parseJsonValue(features),
+        metadata: parseJsonValue(metadata),
+        updatedBy: userId,
+      },
+      create: {
         serviceCode: normalizedServiceCode,
         serviceName: normalizedServiceName,
         category: normalizedCategory,
@@ -335,17 +337,17 @@ exports.createPricing = async (req, res) => {
     });
 
     emitEvent("pricing-created", {
-      message: "Service pricing created.",
+      message: "Service pricing created/updated.",
       pricing,
     });
 
     return res.status(201).json({
       success: true,
-      message: "Service pricing created successfully.",
+      message: "Service pricing saved successfully.",
       pricing,
     });
   } catch (error) {
-    return sendControllerError(res, error, "Unable to create pricing.");
+    return sendControllerError(res, error, "Unable to save pricing.");
   }
 };
 

@@ -1508,13 +1508,7 @@ exports.getCurrentUser = async (
   }
 };
 /* ======================================================
-   FORGOT PASSWORD
-
-   POST /api/v1/auth/forgot-password
-====================================================== */
-
-/* ======================================================
-   FORGOT PASSWORD
+   FORGOT PASSWORD (6-DIGIT EMAIL OTP)
 
    POST /api/v1/auth/forgot-password
 ====================================================== */
@@ -1531,9 +1525,7 @@ exports.forgotPassword = async (req, res) => {
     }
 
     const user = await prisma.user.findUnique({
-      where: {
-        email,
-      },
+      where: { email },
       select: {
         id: true,
         name: true,
@@ -1542,17 +1534,20 @@ exports.forgotPassword = async (req, res) => {
       },
     });
 
-    // Generic response to prevent account enumeration
+    // Generic response domin tsaro (Account Enumeration Defense)
     if (!user || normalizeRole(user.status) !== "ACTIVE") {
       return res.status(200).json({
         success: true,
-        message: GENERIC_RESET_MESSAGE,
+        message: "If an account exists for that email, a 6-digit password reset code has been sent.",
       });
     }
 
-    const { plainToken, tokenHash, expiresAt } = generatePasswordResetToken();
+    // 1. Samar da lambar OTP guda 6
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const tokenHash = hashToken(otp);
+    const expiresAt = new Date(Date.now() + PASSWORD_RESET_TOKEN_MINUTES * 60 * 1000);
 
-    // Invalidate previous unused reset tokens for this user
+    // 2. Kashe tsofaffin tokens
     await prisma.passwordResetToken.updateMany({
       where: {
         userId: user.id,
@@ -1563,6 +1558,7 @@ exports.forgotPassword = async (req, res) => {
       },
     });
 
+    // 3. Adana sabon OTP a PasswordResetToken table
     await prisma.passwordResetToken.create({
       data: {
         userId: user.id,
@@ -1571,38 +1567,40 @@ exports.forgotPassword = async (req, res) => {
       },
     });
 
-    const frontendUrl = normalizeText(process.env.FRONTEND_URL || "https://ayaxapis.com").replace(/\/+$/, "");
-    const resetUrl = `${frontendUrl}/reset-password?token=${encodeURIComponent(plainToken)}`;
-
-    // Send reset instructions via email service
-    await sendPasswordResetEmail({
-      user,
-      resetUrl,
-    });
+    // 4. Aika OTP zuwa Email din User
+    try {
+      await sendPasswordResetEmail({
+        user,
+        otp, // Lamba 6
+        expiresInMinutes: PASSWORD_RESET_TOKEN_MINUTES,
+      });
+    } catch (mailErr) {
+      console.error("Password reset email delivery error:", mailErr.message);
+    }
 
     await recordSecurityLog({
       userId: user.id,
       req,
-      event: "PASSWORD_RESET_REQUESTED",
+      event: "PASSWORD_RESET_OTP_SENT",
       successful: true,
-      description: "Password reset instructions prepared and sent.",
+      description: "A 6-digit password reset OTP was generated and emailed.",
     });
 
     await writeAuditLog({
       req,
       user,
       action: "PASSWORD_RESET_REQUEST",
-      description: `${user.email} requested a password reset link.`,
+      description: `${user.email} requested a password reset code.`,
     });
 
     const response = {
       success: true,
-      message: GENERIC_RESET_MESSAGE,
+      message: "A 6-digit password reset code has been sent to your email address.",
+      maskedEmail: maskEmail(user.email),
     };
 
     if (process.env.NODE_ENV !== "production") {
-      response.developmentResetToken = plainToken;
-      response.developmentResetUrl = resetUrl;
+      response.developmentOtp = otp;
     }
 
     return res.status(200).json(response);
@@ -1612,25 +1610,26 @@ exports.forgotPassword = async (req, res) => {
 };
 
 /* ======================================================
-   RESET PASSWORD
+   RESET PASSWORD (VERIFY 6-DIGIT OTP & SET NEW PASSWORD)
 
    POST /api/v1/auth/reset-password
 ====================================================== */
 
 exports.resetPassword = async (req, res) => {
   try {
-    const token = normalizeText(req.body.token);
+    const email = normalizeEmail(req.body.email);
+    // Karbar OTP (ko ta hanyar otp ko token)
+    const otp = normalizeText(req.body.otp || req.body.code || req.body.token);
     const newPassword = String(req.body.password || req.body.newPassword || "");
 
-    if (!token || !newPassword) {
+    if (!email || !otp || !newPassword) {
       return res.status(400).json({
         success: false,
-        message: "Reset token and new password are required.",
+        message: "Email, verification OTP code, and new password are required.",
       });
     }
 
     const passwordValidation = validatePassword(newPassword);
-
     if (!passwordValidation.valid) {
       return res.status(400).json({
         success: false,
@@ -1638,49 +1637,51 @@ exports.resetPassword = async (req, res) => {
       });
     }
 
-    const tokenHash = hashToken(token);
-
-    const resetRecord = await prisma.passwordResetToken.findUnique({
-      where: {
-        tokenHash,
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            status: true,
-            password: true,
-          },
-        },
+    const user = await prisma.user.findUnique({
+      where: { email },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        status: true,
+        password: true,
       },
     });
 
-    if (
-      !resetRecord ||
-      resetRecord.usedAt ||
-      resetRecord.expiresAt.getTime() <= Date.now()
-    ) {
+    if (!user || normalizeRole(user.status) !== "ACTIVE") {
       return res.status(400).json({
         success: false,
-        code: "INVALID_RESET_TOKEN",
-        message: "The password reset link is invalid or has expired.",
+        code: "INVALID_RESET_REQUEST",
+        message: "Invalid or expired password reset request.",
       });
     }
 
-    if (normalizeRole(resetRecord.user.status) !== "ACTIVE") {
-      return res.status(403).json({
+    // Tabbatar da OTP Hash
+    const tokenHash = hashToken(otp);
+
+    const resetRecord = await prisma.passwordResetToken.findFirst({
+      where: {
+        userId: user.id,
+        tokenHash,
+        usedAt: null,
+        expiresAt: {
+          gt: new Date(),
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    if (!resetRecord) {
+      return res.status(400).json({
         success: false,
-        message: "This account is not active.",
+        code: "INVALID_OTP",
+        message: "The verification code is incorrect or has expired.",
       });
     }
 
-    const samePassword = await bcrypt.compare(
-      newPassword,
-      resetRecord.user.password
-    );
-
+    const samePassword = await bcrypt.compare(newPassword, user.password);
     if (samePassword) {
       return res.status(400).json({
         success: false,
@@ -1688,18 +1689,13 @@ exports.resetPassword = async (req, res) => {
       });
     }
 
-    const hashedPassword = await bcrypt.hash(
-      newPassword,
-      PASSWORD_HASH_ROUNDS
-    );
-
+    const hashedPassword = await bcrypt.hash(newPassword, PASSWORD_HASH_ROUNDS);
     const passwordChangedAt = new Date();
 
+    // Sabunta bayanan cikin Database
     await prisma.$transaction(async (tx) => {
       await tx.user.update({
-        where: {
-          id: resetRecord.user.id,
-        },
+        where: { id: user.id },
         data: {
           password: hashedPassword,
           passwordChangedAt,
@@ -1709,53 +1705,45 @@ exports.resetPassword = async (req, res) => {
       });
 
       await tx.passwordResetToken.update({
-        where: {
-          id: resetRecord.id,
-        },
-        data: {
-          usedAt: passwordChangedAt,
-        },
+        where: { id: resetRecord.id },
+        data: { usedAt: passwordChangedAt },
       });
 
-      // Invalidate all other active reset tokens
+      // Kashe duk wani token da ya rage
       await tx.passwordResetToken.updateMany({
         where: {
-          userId: resetRecord.user.id,
-          id: {
-            not: resetRecord.id,
-          },
+          userId: user.id,
+          id: { not: resetRecord.id },
           usedAt: null,
         },
-        data: {
-          usedAt: passwordChangedAt,
-        },
+        data: { usedAt: passwordChangedAt },
       });
     });
 
     await recordSecurityLog({
-      userId: resetRecord.user.id,
+      userId: user.id,
       req,
       event: "PASSWORD_RESET_SUCCESS",
       successful: true,
-      description: "User successfully reset their account password.",
+      description: "User successfully reset account password via 6-digit OTP.",
     });
 
     await writeAuditLog({
       req,
-      user: resetRecord.user,
+      user,
       action: "PASSWORD_RESET_COMPLETED",
-      description: `${resetRecord.user.email} reset their password successfully.`,
+      description: `${user.email} reset password successfully.`,
     });
 
     await createPasswordNotification({
-      user: resetRecord.user,
+      user,
       title: "Password Reset Successful",
-      message: "Your account password has been changed successfully. If you did not perform this action, please contact support immediately.",
+      message: "Your account password has been changed successfully. You can now log in.",
     });
 
     return res.status(200).json({
       success: true,
-      message: "Password reset successful. Please sign in with your new password.",
+      message: "Password reset successful! You can now log in with your new password.",
     });
   } catch (error) {
     return sendAuthError(res, error, "Unable to reset password.");

@@ -1,188 +1,247 @@
 const prisma = require("../config/prisma");
-const transactionService = require("./transaction.service");
-const walletService = require("./wallet.service");
-const providerService = require("./provider.service");
-const apiUsageService = require("./apiUsage.service");
-const calculateProfit = require("../helpers/calculateProfit");
+const { emitEvent, emitGatewayCommand } = require("../config/socket");
+const clubkonnect = require("./clubkonnect.service");
 
-const AIRTIME_DISCOUNTS = {
+const DEFAULT_DISCOUNTS = {
   MTN: 0.02,
   AIRTEL: 0.02,
   GLO: 0.03,
   "9MOBILE": 0.03,
 };
 
-/* ======================================================
-   1. PURCHASE AIRTIME (B2B API SERVICE)
-====================================================== */
-exports.purchaseAirtime = async ({
-  user,
-  apiKey,
-  network,
-  phone,
-  amount,
-  reference,
-}) => {
+exports.purchaseAirtime = async ({ user, network, phone, amount, reference }) => {
   const numericAmount = Number(amount);
-  const normalizedNetwork = String(network || "").toUpperCase();
+  const normalizedNetwork = String(network || "").toUpperCase().trim();
+  const targetPhone = String(phone || "").trim();
 
-  if (!numericAmount || numericAmount < 50) {
-    const err = new Error("Minimum airtime purchase amount is NGN 50.");
-    err.statusCode = 400;
-    err.code = "INVALID_AMOUNT";
-    throw err;
+  if (!user || !user.id) {
+    const error = new Error("Authentication is required.");
+    error.statusCode = 401;
+    error.code = "UNAUTHORIZED";
+    throw error;
   }
 
-  // 1. Lissafin Discount da Ainihin Kudin Caji
-  const discountRate = AIRTIME_DISCOUNTS[normalizedNetwork] || 0.01;
-  const discountAmount = numericAmount * discountRate;
-  const amountToCharge = Number((numericAmount - discountAmount).toFixed(2));
+  // 1. Idempotency Check
+  if (reference) {
+    const existingTx = await prisma.transaction.findUnique({
+      where: { reference },
+    });
 
-  // 2. Nemo Provider da Service
-  const { provider, service } = await providerService.getProviderForService("airtime");
-
-  // 3. Duba Wallet Balance na Developer
-  const wallet = await walletService.getOrCreateWallet(user.id);
-  if (Number(wallet.balance) < amountToCharge) {
-    const err = new Error(
-      `Insufficient wallet balance. Required: NGN ${amountToCharge}, Current Balance: NGN ${wallet.balance}`
-    );
-    err.statusCode = 402;
-    err.code = "INSUFFICIENT_WALLET_BALANCE";
-    throw err;
+    if (existingTx) {
+      const error = new Error("A transaction with this reference has already been processed.");
+      error.statusCode = 409;
+      error.code = "DUPLICATE_REFERENCE";
+      throw error;
+    }
   }
 
-  // 4. Kirkiri Transaction Record (PROCESSING)
-  const transaction = await transactionService.createTransaction({
-    userId: user.id,
-    type: "DEBIT",
-    service: "AIRTIME",
-    amount: amountToCharge,
-    reference: reference || `AIR_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-    status: "PROCESSING",
-    description: `${normalizedNetwork} NGN ${numericAmount} Airtime Topup to ${phone}`,
-    metadata: {
-      network: normalizedNetwork,
-      phone,
-      faceValue: numericAmount,
-      discountApplied: discountAmount,
-      apiKeyId: apiKey?.id,
+  // 2. Lissafin Farashi bisa Tier (REGULAR, STANDARD, PREMIUM)
+  const userTier = String(user.tier || "REGULAR").toUpperCase();
+
+  const pricingPlan = await prisma.servicePricing.findFirst({
+    where: {
+      category: "AIRTIME",
+      enabled: true,
+      tier: userTier,
+      OR: [
+        { serviceCode: `${normalizedNetwork}_AIRTIME` },
+        { serviceCode: normalizedNetwork },
+        { serviceName: { contains: normalizedNetwork, mode: "insensitive" } },
+      ],
     },
   });
 
-  let isDebited = false;
+  let amountToCharge = numericAmount;
+  let discountAmount = 0;
 
-  try {
-    // 5. Cire Kudin Wallet Cikin Kariya
-    await walletService.debitWallet({
-      userId: user.id,
-      amount: amountToCharge,
-      reference: transaction.reference,
-      description: `${normalizedNetwork} Airtime purchase to ${phone}`,
-      module: "AIRTIME",
+  if (pricingPlan && pricingPlan.sellingPrice > 0) {
+    const rate = pricingPlan.sellingPrice <= 1
+      ? pricingPlan.sellingPrice
+      : pricingPlan.sellingPrice / 100;
+
+    amountToCharge = Number((numericAmount * rate).toFixed(2));
+    discountAmount = Number((numericAmount - amountToCharge).toFixed(2));
+  } else {
+    const fallbackRate = DEFAULT_DISCOUNTS[normalizedNetwork] || 0.01;
+    discountAmount = Number((numericAmount * fallbackRate).toFixed(2));
+    amountToCharge = Number((numericAmount - discountAmount).toFixed(2));
+  }
+
+  // 3. Duba Balance na Wallet
+  const wallet = await prisma.wallet.findUnique({
+    where: { userId: user.id },
+  });
+
+  if (!wallet || Number(wallet.balance) < amountToCharge) {
+    const error = new Error(`Insufficient wallet balance. Required: ₦${amountToCharge}`);
+    error.statusCode = 402;
+    error.code = "INSUFFICIENT_BALANCE";
+    throw error;
+  }
+
+  const txReference = reference || `AIRTIME_${normalizedNetwork}_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+
+  // 4. Cire Kudi a Wallet & Ajiye Transaction a PENDING
+  const { updatedWallet, transaction } = await prisma.$transaction(async (tx) => {
+    const newWallet = await tx.wallet.update({
+      where: { userId: user.id },
+      data: { balance: { decrement: amountToCharge } },
     });
-    isDebited = true;
 
-    // 6. Kira Upstream Provider
-    let providerResult = null;
-    if (provider && typeof provider.buyAirtime === "function") {
-      providerResult = await provider.buyAirtime({
-        network: normalizedNetwork,
-        phone,
-        amount: numericAmount,
-        reference: transaction.reference,
-      });
+    const newTx = await tx.transaction.create({
+      data: {
+        userId: user.id,
+        type: "DEBIT",
+        service: `${normalizedNetwork} AIRTIME`,
+        amount: amountToCharge,
+        status: "PENDING",
+        reference: txReference,
+        description: `₦${numericAmount} ${normalizedNetwork} Airtime to ${targetPhone} (Charged: ₦${amountToCharge})`,
+      },
+    });
 
-      if (providerResult && providerResult.success === false) {
-        throw new Error(providerResult.message || "Upstream provider transaction failed");
-      }
-    } else {
-      console.warn("⚠️ No active upstream provider configured for airtime delivery.");
+    return { updatedWallet: newWallet, transaction: newTx };
+  });
+
+  // 5. TAFARKI NA 1: GSM MODEM (GATEWAY)
+  const activeDevice = await prisma.gsmDevice.findFirst({
+    where: { status: "ONLINE" },
+    include: { sims: true },
+    orderBy: { lastSeen: "desc" },
+  });
+
+  const targetSim = activeDevice?.sims?.find(
+    (s) =>
+      s.carrierName?.toUpperCase().includes(normalizedNetwork) ||
+      s.displayName?.toUpperCase().includes(normalizedNetwork)
+  );
+
+  if (activeDevice && targetSim) {
+    const slotIndex = targetSim.slotIndex ?? 1;
+    const pin = "1997";
+
+    let ussdCode = `*321*${targetPhone}*${numericAmount}*${pin}#`;
+    let steps = [targetPhone, String(numericAmount), pin];
+
+    if (normalizedNetwork === "MTN") {
+      ussdCode = `*600*${targetPhone}*${numericAmount}*${pin}#`;
+    } else if (normalizedNetwork === "AIRTEL") {
+      ussdCode = `*432*1*${targetPhone}*${numericAmount}*${pin}#`;
+    } else if (normalizedNetwork === "GLO") {
+      ussdCode = `*131*${targetPhone}*${numericAmount}*${pin}#`;
+    } else if (normalizedNetwork === "9MOBILE") {
+      ussdCode = `*223*${pin}*${numericAmount}*${targetPhone}#`;
     }
 
-    // 7. Update Transaction Status zuwa SUCCESSFUL
-    await transactionService.updateTransactionStatus({
-      reference: transaction.reference,
-      status: "SUCCESSFUL",
-      description: "Airtime purchase successful",
-    });
+    const commandPayload = {
+      reference: txReference,
+      deviceId: activeDevice.id,
+      type: "USSD",
+      service: "AIRTIME",
+      ussdCode,
+      steps,
+      phone: targetPhone,
+      slotIndex: Number(slotIndex),
+      amount: numericAmount,
+      network: normalizedNetwork,
+    };
 
-    // 8. Usage Log
-    await apiUsageService.createUsageLog({
-      userId: user.id,
-      endpoint: "/api/v1/airtime/buy",
-      method: "POST",
-      amount: amountToCharge,
-      status: "SUCCESSFUL",
-    });
+    await prisma.gsmCommand.create({
+      data: {
+        reference: txReference,
+        deviceId: activeDevice.id,
+        type: "USSD",
+        status: "PENDING",
+        payload: commandPayload,
+      },
+    }).catch(() => null);
 
-    const costPrice = numericAmount * (1 - (discountRate + 0.01));
-    const profit = calculateProfit({
-      costPrice,
-      sellingPrice: amountToCharge,
-    });
+    try {
+      emitEvent("gateway-command", commandPayload, activeDevice.id);
+      if (typeof emitGatewayCommand === "function") {
+        emitGatewayCommand(activeDevice.id, commandPayload);
+      }
+    } catch (socketErr) {
+      console.warn("Gateway socket warning:", socketErr.message);
+    }
 
     return {
-      success: true,
-      reference: transaction.reference,
+      reference: txReference,
+      route: "GSM_GATEWAY",
       network: normalizedNetwork,
-      phone,
+      phone: targetPhone,
       faceValue: numericAmount,
       amountCharged: amountToCharge,
       discount: discountAmount,
-      provider: provider?.name || "AYAX_INTERNAL",
-      service: service?.name || "AIRTIME_TOPUP",
-      profit,
+      walletBalance: updatedWallet.balance,
+      status: "PENDING",
     };
-  } catch (error) {
-    console.error("❌ Airtime Delivery Failure:", error.message);
+  }
 
-    // 9. Tabbatar da Auto-Refund idan an riga an cire kudi
-    if (isDebited) {
-      await walletService
-        .creditWallet({
-          userId: user.id,
-          amount: amountToCharge,
-          reference: `REF_${transaction.reference}`,
-          description: `Auto-Refund for failed airtime: ${transaction.reference}`,
-          module: "REFUND",
-        })
-        .catch((e) => console.error("Critical: Airtime refund failed:", e.message));
+  // 6. TAFARKI NA 2: CLUBKONNECT FALLBACK
+  console.log(`[AIRTIME: CLUBKONNECT] Forwarding ${txReference} to Clubkonnect API...`);
+
+  try {
+    const ckResult = await clubkonnect.vendAirtime({
+      network: normalizedNetwork,
+      phone: targetPhone,
+      amount: numericAmount,
+      reference: txReference,
+    });
+
+    if (ckResult.success) {
+      await prisma.transaction.update({
+        where: { id: transaction.id },
+        data: { status: "SUCCESSFUL" },
+      });
+
+      return {
+        reference: txReference,
+        route: "CLUBKONNECT",
+        network: normalizedNetwork,
+        phone: targetPhone,
+        faceValue: numericAmount,
+        amountCharged: amountToCharge,
+        discount: discountAmount,
+        walletBalance: updatedWallet.balance,
+        status: "SUCCESSFUL",
+      };
+    } else {
+      throw new Error(JSON.stringify(ckResult.rawResponse || "Clubkonnect rejected transaction"));
     }
+  } catch (vendorError) {
+    console.error("Vendor failed, initiating refund:", vendorError.message);
 
-    await transactionService.updateTransactionStatus({
-      reference: transaction.reference,
-      status: "FAILED",
-      description: error.message || "Airtime provider error",
-    });
+    // Reversal / Refund
+    await prisma.$transaction([
+      prisma.wallet.update({
+        where: { userId: user.id },
+        data: { balance: { increment: amountToCharge } },
+      }),
+      prisma.transaction.update({
+        where: { id: transaction.id },
+        data: {
+          status: "FAILED",
+          description: `FAILED: Airtime ₦${numericAmount} to ${targetPhone} (Refunded ₦${amountToCharge})`,
+        },
+      }),
+    ]);
 
-    await apiUsageService.createUsageLog({
-      userId: user.id,
-      endpoint: "/api/v1/airtime/buy",
-      method: "POST",
-      amount: amountToCharge,
-      status: "FAILED",
-    });
-
-    const err = new Error(error.message || "Airtime delivery failed.");
-    err.statusCode = error.statusCode || 502;
-    err.code = error.code || "AIRTIME_PROVIDER_FAILED";
-    throw err;
+    const error = new Error("Airtime delivery failed across all gateways. Wallet balance has been refunded.");
+    error.statusCode = 502;
+    error.code = "VENDOR_FAILURE";
+    throw error;
   }
 };
 
-/* ======================================================
-   2. GET AIRTIME TRANSACTIONS
-====================================================== */
 exports.getAirtimeTransactions = async (userId) => {
-  return prisma.transaction.findMany({
+  return await prisma.transaction.findMany({
     where: {
       userId,
-      service: "AIRTIME",
+      type: "DEBIT",
+      service: { contains: "AIRTIME" },
     },
-    orderBy: {
-      createdAt: "desc",
-    },
+    orderBy: { createdAt: "desc" },
     take: 50,
   });
 };

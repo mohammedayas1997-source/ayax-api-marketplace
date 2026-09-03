@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -11,7 +11,6 @@ import {
   CreditCard,
   RefreshCcw,
   Tags,
-  Crown,
   CircuitBoard,
   Server,
   BarChart3,
@@ -33,7 +32,6 @@ const menu = [
   { name: "Funding", href: "/super-admin/funding", icon: CreditCard },
   { name: "Refund", href: "/super-admin/refund", icon: RefreshCcw },
   { name: "Pricing", href: "/super-admin/pricing", icon: Tags },
-  { name: "Account Tiers", href: "/super-admin/tiers", icon: Crown },
 
   { name: "GSM Gateway", href: "/super-admin/gsm-gateway", icon: CircuitBoard },
 

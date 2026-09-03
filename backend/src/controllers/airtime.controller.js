@@ -1,5 +1,6 @@
 const prisma = require("../config/prisma");
-const axios = require("axios");
+const { emitEvent, emitGatewayCommand } = require("../config/socket");
+const clubkonnect = require("../services/clubkonnect.service");
 
 // Tsoffin discounts a matsayin madogara (Fallback) idan ba a saita a Database ba
 const DEFAULT_DISCOUNTS = {
@@ -19,16 +20,17 @@ const DEFAULT_DISCOUNTS = {
 exports.purchaseAirtime = async (req, res) => {
   try {
     const user = req.user || req.apiKeyUser;
-    const { network, phone, amount, reference } = req.body;
+    const { network, phone, phoneNumber, amount, reference } = req.body;
 
+    const targetPhone = String(phoneNumber || phone || "").trim();
     const numericAmount = Number(amount);
     const normalizedNetwork = String(network || "").toUpperCase().trim();
 
-    if (!normalizedNetwork || !phone || !numericAmount || numericAmount < 50) {
+    if (!normalizedNetwork || !targetPhone || !numericAmount || numericAmount < 50) {
       return res.status(400).json({
         status: "error",
         code: "VALIDATION_ERROR",
-        message: "Valid network, phone number, and minimum amount of NGN 50 are required.",
+        message: "Valid network, recipient phone number, and minimum amount of NGN 50 are required.",
       });
     }
 
@@ -49,7 +51,7 @@ exports.purchaseAirtime = async (req, res) => {
     }
 
     // 2. Gano Matsayin Developer (Tier)
-    const userTier = String(user.tier || user.role === "DEVELOPER" ? "STANDARD" : "REGULAR").toUpperCase();
+    const userTier = String(user.tier || (user.role === "DEVELOPER" ? "STANDARD" : "REGULAR")).toUpperCase();
 
     // 3. Nemi Ainihin Farashi daga ServicePricing a Database
     const pricingPlan = await prisma.servicePricing.findFirst({
@@ -101,7 +103,7 @@ exports.purchaseAirtime = async (req, res) => {
     const txReference =
       reference || `AYAX_AIR_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-    // 5. Cire Kuɗin Wallet da Adana Transaction (Daidai da Prisma Schema)
+    // 5. Cire Kuɗin Wallet da Adana Transaction a PENDING
     const { updatedWallet, transaction } = await prisma.$transaction(async (tx) => {
       const newWallet = await tx.wallet.update({
         where: { userId: user.id },
@@ -118,48 +120,85 @@ exports.purchaseAirtime = async (req, res) => {
           amount: amountToCharge,
           status: "PENDING",
           reference: txReference,
-          description: `Airtime purchase of NGN ${numericAmount} to ${phone} (Charged: NGN ${amountToCharge})`,
+          description: `Airtime purchase of NGN ${numericAmount} to ${targetPhone} (Charged: NGN ${amountToCharge})`,
         },
       });
 
       return { updatedWallet: newWallet, transaction: newTx };
     });
 
-    // 6. Tura Request zuwa Upstream Gateway / GSM Modem
-    let isSuccess = false;
+    // 6. ROUTE 1: DUBA GSM GATEWAY / MODEM
+    const activeDevice = await prisma.gsmDevice.findFirst({
+      where: { status: "ONLINE" },
+      include: { sims: true },
+      orderBy: { lastSeen: "desc" },
+    });
 
-    try {
-      /*
-      const upstreamRes = await axios.post(
-        `${process.env.AIRTIME_PROVIDER_URL}/api/v1/topup`,
-        { network: normalizedNetwork, phone, amount: numericAmount },
-        { headers: { Authorization: `Bearer ${process.env.AIRTIME_PROVIDER_SECRET}` } }
-      );
-      isSuccess = upstreamRes.data?.status === "success";
-      */
+    const targetSim = activeDevice?.sims?.find(
+      (s) =>
+        s.carrierName?.toUpperCase().includes(normalizedNetwork) ||
+        s.displayName?.toUpperCase().includes(normalizedNetwork)
+    );
 
-      // Mock Gateway Dispatch (A canza idan an haɗa live provider):
-      isSuccess = true;
-    } catch (upstreamErr) {
-      console.error("Upstream Gateway Error:", upstreamErr.message);
-      isSuccess = false;
-    }
+    if (activeDevice && targetSim) {
+      const slotIndex = targetSim.slotIndex ?? 1;
+      const pin = "1997"; // GSM Modem transfer pin
 
-    // 7. Tabbatar da Nasara ko Mayar da Kuɗi (Refund)
-    if (isSuccess) {
-      await prisma.transaction.update({
-        where: { id: transaction.id },
-        data: { status: "SUCCESSFUL" },
-      });
+      // Standard NCC Airtime Transfer USSD Commands (*321# ko *600#)
+      let ussdCode = `*321*${targetPhone}*${numericAmount}*${pin}#`;
+      let steps = [targetPhone, String(numericAmount), pin];
+
+      if (normalizedNetwork === "MTN") {
+        ussdCode = `*600*${targetPhone}*${numericAmount}*${pin}#`;
+      } else if (normalizedNetwork === "AIRTEL") {
+        ussdCode = `*432*1*${targetPhone}*${numericAmount}*${pin}#`;
+      } else if (normalizedNetwork === "GLO") {
+        ussdCode = `*131*${targetPhone}*${numericAmount}*${pin}#`;
+      } else if (normalizedNetwork === "9MOBILE") {
+        ussdCode = `*223*${pin}*${numericAmount}*${targetPhone}#`;
+      }
+
+      const commandPayload = {
+        reference: txReference,
+        deviceId: activeDevice.id,
+        type: "USSD",
+        service: "AIRTIME",
+        ussdCode,
+        steps,
+        phone: targetPhone,
+        slotIndex: Number(slotIndex),
+        amount: numericAmount,
+        network: normalizedNetwork,
+      };
+
+      await prisma.gsmCommand.create({
+        data: {
+          reference: txReference,
+          deviceId: activeDevice.id,
+          type: "USSD",
+          status: "PENDING",
+          payload: commandPayload,
+        },
+      }).catch(() => null);
+
+      try {
+        emitEvent("gateway-command", commandPayload, activeDevice.id);
+        if (typeof emitGatewayCommand === "function") {
+          emitGatewayCommand(activeDevice.id, commandPayload);
+        }
+      } catch (socketErr) {
+        console.warn("Gateway socket broadcast warning:", socketErr.message);
+      }
 
       return res.status(200).json({
         status: "success",
-        code: "TRANSACTION_SUCCESSFUL",
-        message: `NGN ${numericAmount} airtime successfully recharged to ${phone}.`,
+        code: "TRANSACTION_QUEUED",
+        route: "GSM_GATEWAY",
+        message: `Airtime transfer queued on local modem for ${targetPhone}.`,
         data: {
           reference: txReference,
           network: normalizedNetwork,
-          phone,
+          phone: targetPhone,
           faceValue: numericAmount,
           amountCharged: amountToCharge,
           discount: discountAmount,
@@ -167,7 +206,47 @@ exports.purchaseAirtime = async (req, res) => {
           walletBalance: updatedWallet.balance,
         },
       });
-    } else {
+    }
+
+    // 7. ROUTE 2: FALLBACK ZUWA CLUBKONNECT (Idan Babu Modem ko Ba ya Aiki)
+    console.log(`[AIRTIME: CLUBKONNECT] Modem offline. Forwarding ${txReference} to Clubkonnect API...`);
+
+    try {
+      const ckResult = await clubkonnect.vendAirtime({
+        network: normalizedNetwork,
+        phone: targetPhone,
+        amount: numericAmount,
+        reference: txReference,
+      });
+
+      if (ckResult.success) {
+        await prisma.transaction.update({
+          where: { id: transaction.id },
+          data: { status: "SUCCESSFUL" },
+        });
+
+        return res.status(200).json({
+          status: "success",
+          code: "TRANSACTION_SUCCESSFUL",
+          route: "CLUBKONNECT",
+          message: `NGN ${numericAmount} airtime successfully recharged to ${targetPhone}.`,
+          data: {
+            reference: txReference,
+            network: normalizedNetwork,
+            phone: targetPhone,
+            faceValue: numericAmount,
+            amountCharged: amountToCharge,
+            discount: discountAmount,
+            tier: userTier,
+            walletBalance: updatedWallet.balance,
+          },
+        });
+      } else {
+        throw new Error(JSON.stringify(ckResult.rawResponse || "Clubkonnect failed to process airtime"));
+      }
+    } catch (upstreamErr) {
+      console.error("Clubkonnect Airtime Error, initiating refund:", upstreamErr.message);
+
       // Reversal / Refund nan take
       await prisma.$transaction([
         prisma.wallet.update({
@@ -178,7 +257,7 @@ exports.purchaseAirtime = async (req, res) => {
           where: { id: transaction.id },
           data: { 
             status: "FAILED",
-            description: `FAILED: Airtime recharge of NGN ${numericAmount} to ${phone} (Refunded NGN ${amountToCharge})` 
+            description: `FAILED: Airtime recharge of NGN ${numericAmount} to ${targetPhone} (Refunded NGN ${amountToCharge})` 
           },
         }),
       ]);
@@ -186,7 +265,7 @@ exports.purchaseAirtime = async (req, res) => {
       return res.status(502).json({
         status: "error",
         code: "PROVIDER_FAILURE",
-        message: "Airtime vending failed. Your wallet balance has been refunded.",
+        message: "Airtime vending failed across all available providers. Your wallet balance has been refunded.",
       });
     }
   } catch (error) {

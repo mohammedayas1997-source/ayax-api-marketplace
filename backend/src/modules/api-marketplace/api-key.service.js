@@ -302,8 +302,7 @@ const serializeApiKey = (
     createdAt: apiKey.createdAt,
     updatedAt: apiKey.updatedAt,
 
-    usageCount:
-      apiKey._count?.usages || 0,
+    usageCount: 0,
 
     user: apiKey.user || null,
   };

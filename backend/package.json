@@ -38,6 +38,7 @@
     "nodemailer": "^9.0.5",
     "openai": "^7.4.0",
     "pg": "^8.21.0",
+    "prembly-react-kyc": "^1.0.3",
     "prisma": "^6.15.0",
     "redis": "^6.0.0",
     "resend": "^6.18.1",

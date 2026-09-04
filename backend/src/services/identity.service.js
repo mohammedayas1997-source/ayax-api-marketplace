@@ -1,10 +1,10 @@
 const prisma = require("../config/prisma");
-const prembly = require("./prembly.service");
+const abjiktech = require("./abjiktech.service");
 const walletService = require("./wallet.service");
 const transactionService = require("./transaction.service");
 
 /* ======================================================
-   1. NIN VERIFICATION (SLIP & DETAILS LOOKUP)
+   1. NIN VERIFICATION (ABJIKTECH)
 ====================================================== */
 exports.verifyNIN = async ({ user, nin, slipType = "Standard Slip", reference }) => {
   const cleanNIN = String(nin || "").trim();
@@ -24,7 +24,6 @@ exports.verifyNIN = async ({ user, nin, slipType = "Standard Slip", reference })
 
   const userTier = String(user.tier || (user.role === "DEVELOPER" ? "STANDARD" : "REGULAR")).toUpperCase();
 
-  // 1. Nemi Farashin NIN daga ServicePricing
   const pricing = await prisma.servicePricing.findFirst({
     where: {
       category: "IDENTITY",
@@ -40,7 +39,6 @@ exports.verifyNIN = async ({ user, nin, slipType = "Standard Slip", reference })
 
   const cost = Number(pricing?.sellingPrice || 100);
 
-  // 2. Duba Balance na Wallet
   const wallet = await walletService.getOrCreateWallet(user.id);
   if (Number(wallet.balance) < cost) {
     const err = new Error(`Insufficient wallet balance. NGN ${cost} is required for NIN verification.`);
@@ -51,7 +49,6 @@ exports.verifyNIN = async ({ user, nin, slipType = "Standard Slip", reference })
 
   const txReference = reference || `AYAX_NIN_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-  // 3. Cire Kudi a Wallet & Ajiye Transaction a PROCESSING
   await transactionService.createTransaction({
     userId: user.id,
     type: "DEBIT",
@@ -70,8 +67,8 @@ exports.verifyNIN = async ({ user, nin, slipType = "Standard Slip", reference })
     module: "IDENTITY",
   });
 
-  // 4. Kira Prembly API
-  const result = await prembly.verifyNIN(cleanNIN);
+  // Kira Abjiktech API
+  const result = await abjiktech.verifyNIN(cleanNIN);
 
   if (result.success) {
     await transactionService.updateTransactionStatus({
@@ -99,7 +96,7 @@ exports.verifyNIN = async ({ user, nin, slipType = "Standard Slip", reference })
     };
   }
 
-  // 5. Auto-Refund Nan Take Idan Binciken Ya Gaza
+  // Auto-Refund nan take
   await walletService.creditWallet({
     userId: user.id,
     amount: cost,
@@ -114,14 +111,14 @@ exports.verifyNIN = async ({ user, nin, slipType = "Standard Slip", reference })
     description: result.message || "Verification failed",
   });
 
-  const error = new Error(result.message || "Unable to verify NIN. Wallet balance refunded.");
+  const error = new Error(result.message || "Unable to verify NIN via Abjiktech. Wallet refunded.");
   error.statusCode = 404;
   error.code = "VERIFICATION_FAILED";
   throw error;
 };
 
 /* ======================================================
-   2. BVN VERIFICATION
+   2. BVN VERIFICATION (ABJIKTECH)
 ====================================================== */
 exports.verifyBVN = async ({ user, bvn, reference }) => {
   const cleanBVN = String(bvn || "").trim();
@@ -141,7 +138,6 @@ exports.verifyBVN = async ({ user, bvn, reference }) => {
 
   const userTier = String(user.tier || (user.role === "DEVELOPER" ? "STANDARD" : "REGULAR")).toUpperCase();
 
-  // 1. Nemi Farashin BVN daga ServicePricing
   const pricing = await prisma.servicePricing.findFirst({
     where: {
       category: "IDENTITY",
@@ -157,7 +153,6 @@ exports.verifyBVN = async ({ user, bvn, reference }) => {
 
   const cost = Number(pricing?.sellingPrice || 70);
 
-  // 2. Duba Balance na Wallet
   const wallet = await walletService.getOrCreateWallet(user.id);
   if (Number(wallet.balance) < cost) {
     const err = new Error(`Insufficient wallet balance. NGN ${cost} is required for BVN verification.`);
@@ -168,7 +163,6 @@ exports.verifyBVN = async ({ user, bvn, reference }) => {
 
   const txReference = reference || `AYAX_BVN_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-  // 3. Cire Kudi a Wallet & Ajiye Transaction a PROCESSING
   await transactionService.createTransaction({
     userId: user.id,
     type: "DEBIT",
@@ -187,8 +181,8 @@ exports.verifyBVN = async ({ user, bvn, reference }) => {
     module: "IDENTITY",
   });
 
-  // 4. Kira Prembly API
-  const result = await prembly.verifyBVN(cleanBVN);
+  // Kira Abjiktech API
+  const result = await abjiktech.verifyBVN(cleanBVN);
 
   if (result.success) {
     await transactionService.updateTransactionStatus({
@@ -215,7 +209,7 @@ exports.verifyBVN = async ({ user, bvn, reference }) => {
     };
   }
 
-  // 5. Auto-Refund Nan Take Idan Ya Gaza
+  // Auto-Refund nan take
   await walletService.creditWallet({
     userId: user.id,
     amount: cost,
@@ -230,14 +224,14 @@ exports.verifyBVN = async ({ user, bvn, reference }) => {
     description: result.message || "Verification failed",
   });
 
-  const error = new Error(result.message || "Unable to verify BVN. Wallet balance refunded.");
+  const error = new Error(result.message || "Unable to verify BVN via Abjiktech. Wallet refunded.");
   error.statusCode = 404;
   error.code = "VERIFICATION_FAILED";
   throw error;
 };
 
 /* ======================================================
-   3. NIN VALIDATION (ISSUE RESOLUTION / CLEARANCE)
+   3. NIN VALIDATION / RESOLUTION (ABJIKTECH)
 ====================================================== */
 exports.validateNinIssue = async ({ user, nin, issueType = "BANK_MISMATCH", reference }) => {
   const cleanNIN = String(nin || "").trim();
@@ -257,7 +251,6 @@ exports.validateNinIssue = async ({ user, nin, issueType = "BANK_MISMATCH", refe
 
   const userTier = String(user.tier || (user.role === "DEVELOPER" ? "STANDARD" : "REGULAR")).toUpperCase();
 
-  // 1. Nemi Farashin Validation daga ServicePricing
   const pricing = await prisma.servicePricing.findFirst({
     where: {
       category: "IDENTITY",
@@ -273,7 +266,6 @@ exports.validateNinIssue = async ({ user, nin, issueType = "BANK_MISMATCH", refe
 
   const cost = Number(pricing?.sellingPrice || 1500);
 
-  // 2. Duba Balance na Wallet
   const wallet = await walletService.getOrCreateWallet(user.id);
   if (Number(wallet.balance) < cost) {
     const err = new Error(`Insufficient wallet balance. NGN ${cost} is required for NIN issue validation.`);
@@ -284,7 +276,6 @@ exports.validateNinIssue = async ({ user, nin, issueType = "BANK_MISMATCH", refe
 
   const txReference = reference || `AYAX_VAL_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-  // 3. Cire Kudi a Wallet & Ajiye Transaction
   await transactionService.createTransaction({
     userId: user.id,
     type: "DEBIT",
@@ -303,8 +294,8 @@ exports.validateNinIssue = async ({ user, nin, issueType = "BANK_MISMATCH", refe
     module: "IDENTITY",
   });
 
-  // 4. Kira Prembly API don Tura Validation
-  const result = await prembly.validateNINIssue({
+  // Kira Abjiktech API
+  const result = await abjiktech.validateNINIssue({
     nin: cleanNIN,
     issueType,
     reference: txReference,
@@ -328,7 +319,7 @@ exports.validateNinIssue = async ({ user, nin, issueType = "BANK_MISMATCH", refe
     };
   }
 
-  // 5. Auto-Refund Nan Take Idan Submission Ya Gaza
+  // Auto-Refund nan take
   await walletService.creditWallet({
     userId: user.id,
     amount: cost,
@@ -343,7 +334,7 @@ exports.validateNinIssue = async ({ user, nin, issueType = "BANK_MISMATCH", refe
     description: result.message || "NIN validation submission failed",
   });
 
-  const error = new Error(result.message || "NIN validation submission failed. Wallet balance refunded.");
+  const error = new Error(result.message || "NIN validation request failed. Funds refunded.");
   error.statusCode = 400;
   error.code = "VALIDATION_SUBMISSION_FAILED";
   throw error;

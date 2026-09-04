@@ -1,7 +1,15 @@
 const axios = require("axios");
 
-const API_KEY = process.env.ABJIKTECH_API_KEY;
-const BASE_URL = (process.env.ABJIKTECH_BASE_URL || "https://abjiktech.com.ng").replace(/\/+$/, "");
+// Tabbatar da Base URL ko da an saka empty string ko an ƙara /api a Render
+let rawBase = (process.env.ABJIKTECH_BASE_URL || "").trim();
+if (!rawBase || !rawBase.startsWith("http")) {
+  rawBase = "https://abjiktech.com.ng";
+}
+const BASE_URL = rawBase.replace(/\/+$/, "").replace(/\/api$/, "");
+
+const API_KEY = (process.env.ABJIKTECH_API_KEY || "dv_068de722a84b71ce900a65fa4c17bdf9_1788498653")
+  .trim()
+  .replace(/^["']|["']$/g, "");
 
 const ENDPOINTS = {
   // NIN by NIN

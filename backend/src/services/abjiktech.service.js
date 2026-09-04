@@ -43,29 +43,52 @@ exports.verifyNIN = async (ninNumber, slipType = "Standard Slip") => {
     else if (formatted.includes("REGULAR")) url = ENDPOINTS.NIN_REGULAR;
     else if (formatted.includes("VNIN")) url = ENDPOINTS.NIN_VNIN;
 
-    const res = await axios.post(url, { api_key: API_KEY, nin: String(ninNumber).trim() }, { timeout: 35000 });
+    const apiKeyToUse = API_KEY || process.env.ABJIKTECH_API_KEY || "dv_068de722a84b71ce900a65fa4c17bdf9_1788498653";
+
+    console.log(`[ABJIKTECH REQUEST]: Posting to ${url} with NIN: ${ninNumber}`);
+
+    const res = await axios.post(
+      url,
+      { api_key: apiKeyToUse, nin: String(ninNumber).trim() },
+      {
+        headers: { "Content-Type": "application/json" },
+        timeout: 35000,
+      }
+    );
+
     const d = res.data;
-    const ok = d?.success === true || d?.status === "success" || d?.status === true;
-    const r = d?.data || d?.result || d;
+    const ok = d?.status === "success" || d?.success === true;
+    const r = d?.user_data || d?.data || d?.result || {};
+
+    if (!ok && d?.success === false) {
+      return {
+        success: false,
+        message: d?.message || "NIN verification failed at provider",
+        raw: d,
+      };
+    }
 
     return {
-      success: ok,
+      success: true,
       nin: r?.nin || ninNumber,
-      firstName: r?.firstname || r?.first_name || "",
-      surname: r?.surname || r?.last_name || "",
-      middleName: r?.middlename || r?.middle_name || "",
-      phone: r?.telephoneno || r?.phone || r?.phoneNumber || "",
+      firstName: r?.firstName || r?.firstname || "",
+      surname: r?.surname || "",
+      middleName: r?.middleName || r?.middlename || "",
+      phone: r?.telephoneNo || r?.phone || "",
       gender: r?.gender || "",
-      dob: r?.birthdate || r?.dob || "",
-      photo: r?.photo || r?.image || null,
-      address: r?.residence_address || r?.address || "",
-      trackingId: r?.trackingId || r?.tracking_id || null,
-      slipUrl: r?.slip_url || r?.pdf_url || null,
-      message: d?.message || "NIN verification completed",
+      dob: r?.birthDate || r?.dob || "",
+      photo: r?.photo || null,
+      slipUrl: d?.pdf_url || d?.slip_url || null,
+      transactionId: d?.transaction_id || null,
+      message: d?.message || "NIN verification completed successfully",
       raw: d,
     };
   } catch (err) {
-    return { success: false, message: err.response?.data?.message || err.message };
+    console.error("[ABJIKTECH ERROR]:", err.response?.data || err.message);
+    return {
+      success: false,
+      message: err.response?.data?.message || err.message,
+    };
   }
 };
 

@@ -6,7 +6,7 @@ const authMiddleware = require("../middlewares/auth.middleware");
 const apiKeyMiddleware = require("../middlewares/apiKey.middleware");
 const validate = require("../middlewares/validate.middleware");
 
-// Tabbatar flexibleAuth function ne mai inganci
+// Flexible Auth Helper
 const flexibleAuth = (req, res, next) => {
   const apiKey = req.headers["x-api-key"] || req.headers["api-key"];
   if (apiKey && typeof apiKeyMiddleware === "function") {
@@ -18,7 +18,7 @@ const flexibleAuth = (req, res, next) => {
   return next();
 };
 
-// Safe validator wrapper don gudun argument handler TypeError
+// Safe Validator Wrapper
 const runValidation = (schema) => {
   if (typeof validate === "function") {
     return validate(schema);
@@ -41,7 +41,7 @@ const runValidation = (schema) => {
    ROUTES
 ====================================================== */
 
-// 1. NIN Verification
+// 1. NIN Verification (by NIN)
 router.post(
   "/nin/verify",
   flexibleAuth,
@@ -83,21 +83,22 @@ router.post(
   identityController.verifyBvn
 );
 
-// 4. NIN Validation
+// 4. NIN Validation (Submit)
 router.post(
   "/nin/validate",
   flexibleAuth,
   runValidation(
     z.object({
       nin: z.string().trim().regex(/^[0-9]{11}$/, "11-digit NIN required"),
-      errorType: z.enum(["no_record", "simbank_validation", "modification", "photo_error"]).optional(),
+      errorType: z.string().optional(),
       issueType: z.string().optional(),
       reference: z.string().optional(),
     })
   ),
-  identityController.submitNinValidation || identityController.validateNinIssue
+  identityController.validateNinIssue
 );
 
+// 4b. NIN Validation Status
 router.post(
   "/nin/validate/status",
   flexibleAuth,
@@ -110,7 +111,7 @@ router.post(
   identityController.checkNinValidationStatus
 );
 
-// 5. IPE Clearance
+// 5. IPE Clearance (Submit)
 router.post(
   "/ipe/submit",
   flexibleAuth,
@@ -123,14 +124,19 @@ router.post(
   identityController.submitIpeClearance
 );
 
+// 5b. IPE Clearance Status
 router.post(
   "/ipe/status",
   flexibleAuth,
-  runValidation(z.object({ trackingID: z.string().trim().min(1) })),
+  runValidation(
+    z.object({
+      trackingID: z.string().trim().min(1),
+    })
+  ),
   identityController.checkIpeStatus
 );
 
-// 6. Personalization
+// 6. NIN Personalization (Submit)
 router.post(
   "/personalization/submit",
   flexibleAuth,
@@ -143,10 +149,15 @@ router.post(
   identityController.submitPersonalization
 );
 
+// 6b. NIN Personalization Status
 router.post(
   "/personalization/status",
   flexibleAuth,
-  runValidation(z.object({ trackingId: z.string().trim().min(1) })),
+  runValidation(
+    z.object({
+      trackingId: z.string().trim().min(1),
+    })
+  ),
   identityController.checkPersonalizationStatus
 );
 

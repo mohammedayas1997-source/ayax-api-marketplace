@@ -36,6 +36,7 @@ const ALLOWED_SCOPES = [
   "TRANSACTIONS",
   "WALLET",
   "WEBHOOKS",
+  "IDENTITY",
 ];
 
 const DEFAULT_SCOPES = [
@@ -265,12 +266,6 @@ const safeApiKeySelect = {
 
   user: {
     select: safeUserSelect,
-  },
-
-  _count: {
-    select: {
-      usages: true,
-    },
   },
 };
 

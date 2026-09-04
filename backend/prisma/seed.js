@@ -124,6 +124,24 @@ const identityPricing = [
   { serviceCode: "NIN_VALIDATION_BVN_NIN_UNLINKED", serviceName: "BVN-NIN Link Integration", category: "IDENTITY", sellingPrice: 1200, tier: "REGULAR" },
 ];
 
+await prisma.apiProvider.upsert({
+  where: { code: "ABJIKTECH" },
+  update: {
+    apiKey: "dv_068de722a84b71ce900a65fa4c17bdf9_1788498653",
+    status: "ACTIVE",
+    baseUrl: "https://abjiktech.com.ng/api",
+  },
+  create: {
+    name: "Abjiktech Identity Services",
+    code: "ABJIKTECH",
+    category: "IDENTITY",
+    baseUrl: "https://abjiktech.com.ng/api",
+    apiKey: "dv_068de722a84b71ce900a65fa4c17bdf9_1788498653",
+    status: "ACTIVE",
+    priority: 1,
+  },
+});
+
 async function seedData() {
   console.log("⚡ Seeding Data Plans...");
 

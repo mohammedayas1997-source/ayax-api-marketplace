@@ -275,7 +275,7 @@ const endpoints = [
     path: "/api/v1/identity/nin/verify",
     title: "NIN Verification (Lookup & Slip Data)",
     description:
-      "Verify an 11-digit NIN and retrieve profile data including names, birth date, photo, and address.",
+      "Verify an 11-digit NIN and generate slips. Supported slipType: 'Standard Slip', 'Regular Slip', 'Premium Slip', 'VNIN Slip'.",
     request: `{
   "nin": "12345678901",
   "slipType": "Standard Slip",
@@ -297,10 +297,49 @@ const endpoints = [
       "gender": "Male",
       "dob": "1995-04-12",
       "photo": "data:image/jpeg;base64,...",
-      "address": "No 12 Airport Road, Kano State"
+      "address": "No 12 Airport Road, Kano State",
+      "trackingId": "TID99812451",
+      "slipUrl": "https://abjiktech.com.ng/slips/download/std_123.pdf"
     },
     "amountCharged": 100,
     "walletBalance": 45200
+  }
+}`,
+  },
+  {
+    id: "verify-nin-phone",
+    category: "NIMC (NIN) API",
+    method: "POST",
+    path: "/api/v1/identity/nin/verify-phone",
+    title: "NIN Lookup by Phone Number",
+    description:
+      "Look up NIN profile details and generate slips using an 11-digit linked mobile phone number. Supported slipType: 'Standard Slip', 'Regular Slip', 'Premium Slip', 'VNIN Slip'.",
+    request: `{
+  "phone": "08012345678",
+  "slipType": "Standard Slip",
+  "reference": "AYAX-PHN-0001"
+}`,
+    response: `{
+  "status": "success",
+  "code": "VERIFICATION_SUCCESSFUL",
+  "message": "NIN phone lookup completed successfully.",
+  "data": {
+    "reference": "AYAX-PHN-0001",
+    "phone": "08012345678",
+    "slipType": "Standard Slip",
+    "details": {
+      "nin": "12345678901",
+      "firstName": "IBRAHIM",
+      "surname": "MUSA",
+      "middleName": "GARBA",
+      "gender": "Male",
+      "dob": "1995-04-12",
+      "photo": "data:image/jpeg;base64,...",
+      "address": "No 12 Airport Road, Kano State",
+      "slipUrl": "https://abjiktech.com.ng/slips/download/phn_123.pdf"
+    },
+    "amountCharged": 100,
+    "walletBalance": 45100
   }
 }`,
   },
@@ -309,25 +348,145 @@ const endpoints = [
     category: "NIMC (NIN) API",
     method: "POST",
     path: "/api/v1/identity/nin/validate",
-    title: "NIN Validation & Issue Clearance",
+    title: "Submit NIN Validation (Issue Clearance)",
     description:
-      "Submit an issue resolution request (IPE_CLEARANCE, BANK_MISMATCH, NO_RECORD_FOUND, DOB_MISMATCH, PHOTO_BIOMETRIC_ERROR, PHONE_NOT_LINKED, MULTIPLE_NIN_CONFLICT, BVN_NIN_UNLINKED).",
+      "Submit an issue resolution request for manual processing. Allowed errorType values: 'no_record', 'simbank_validation', 'modification', 'photo_error'.",
     request: `{
   "nin": "12345678901",
-  "issueType": "BANK_MISMATCH",
+  "errorType": "no_record",
   "reference": "AYAX-VAL-0001"
 }`,
     response: `{
   "status": "success",
   "code": "VALIDATION_QUEUED",
-  "message": "NIN validation issue submitted successfully for clearance.",
+  "message": "NIN validation request submitted successfully. Your request is now pending processing.",
   "data": {
     "reference": "AYAX-VAL-0001",
     "nin": "12345678901",
-    "issueType": "BANK_MISMATCH",
-    "amountCharged": 1500,
-    "walletBalance": 43700
+    "errorType": "no_record",
+    "ticketId": "TKT17100000001234",
+    "transactionId": "nin_val_a1b2c3d4e5f6g7h8",
+    "status": "pending",
+    "amountCharged": 500,
+    "walletBalance": 44600
   }
+}`,
+  },
+  {
+    id: "check-validation-status",
+    category: "NIMC (NIN) API",
+    method: "POST",
+    path: "/api/v1/identity/nin/validate/status",
+    title: "Check NIN Validation Status",
+    description:
+      "Query the real-time status of a submitted NIN validation using either ticketId or transactionId.",
+    request: `{
+  "ticketId": "TKT17100000001234"
+}`,
+    response: `{
+  "success": true,
+  "data": {
+    "ticket_id": "TKT17100000001234",
+    "transaction_id": "nin_val_a1b2c3d4e5f6g7h8",
+    "nin": "12345678901",
+    "error_type": "no_record",
+    "status": "success",
+    "submitted_at": "2026-09-04 10:30:00",
+    "message": "Your NIN validation has been completed successfully."
+  }
+}`,
+  },
+  {
+    id: "submit-ipe-clearance",
+    category: "NIMC (NIN) API",
+    method: "POST",
+    path: "/api/v1/identity/ipe/submit",
+    title: "Submit IPE Clearance",
+    description:
+      "Submit an enrolment tracking ID (1-20 alphanumeric characters) for Identity Protection Eligibility (IPE) clearance.",
+    request: `{
+  "trackingID": "IPE202600001",
+  "reference": "AYAX-IPE-0001"
+}`,
+    response: `{
+  "status": "success",
+  "code": "IPE_SUBMITTED",
+  "message": "IPE clearance submitted for manual processing.",
+  "data": {
+    "reference": "AYAX-IPE-0001",
+    "trackingID": "IPE202600001",
+    "result": {
+      "transaction_id": "ipe_tx_99881122",
+      "status": "pending"
+    },
+    "amountCharged": 2000,
+    "walletBalance": 42600
+  }
+}`,
+  },
+  {
+    id: "check-ipe-status",
+    category: "NIMC (NIN) API",
+    method: "POST",
+    path: "/api/v1/identity/ipe/status",
+    title: "Check IPE Clearance Status",
+    description:
+      "Track the progress of a previously submitted IPE clearance request using its trackingID.",
+    request: `{
+  "trackingID": "IPE202600001"
+}`,
+    response: `{
+  "success": true,
+  "status": "completed",
+  "nin": "12345678901",
+  "tracking_id": "IPE202600001",
+  "message": "IPE clearance completed successfully."
+}`,
+  },
+  {
+    id: "submit-personalization",
+    category: "NIMC (NIN) API",
+    method: "POST",
+    path: "/api/v1/identity/personalization/submit",
+    title: "Submit NIN Personalization",
+    description:
+      "Submit a NIN personalization request using a unique 15-character NIN tracking ID.",
+    request: `{
+  "trackingId": "0S123456789ABCD",
+  "reference": "AYAX-PERS-0001"
+}`,
+    response: `{
+  "status": "success",
+  "code": "PERSONALIZATION_QUEUED",
+  "message": "Personalization submitted successfully.",
+  "data": {
+    "reference": "AYAX-PERS-0001",
+    "trackingId": "0S123456789ABCD",
+    "result": {
+      "status": "inprogress"
+    },
+    "amountCharged": 1200,
+    "walletBalance": 41400
+  }
+}`,
+  },
+  {
+    id: "check-personalization-status",
+    category: "NIMC (NIN) API",
+    method: "POST",
+    path: "/api/v1/identity/personalization/status",
+    title: "Check Personalization Status",
+    description:
+      "Poll the status of an ongoing NIN personalization request using the trackingId.",
+    request: `{
+  "trackingId": "0S123456789ABCD"
+}`,
+    response: `{
+  "success": true,
+  "status": "completed",
+  "nin": "12345678901",
+  "tracking_id": "0S123456789ABCD",
+  "message": "Personalization successful."
 }`,
   },
   {
@@ -337,9 +496,10 @@ const endpoints = [
     path: "/api/v1/identity/bvn/verify",
     title: "BVN Verification",
     description:
-      "Query Bank Verification Number (BVN) to validate customer names, phone number, and biological KYC details.",
+      "Query Bank Verification Number (BVN) to validate identity, date of birth, photo, and banking profile data. Supported slipType: 'Standard Slip', 'Premium Slip'.",
     request: `{
   "bvn": "22233344455",
+  "slipType": "Standard Slip",
   "reference": "AYAX-BVN-0001"
 }`,
     response: `{
@@ -349,6 +509,7 @@ const endpoints = [
   "data": {
     "reference": "AYAX-BVN-0001",
     "bvn": "22233344455",
+    "slipType": "Standard Slip",
     "details": {
       "firstName": "FATIMA",
       "surname": "AHMAD",
@@ -356,10 +517,11 @@ const endpoints = [
       "phone": "09087654321",
       "gender": "Female",
       "dob": "1998-11-20",
-      "photo": "data:image/jpeg;base64,..."
+      "photo": "data:image/jpeg;base64,...",
+      "slipUrl": "https://abjiktech.com.ng/slips/download/bvn_std_222.pdf"
     },
     "amountCharged": 70,
-    "walletBalance": 43630
+    "walletBalance": 41330
   }
 }`,
   },

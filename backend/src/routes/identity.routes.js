@@ -6,114 +6,120 @@ const authMiddleware = require("../middlewares/auth.middleware");
 const apiKeyMiddleware = require("../middlewares/apiKey.middleware");
 const validate = require("../middlewares/validate.middleware");
 
-/* ======================================================
-   FLEXIBLE AUTH MIDDLEWARE
-   Yana karbar JWT Token (Dashboard Users) ko API Key (Developers)
-====================================================== */
 const flexibleAuth = (req, res, next) => {
   const apiKey = req.headers["x-api-key"] || req.headers["api-key"];
-  if (apiKey) {
-    return apiKeyMiddleware("IDENTITY")(req, res, next);
-  }
+  if (apiKey) return apiKeyMiddleware("IDENTITY")(req, res, next);
   return authMiddleware(req, res, next);
 };
 
-/* ======================================================
-   NIGERIAN VALIDATION ISSUE TYPES ENUM
-====================================================== */
-const VALIDATION_ISSUES = [
-  "BANK_MISMATCH",
-  "IPE_CLEARANCE",
-  "NO_RECORD_FOUND",
-  "DOB_MISMATCH",
-  "PHOTO_BIOMETRIC_ERROR",
-  "PHONE_NOT_LINKED",
-  "MULTIPLE_NIN_CONFLICT",
-  "BVN_NIN_UNLINKED",
-];
-
-/* ======================================================
-   VALIDATION SCHEMAS
-====================================================== */
-const verifyNinSchema = z.object({
-  nin: z
-    .string()
-    .trim()
-    .length(11, "A valid 11-digit NIN is required")
-    .regex(/^[0-9]{11}$/, "NIN must contain only numbers"),
-  slipType: z.string().trim().optional(),
-  reference: z.string().trim().max(100).optional(),
-});
-
-const verifyBvnSchema = z.object({
-  bvn: z
-    .string()
-    .trim()
-    .length(11, "A valid 11-digit BVN is required")
-    .regex(/^[0-9]{11}$/, "BVN must contain only numbers"),
-  reference: z.string().trim().max(100).optional(),
-});
-
-const validateNinSchema = z.object({
-  nin: z
-    .string()
-    .trim()
-    .length(11, "A valid 11-digit NIN is required")
-    .regex(/^[0-9]{11}$/, "NIN must contain only numbers"),
-  issueType: z
-    .string()
-    .trim()
-    .transform((val) => val.toUpperCase())
-    .refine((val) => VALIDATION_ISSUES.includes(val), {
-      message: `Invalid issueType. Allowed values: ${VALIDATION_ISSUES.join(", ")}`,
-    }),
-  reference: z.string().trim().max(100).optional(),
-});
-
-/* ======================================================
-   IDENTITY ROUTES
-====================================================== */
-
-// 1. GET ALL VALIDATION ISSUE TYPES (Don Frontend Dropdown)
-router.get("/nin/issues", (req, res) => {
-  return res.status(200).json({
-    status: "success",
-    count: VALIDATION_ISSUES.length,
-    issues: [
-      { code: "BANK_MISMATCH", label: "NIN/Bank Record Mismatch", defaultFee: 1500 },
-      { code: "IPE_CLEARANCE", label: "NIMC IPE Clearance", defaultFee: 2000 },
-      { code: "NO_RECORD_FOUND", label: "No Record Found Retrieval", defaultFee: 1800 },
-      { code: "DOB_MISMATCH", label: "Date of Birth Alignment", defaultFee: 2500 },
-      { code: "PHOTO_BIOMETRIC_ERROR", label: "Biometric & Photo Re-upload", defaultFee: 3000 },
-      { code: "PHONE_NOT_LINKED", label: "Phone Number Link Issue", defaultFee: 1500 },
-      { code: "MULTIPLE_NIN_CONFLICT", label: "Multiple Registration Conflict", defaultFee: 3500 },
-      { code: "BVN_NIN_UNLINKED", label: "BVN-NIN Link Resolution", defaultFee: 1200 },
-    ],
-  });
-});
-
-// 2. NIN Verification (Slip & Photo Details)
+// 1. Verify NIN
 router.post(
   "/nin/verify",
   flexibleAuth,
-  validate(verifyNinSchema),
+  validate(
+    z.object({
+      nin: z.string().trim().regex(/^[0-9]{11}$/, "A valid 11-digit NIN is required"),
+      slipType: z.enum(["Standard Slip", "Regular Slip", "Premium Slip", "VNIN Slip"]).optional(),
+      reference: z.string().trim().max(100).optional(),
+    })
+  ),
   identityController.verifyNin
 );
 
-// 3. BVN Verification
+// 2. Verify NIN by Phone
+router.post(
+  "/nin/verify-phone",
+  flexibleAuth,
+  validate(
+    z.object({
+      phone: z.string().trim().min(11, "A valid 11-digit phone number is required"),
+      slipType: z.enum(["Standard Slip", "Regular Slip", "Premium Slip", "VNIN Slip"]).optional(),
+      reference: z.string().trim().max(100).optional(),
+    })
+  ),
+  identityController.verifyNinByPhone
+);
+
+// 3. Verify BVN
 router.post(
   "/bvn/verify",
   flexibleAuth,
-  validate(verifyBvnSchema),
+  validate(
+    z.object({
+      bvn: z.string().trim().regex(/^[0-9]{11}$/, "A valid 11-digit BVN is required"),
+      slipType: z.enum(["Standard Slip", "Premium Slip"]).optional(),
+      reference: z.string().trim().max(100).optional(),
+    })
+  ),
   identityController.verifyBvn
 );
 
-// 4. NIN Issue Resolution / Validation
+// 4. NIN Validation (no_record, simbank_validation, modification, photo_error)
 router.post(
   "/nin/validate",
   flexibleAuth,
-  validate(validateNinSchema),
-  identityController.validateNinIssue
+  validate(
+    z.object({
+      nin: z.string().trim().regex(/^[0-9]{11}$/, "11-digit NIN required"),
+      errorType: z.enum(["no_record", "simbank_validation", "modification", "photo_error"]),
+      reference: z.string().trim().max(100).optional(),
+    })
+  ),
+  identityController.submitNinValidation
+);
+
+router.post(
+  "/nin/validate/status",
+  flexibleAuth,
+  validate(
+    z.object({
+      ticketId: z.string().trim().optional(),
+      transactionId: z.string().trim().optional(),
+    }).refine((data) => data.ticketId || data.transactionId, {
+      message: "Provide either ticketId or transactionId",
+    })
+  ),
+  identityController.checkNinValidationStatus
+);
+
+// 5. IPE Clearance
+router.post(
+  "/ipe/submit",
+  flexibleAuth,
+  validate(
+    z.object({
+      trackingID: z.string().trim().min(1).max(20),
+      reference: z.string().trim().max(100).optional(),
+    })
+  ),
+  identityController.submitIpeClearance
+);
+
+router.post(
+  "/ipe/status",
+  flexibleAuth,
+  validate(z.object({ trackingID: z.string().trim().min(1) })),
+  identityController.checkIpeStatus
+);
+
+// 6. NIN Personalization
+router.post(
+  "/personalization/submit",
+  flexibleAuth,
+  validate(
+    z.object({
+      trackingId: z.string().trim().min(10).max(20),
+      reference: z.string().trim().max(100).optional(),
+    })
+  ),
+  identityController.submitPersonalization
+);
+
+router.post(
+  "/personalization/status",
+  flexibleAuth,
+  validate(z.object({ trackingId: z.string().trim().min(10) })),
+  identityController.checkPersonalizationStatus
 );
 
 module.exports = router;

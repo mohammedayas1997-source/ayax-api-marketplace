@@ -25,6 +25,7 @@ import {
   Server,
   ShieldCheck,
   Smartphone,
+  UserCheck,
   Wallet,
   Wifi,
   X,
@@ -99,10 +100,16 @@ const services = [
       "Validate smartcard details and renew television subscriptions.",
   },
   {
-    icon: SearchCheck,
-    title: "Identity API",
+    icon: ShieldCheck,
+    title: "NIMC (NIN) API",
     description:
-      "Access approved BVN, NIN and identity-verification services.",
+      "Verify National Identity Numbers, download slip profiles, and resolve validation issues.",
+  },
+  {
+    icon: UserCheck,
+    title: "BVN API",
+    description:
+      "Access instant Bank Verification Number (BVN) validation and KYC matching.",
   },
   {
     icon: Database,
@@ -258,6 +265,101 @@ const endpoints = [
     "customerName": "JOHN DOE",
     "smartcardNumber": "1234567890",
     "provider": "DSTV"
+  }
+}`,
+  },
+  {
+    id: "verify-nin",
+    category: "NIMC (NIN) API",
+    method: "POST",
+    path: "/api/v1/identity/nin/verify",
+    title: "NIN Verification (Lookup & Slip Data)",
+    description:
+      "Verify an 11-digit NIN and retrieve profile data including names, birth date, photo, and address.",
+    request: `{
+  "nin": "12345678901",
+  "slipType": "Standard Slip",
+  "reference": "AYAX-NIN-0001"
+}`,
+    response: `{
+  "status": "success",
+  "code": "VERIFICATION_SUCCESSFUL",
+  "message": "NIN verified successfully.",
+  "data": {
+    "reference": "AYAX-NIN-0001",
+    "nin": "12345678901",
+    "slipType": "Standard Slip",
+    "details": {
+      "firstName": "IBRAHIM",
+      "surname": "MUSA",
+      "middleName": "GARBA",
+      "phone": "08012345678",
+      "gender": "Male",
+      "dob": "1995-04-12",
+      "photo": "data:image/jpeg;base64,...",
+      "address": "No 12 Airport Road, Kano State"
+    },
+    "amountCharged": 100,
+    "walletBalance": 45200
+  }
+}`,
+  },
+  {
+    id: "validate-nin-issue",
+    category: "NIMC (NIN) API",
+    method: "POST",
+    path: "/api/v1/identity/nin/validate",
+    title: "NIN Validation & Issue Clearance",
+    description:
+      "Submit an issue resolution request (IPE_CLEARANCE, BANK_MISMATCH, NO_RECORD_FOUND, DOB_MISMATCH, PHOTO_BIOMETRIC_ERROR, PHONE_NOT_LINKED, MULTIPLE_NIN_CONFLICT, BVN_NIN_UNLINKED).",
+    request: `{
+  "nin": "12345678901",
+  "issueType": "BANK_MISMATCH",
+  "reference": "AYAX-VAL-0001"
+}`,
+    response: `{
+  "status": "success",
+  "code": "VALIDATION_QUEUED",
+  "message": "NIN validation issue submitted successfully for clearance.",
+  "data": {
+    "reference": "AYAX-VAL-0001",
+    "nin": "12345678901",
+    "issueType": "BANK_MISMATCH",
+    "amountCharged": 1500,
+    "walletBalance": 43700
+  }
+}`,
+  },
+  {
+    id: "verify-bvn",
+    category: "BVN API",
+    method: "POST",
+    path: "/api/v1/identity/bvn/verify",
+    title: "BVN Verification",
+    description:
+      "Query Bank Verification Number (BVN) to validate customer names, phone number, and biological KYC details.",
+    request: `{
+  "bvn": "22233344455",
+  "reference": "AYAX-BVN-0001"
+}`,
+    response: `{
+  "status": "success",
+  "code": "VERIFICATION_SUCCESSFUL",
+  "message": "BVN verified successfully.",
+  "data": {
+    "reference": "AYAX-BVN-0001",
+    "bvn": "22233344455",
+    "details": {
+      "firstName": "FATIMA",
+      "surname": "AHMAD",
+      "middleName": "BELLO",
+      "phone": "09087654321",
+      "gender": "Female",
+      "dob": "1998-11-20",
+      "photo": "data:image/jpeg;base64,..."
+    },
+    "amountCharged": 70,
+    "walletBalance": 43630
   }
 }`,
   },
@@ -568,7 +670,7 @@ export default function DocsPage() {
 
             <p className="mt-6 max-w-3xl text-lg leading-8 text-slate-400">
               Integrate Data, Airtime, Electricity,
-              Cable, Identity Verification and
+              Cable, NIMC (NIN) Verification, BVN KYC and
               Transaction services into your website,
               mobile application, POS system or reseller
               platform.

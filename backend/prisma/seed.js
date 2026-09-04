@@ -1,138 +1,74 @@
 const { PrismaClient } = require("@prisma/client");
-
 const prisma = new PrismaClient();
 
-async function main() {
+// 1. DATA PLANS
+const dataPlans = [
+  // MTN
+  ["MTN", "500MB", 220],
+  ["MTN", "1GB", 430],
+  ["MTN", "2GB", 820],
+  ["MTN", "3GB", 1200],
+  ["MTN", "5GB", 1950],
+  ["MTN", "10GB", 3800],
+  ["MTN", "15GB", 5600],
+  ["MTN", "20GB", 7300],
+  ["MTN", "25GB", 9000],
+  ["MTN", "30GB", 10700],
+  ["MTN", "40GB", 14200],
+  ["MTN", "50GB", 17500],
+  ["MTN", "75GB", 26000],
+  ["MTN", "100GB", 34000],
 
-  const provider = await prisma.apiProvider.upsert({
-    where: {
-      code: "LOCAL_PROVIDER",
-    },
-    update: {},
-    create: {
-      name: "Ayax Local Provider",
-      code: "LOCAL_PROVIDER",
-      status: "ACTIVE",
-    },
-  });
+  // Airtel
+  ["AIRTEL", "500MB", 210],
+  ["AIRTEL", "1GB", 420],
+  ["AIRTEL", "2GB", 800],
+  ["AIRTEL", "3GB", 1180],
+  ["AIRTEL", "5GB", 1900],
+  ["AIRTEL", "10GB", 3700],
+  ["AIRTEL", "15GB", 5500],
+  ["AIRTEL", "20GB", 7200],
+  ["AIRTEL", "25GB", 8900],
+  ["AIRTEL", "30GB", 10500],
+  ["AIRTEL", "40GB", 14000],
+  ["AIRTEL", "50GB", 17000],
+  ["AIRTEL", "75GB", 25500],
+  ["AIRTEL", "100GB", 33500],
 
-  const service = await prisma.apiService.upsert({
-    where: {
-      code: "DATA",
-    },
-    update: {},
-    create: {
-      providerId: provider.id,
-      name: "Data Subscription",
-      code: "DATA",
-      category: "DATA",
-      status: "ACTIVE",
-    },
-  });
+  // Glo
+  ["GLO", "500MB", 190],
+  ["GLO", "1GB", 390],
+  ["GLO", "2GB", 760],
+  ["GLO", "3GB", 1120],
+  ["GLO", "5GB", 1800],
+  ["GLO", "10GB", 3500],
+  ["GLO", "15GB", 5200],
+  ["GLO", "20GB", 6900],
+  ["GLO", "25GB", 8500],
+  ["GLO", "30GB", 10000],
+  ["GLO", "40GB", 13300],
+  ["GLO", "50GB", 16500],
+  ["GLO", "75GB", 24500],
+  ["GLO", "100GB", 32000],
 
-  const plans = [
+  // 9mobile
+  ["9MOBILE", "500MB", 230],
+  ["9MOBILE", "1GB", 450],
+  ["9MOBILE", "2GB", 850],
+  ["9MOBILE", "3GB", 1260],
+  ["9MOBILE", "5GB", 2050],
+  ["9MOBILE", "10GB", 4000],
+  ["9MOBILE", "15GB", 5900],
+  ["9MOBILE", "20GB", 7800],
+  ["9MOBILE", "25GB", 9600],
+  ["9MOBILE", "30GB", 11400],
+  ["9MOBILE", "40GB", 15000],
+  ["9MOBILE", "50GB", 18000],
+  ["9MOBILE", "75GB", 27000],
+  ["9MOBILE", "100GB", 35000],
+];
 
-    ["MTN","500MB",220],
-    ["MTN","1GB",430],
-    ["MTN","2GB",820],
-    ["MTN","3GB",1200],
-    ["MTN","5GB",1950],
-    ["MTN","10GB",3800],
-    ["MTN","15GB",5600],
-    ["MTN","20GB",7300],
-    ["MTN","25GB",9000],
-    ["MTN","30GB",10700],
-    ["MTN","40GB",14200],
-    ["MTN","50GB",17500],
-    ["MTN","75GB",26000],
-    ["MTN","100GB",34000],
-
-    ["Airtel","500MB",210],
-    ["Airtel","1GB",420],
-    ["Airtel","2GB",800],
-    ["Airtel","3GB",1180],
-    ["Airtel","5GB",1900],
-    ["Airtel","10GB",3700],
-    ["Airtel","15GB",5500],
-    ["Airtel","20GB",7200],
-    ["Airtel","25GB",8900],
-    ["Airtel","30GB",10500],
-    ["Airtel","40GB",14000],
-    ["Airtel","50GB",17000],
-    ["Airtel","75GB",25500],
-    ["Airtel","100GB",33500],
-
-    ["Glo","500MB",190],
-    ["Glo","1GB",390],
-    ["Glo","2GB",760],
-    ["Glo","3GB",1120],
-    ["Glo","5GB",1800],
-    ["Glo","10GB",3500],
-    ["Glo","15GB",5200],
-    ["Glo","20GB",6900],
-    ["Glo","25GB",8500],
-    ["Glo","30GB",10000],
-    ["Glo","40GB",13300],
-    ["Glo","50GB",16500],
-    ["Glo","75GB",24500],
-    ["Glo","100GB",32000],
-
-    ["9mobile","500MB",230],
-    ["9mobile","1GB",450],
-    ["9mobile","2GB",850],
-    ["9mobile","3GB",1260],
-    ["9mobile","5GB",2050],
-    ["9mobile","10GB",4000],
-    ["9mobile","15GB",5900],
-    ["9mobile","20GB",7800],
-    ["9mobile","25GB",9600],
-    ["9mobile","30GB",11400],
-    ["9mobile","40GB",15000],
-    ["9mobile","50GB",18000],
-    ["9mobile","75GB",27000],
-    ["9mobile","100GB",35000],
-
-  ];
-
-  for (const plan of plans) {
-
-    const [network,size,price]=plan;
-
-    await prisma.apiPlan.upsert({
-
-      where:{
-        code:`${network}_${size}`
-      },
-
-      update:{
-        sellingPrice:price
-      },
-
-      create:{
-        providerId:provider.id,
-        serviceId:service.id,
-        code:`${network}_${size}`,
-        name:`${network} ${size}`,
-        network,
-        size,
-        costPrice:price-10,
-        sellingPrice:price,
-        status:"ACTIVE"
-      }
-
-    });
-
-  }
-
-  console.log("✅ Data Plans Seeded Successfully");
-
-}
-
-main()
-.finally(async()=>{
- await prisma.$disconnect();
-});
-
+// 2. CABLE TV PLANS
 const cablePlans = [
   // GOtv Packages
   { cableTv: "gotv", packageCode: "01", name: "GOtv Smallie (Monthly)", price: 1575, apiPrice: 1550 },
@@ -150,7 +86,7 @@ const cablePlans = [
   { cableTv: "dstv", packageCode: "05", name: "DStv Compact Plus", price: 25000, apiPrice: 24700 },
   { cableTv: "dstv", packageCode: "06", name: "DStv Premium", price: 37000, apiPrice: 36500 },
 
-  // StarTimes Packages (Monthly)
+  // StarTimes Packages
   { cableTv: "startimes", packageCode: "11", name: "StarTimes Nova (Monthly)", price: 1700, apiPrice: 1650 },
   { cableTv: "startimes", packageCode: "12", name: "StarTimes Basic (Monthly)", price: 3300, apiPrice: 3250 },
   { cableTv: "startimes", packageCode: "13", name: "StarTimes Smart (Monthly)", price: 4700, apiPrice: 4600 },
@@ -158,8 +94,109 @@ const cablePlans = [
   { cableTv: "startimes", packageCode: "15", name: "StarTimes Super (Monthly)", price: 8200, apiPrice: 8050 },
 ];
 
-async function main() {
-  console.log("Seeding Cable TV plans...");
+// 3. ALL 12 NIGERIAN ELECTRICITY DISCOS
+const electricityDiscos = [
+  { discoCode: "IKEDC", name: "Ikeja Electric (IKEDC)", supportsPrepaid: true, supportsPostpaid: true, minAmount: 500 },
+  { discoCode: "EKEDC", name: "Eko Electric (EKEDC)", supportsPrepaid: true, supportsPostpaid: true, minAmount: 500 },
+  { discoCode: "KEDCO", name: "Kano Electric (KEDCO)", supportsPrepaid: true, supportsPostpaid: true, minAmount: 500 },
+  { discoCode: "AEDC", name: "Abuja Electric (AEDC)", supportsPrepaid: true, supportsPostpaid: true, minAmount: 500 },
+  { discoCode: "IBEDC", name: "Ibadan Electric (IBEDC)", supportsPrepaid: true, supportsPostpaid: true, minAmount: 500 },
+  { discoCode: "EEDC", name: "Enugu Electric (EEDC)", supportsPrepaid: true, supportsPostpaid: true, minAmount: 500 },
+  { discoCode: "PHED", name: "Port Harcourt Electric (PHED)", supportsPrepaid: true, supportsPostpaid: true, minAmount: 500 },
+  { discoCode: "JED", name: "Jos Electric (JED)", supportsPrepaid: true, supportsPostpaid: true, minAmount: 500 },
+  { discoCode: "KAEDCO", name: "Kaduna Electric (KAEDCO)", supportsPrepaid: true, supportsPostpaid: true, minAmount: 500 },
+  { discoCode: "BEDC", name: "Benin Electric (BEDC)", supportsPrepaid: true, supportsPostpaid: true, minAmount: 500 },
+  { discoCode: "YEDC", name: "Yola Electric (YEDC)", supportsPrepaid: true, supportsPostpaid: true, minAmount: 500 },
+  { discoCode: "ABA", name: "Aba Electric (APLE)", supportsPrepaid: true, supportsPostpaid: true, minAmount: 500 },
+];
+
+// 4. IDENTITY VERIFICATION & VALIDATION PRICING
+const identityPricing = [
+  { serviceCode: "NIN_VERIFY", serviceName: "NIN Verification Lookup", category: "IDENTITY", sellingPrice: 100, tier: "REGULAR" },
+  { serviceCode: "BVN_VERIFY", serviceName: "BVN Verification Lookup", category: "IDENTITY", sellingPrice: 70, tier: "REGULAR" },
+  { serviceCode: "NIN_VALIDATION_BANK_MISMATCH", serviceName: "NIN/Bank Mismatch Resolution", category: "IDENTITY", sellingPrice: 1500, tier: "REGULAR" },
+  { serviceCode: "NIN_VALIDATION_IPE_CLEARANCE", serviceName: "NIMC IPE Clearance", category: "IDENTITY", sellingPrice: 2000, tier: "REGULAR" },
+  { serviceCode: "NIN_VALIDATION_NO_RECORD_FOUND", serviceName: "No Record Found Retrieval", category: "IDENTITY", sellingPrice: 1800, tier: "REGULAR" },
+  { serviceCode: "NIN_VALIDATION_DOB_MISMATCH", serviceName: "Date of Birth Discrepancy", category: "IDENTITY", sellingPrice: 2500, tier: "REGULAR" },
+  { serviceCode: "NIN_VALIDATION_PHOTO_BIOMETRIC_ERROR", serviceName: "Biometric & Photo Re-upload", category: "IDENTITY", sellingPrice: 3000, tier: "REGULAR" },
+  { serviceCode: "NIN_VALIDATION_PHONE_NOT_LINKED", serviceName: "Phone Number Link Issue", category: "IDENTITY", sellingPrice: 1500, tier: "REGULAR" },
+  { serviceCode: "NIN_VALIDATION_MULTIPLE_NIN_CONFLICT", serviceName: "Multiple Registration Conflict", category: "IDENTITY", sellingPrice: 3500, tier: "REGULAR" },
+  { serviceCode: "NIN_VALIDATION_BVN_NIN_UNLINKED", serviceName: "BVN-NIN Link Integration", category: "IDENTITY", sellingPrice: 1200, tier: "REGULAR" },
+];
+
+async function seedData() {
+  console.log("⚡ Seeding Data Plans...");
+
+  const provider = await prisma.apiProvider.upsert({
+    where: { code: "LOCAL_PROVIDER" },
+    update: {},
+    create: {
+      name: "Ayax Local Provider",
+      code: "LOCAL_PROVIDER",
+      status: "ACTIVE",
+    },
+  });
+
+  const service = await prisma.apiService.upsert({
+    where: { code: "DATA" },
+    update: {},
+    create: {
+      providerId: provider.id,
+      name: "Data Subscription",
+      code: "DATA",
+      category: "DATA",
+      status: "ACTIVE",
+    },
+  });
+
+  for (const [network, size, price] of dataPlans) {
+    const code = `${network}_${size}`.toUpperCase();
+
+    await prisma.apiPlan.upsert({
+      where: { code },
+      update: { sellingPrice: price, status: "ACTIVE" },
+      create: {
+        providerId: provider.id,
+        serviceId: service.id,
+        code,
+        name: `${network} ${size}`,
+        network,
+        size,
+        costPrice: price - 10,
+        sellingPrice: price,
+        status: "ACTIVE",
+      },
+    });
+
+    // Haɗa da ServicePricing don daidaituwa
+    await prisma.servicePricing.upsert({
+      where: {
+        category_serviceCode_tier: {
+          category: "DATA",
+          serviceCode: code,
+          tier: "REGULAR",
+        },
+      },
+      update: { sellingPrice: price, enabled: true },
+      create: {
+        category: "DATA",
+        serviceCode: code,
+        serviceName: `${network} ${size} Data Plan`,
+        sellingPrice: price,
+        costPrice: price - 10,
+        tier: "REGULAR",
+        dataSize: size,
+        validityDays: 30,
+        enabled: true,
+      },
+    }).catch(() => null);
+  }
+
+  console.log("✅ Data Plans Seeded Successfully");
+}
+
+async function seedCable() {
+  console.log("⚡ Seeding Cable TV Plans...");
 
   for (const plan of cablePlans) {
     await prisma.cablePlan.upsert({
@@ -185,102 +222,33 @@ async function main() {
         isActive: true,
       },
     });
+
+    await prisma.servicePricing.upsert({
+      where: {
+        category_serviceCode_tier: {
+          category: "CABLE",
+          serviceCode: `${plan.cableTv.toUpperCase()}_${plan.packageCode}`,
+          tier: "REGULAR",
+        },
+      },
+      update: { sellingPrice: plan.price, enabled: true },
+      create: {
+        category: "CABLE",
+        serviceCode: `${plan.cableTv.toUpperCase()}_${plan.packageCode}`,
+        serviceName: plan.name,
+        sellingPrice: plan.price,
+        costPrice: plan.apiPrice,
+        tier: "REGULAR",
+        enabled: true,
+      },
+    }).catch(() => null);
   }
 
-  console.log("Cable TV plans seeded successfully!");
+  console.log("✅ Cable TV plans seeded successfully!");
 }
 
-main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
-
-  const electricityDiscos = [
-  {
-    discoCode: "ikeja-electric",
-    name: "Ikeja Electric (IKEDC)",
-    supportsPrepaid: true,
-    supportsPostpaid: true,
-    minAmount: 500,
-  },
-  {
-    discoCode: "eko-electric",
-    name: "Eko Electric (EKEDC)",
-    supportsPrepaid: true,
-    supportsPostpaid: true,
-    minAmount: 500,
-  },
-  {
-    discoCode: "kano-electric",
-    name: "Kano Electric (KEDCO)",
-    supportsPrepaid: true,
-    supportsPostpaid: true,
-    minAmount: 500,
-  },
-  {
-    discoCode: "abuja-electric",
-    name: "Abuja Electric (AEDC)",
-    supportsPrepaid: true,
-    supportsPostpaid: true,
-    minAmount: 500,
-  },
-  {
-    discoCode: "ibadan-electric",
-    name: "Ibadan Electric (IBEDC)",
-    supportsPrepaid: true,
-    supportsPostpaid: true,
-    minAmount: 500,
-  },
-  {
-    discoCode: "enugu-electric",
-    name: "Enugu Electric (EEDC)",
-    supportsPrepaid: true,
-    supportsPostpaid: true,
-    minAmount: 500,
-  },
-  {
-    discoCode: "port-harcourt-electric",
-    name: "Port Harcourt Electric (PHED)",
-    supportsPrepaid: true,
-    supportsPostpaid: true,
-    minAmount: 500,
-  },
-  {
-    discoCode: "jos-electric",
-    name: "Jos Electric (JED)",
-    supportsPrepaid: true,
-    supportsPostpaid: true,
-    minAmount: 500,
-  },
-  {
-    discoCode: "kaduna-electric",
-    name: "Kaduna Electric (KAEDCO)",
-    supportsPrepaid: true,
-    supportsPostpaid: true,
-    minAmount: 500,
-  },
-  {
-    discoCode: "benin-electric",
-    name: "Benin Electric (BEDC)",
-    supportsPrepaid: true,
-    supportsPostpaid: true,
-    minAmount: 500,
-  },
-  {
-    discoCode: "yola-electric",
-    name: "Yola Electric (YEDC)",
-    supportsPrepaid: true,
-    supportsPostpaid: true,
-    minAmount: 500,
-  },
-];
-
-async function seedDiscos() {
-  console.log("Seeding Electricity DISCOs...");
+async function seedElectricity() {
+  console.log("⚡ Seeding Electricity DISCOs...");
 
   for (const disco of electricityDiscos) {
     await prisma.electricityDisco.upsert({
@@ -304,16 +272,48 @@ async function seedDiscos() {
     });
   }
 
-  console.log("Electricity DISCOs seeded successfully!");
+  console.log("✅ Electricity DISCOs seeded successfully!");
+}
+
+async function seedIdentity() {
+  console.log("⚡ Seeding Identity (NIN/BVN) Pricing...");
+
+  for (const item of identityPricing) {
+    await prisma.servicePricing.upsert({
+      where: {
+        category_serviceCode_tier: {
+          category: item.category,
+          serviceCode: item.serviceCode,
+          tier: item.tier,
+        },
+      },
+      update: { sellingPrice: item.sellingPrice, enabled: true },
+      create: {
+        category: item.category,
+        serviceCode: item.serviceCode,
+        serviceName: item.serviceName,
+        sellingPrice: item.sellingPrice,
+        costPrice: Math.max(0, item.sellingPrice - 200),
+        tier: item.tier,
+        enabled: true,
+      },
+    }).catch(() => null);
+  }
+
+  console.log("✅ Identity pricing seeded successfully!");
 }
 
 async function main() {
-  await seedDiscos();
+  await seedData();
+  await seedCable();
+  await seedElectricity();
+  await seedIdentity();
+  console.log("\n🚀 All Marketplace Services Successfully Seeded Into Database!");
 }
 
 main()
   .catch((e) => {
-    console.error(e);
+    console.error("❌ Seeding Error:", e);
     process.exit(1);
   })
   .finally(async () => {

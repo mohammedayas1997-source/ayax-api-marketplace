@@ -1,22 +1,21 @@
 const prisma = require("../config/prisma");
 const axios = require("axios");
-const prembly = require("../services/prembly.service");
+const abjiktech = require("../services/abjiktech.service");
 
 /* ======================================================
    HELPER FUNCTIONS
 ====================================================== */
 
-// Helper don kiran Upstream Identity Provider
+// Helper don kiran Upstream Identity Provider (Database Dynamic Routing)
 async function callIdentityProvider(provider, endpoint, payload) {
   const url = `${provider.baseUrl.replace(/\/+$/, "")}/${endpoint.replace(/^\/+/, "")}`;
 
   const headers = {
     "Content-Type": "application/json",
-    ...(provider.appId ? { "app-id": provider.appId } : {}),
     ...(provider.apiKey
       ? {
           Authorization: `Bearer ${provider.apiKey}`,
-          "x-api-key": provider.apiKey,
+          "api-key": provider.apiKey,
         }
       : {}),
     ...(provider.secretKey ? { "x-secret-key": provider.secretKey } : {}),
@@ -24,13 +23,13 @@ async function callIdentityProvider(provider, endpoint, payload) {
 
   const response = await axios.post(url, payload, {
     headers,
-    timeout: provider.timeoutMs || 30000,
+    timeout: provider.timeoutMs || 35000,
   });
 
   return response.data;
 }
 
-// Helper don nemo active provider ko dawowa Prembly Env
+// Helper don nemo active provider daga database
 async function getActiveProviders() {
   try {
     const providers = await prisma.apiProvider.findMany({
@@ -42,7 +41,7 @@ async function getActiveProviders() {
     });
     return providers || [];
   } catch (err) {
-    console.warn("Could not query apiProvider table, using default adapter:", err.message);
+    console.warn("Database provider check warning, defaulting to Abjiktech:", err.message);
     return [];
   }
 }
@@ -103,7 +102,7 @@ exports.verifyNin = async (req, res) => {
 
     const txRef = reference || `AYAX_NIN_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-    // 3. Cire kudi a Transaction
+    // 3. Cire kudi a Wallet & Ajiye Transaction
     const { updatedWallet, transaction } = await prisma.$transaction(async (tx) => {
       const w = await tx.wallet.update({
         where: { userId: user.id },
@@ -125,7 +124,7 @@ exports.verifyNin = async (req, res) => {
       return { updatedWallet: w, transaction: t };
     });
 
-    // 4. Dynamic Provider Dispatch tare da Fallback
+    // 4. Dynamic Provider Dispatch
     const providers = await getActiveProviders();
     let upstreamData = null;
 
@@ -153,32 +152,32 @@ exports.verifyNin = async (req, res) => {
       }
     }
 
-    // Direct Prembly Fallback idan database providers sun gaza ko babu su
+    // Direct Abjiktech Fallback idan database providers ba su yi ba
     if (!upstreamData || (!upstreamData.success && upstreamData.status !== "success" && upstreamData.status !== true)) {
-      console.log(`[NIN VERIFY] Falling back to default Prembly integration for ${cleanNin}...`);
-      const premblyRes = await prembly.verifyNIN(cleanNin);
+      console.log(`[NIN VERIFY] Forwarding to Abjiktech API for ${cleanNin}...`);
+      const abjikRes = await abjiktech.verifyNIN(cleanNin);
 
-      if (premblyRes && premblyRes.success) {
+      if (abjikRes && abjikRes.success) {
         upstreamData = {
           success: true,
           status: "success",
           data: {
-            nin: premblyRes.nin,
-            firstName: premblyRes.firstName,
-            surname: premblyRes.surname,
-            middleName: premblyRes.middleName,
-            phone: premblyRes.phone,
-            gender: premblyRes.gender,
-            dob: premblyRes.dob,
-            photo: premblyRes.photo,
-            address: premblyRes.address,
-            raw: premblyRes.raw,
+            nin: abjikRes.nin,
+            firstName: abjikRes.firstName,
+            surname: abjikRes.surname,
+            middleName: abjikRes.middleName,
+            phone: abjikRes.phone,
+            gender: abjikRes.gender,
+            dob: abjikRes.dob,
+            photo: abjikRes.photo,
+            address: abjikRes.address,
+            raw: abjikRes.raw,
           },
         };
       }
     }
 
-    // 5. Refund idan dukkan providers sun fadi
+    // 5. Refund idan ba a samu nasara ba
     if (!upstreamData || (!upstreamData.success && upstreamData.status !== "success" && upstreamData.status !== true)) {
       await prisma.$transaction([
         prisma.wallet.update({
@@ -194,11 +193,11 @@ exports.verifyNin = async (req, res) => {
       return res.status(502).json({
         status: "error",
         code: "GATEWAY_ERROR",
-        message: "Identity verification gateway currently unavailable or NIN not found. Your wallet was refunded.",
+        message: "NIN verification gateway currently unavailable or NIN record not found. Your wallet was refunded.",
       });
     }
 
-    // 6. Tabbatar da Nasara (SUCCESSFUL)
+    // 6. Tabbatar da Nasara
     await prisma.transaction.update({
       where: { id: transaction.id },
       data: { status: "SUCCESSFUL" },
@@ -319,25 +318,25 @@ exports.verifyBvn = async (req, res) => {
       }
     }
 
-    // Direct Prembly Fallback
+    // Direct Abjiktech Fallback
     if (!upstreamData || (!upstreamData.success && upstreamData.status !== "success" && upstreamData.status !== true)) {
-      console.log(`[BVN VERIFY] Falling back to Prembly for ${cleanBvn}...`);
-      const premblyRes = await prembly.verifyBVN(cleanBvn);
+      console.log(`[BVN VERIFY] Forwarding to Abjiktech API for ${cleanBvn}...`);
+      const abjikRes = await abjiktech.verifyBVN(cleanBvn);
 
-      if (premblyRes && premblyRes.success) {
+      if (abjikRes && abjikRes.success) {
         upstreamData = {
           success: true,
           status: "success",
           data: {
-            bvn: premblyRes.bvn,
-            firstName: premblyRes.firstName,
-            surname: premblyRes.surname,
-            middleName: premblyRes.middleName,
-            phone: premblyRes.phone,
-            gender: premblyRes.gender,
-            dob: premblyRes.dob,
-            photo: premblyRes.photo,
-            raw: premblyRes.raw,
+            bvn: abjikRes.bvn,
+            firstName: abjikRes.firstName,
+            surname: abjikRes.surname,
+            middleName: abjikRes.middleName,
+            phone: abjikRes.phone,
+            gender: abjikRes.gender,
+            dob: abjikRes.dob,
+            photo: abjikRes.photo,
+            raw: abjikRes.raw,
           },
         };
       }
@@ -358,7 +357,7 @@ exports.verifyBvn = async (req, res) => {
       return res.status(502).json({
         status: "error",
         code: "GATEWAY_ERROR",
-        message: "BVN validation gateway currently unavailable or BVN not found. Your wallet was refunded.",
+        message: "BVN verification gateway currently unavailable or BVN not found. Your wallet was refunded.",
       });
     }
 
@@ -482,6 +481,24 @@ exports.validateNinIssue = async (req, res) => {
       }
     }
 
+    // Direct Abjiktech Fallback don NIN Validation / Clearance
+    if (!upstreamData || (!upstreamData.success && upstreamData.status !== "success" && upstreamData.status !== true)) {
+      console.log(`[NIN VALIDATE] Forwarding ${issueType} to Abjiktech for ${cleanNin}...`);
+      const abjikRes = await abjiktech.validateNINIssue({
+        nin: cleanNin,
+        issueType,
+        reference: txRef,
+      });
+
+      if (abjikRes && abjikRes.success) {
+        upstreamData = {
+          success: true,
+          status: "success",
+          data: abjikRes,
+        };
+      }
+    }
+
     if (!upstreamData || (!upstreamData.success && upstreamData.status !== "success" && upstreamData.status !== true)) {
       await prisma.$transaction([
         prisma.wallet.update({
@@ -497,7 +514,7 @@ exports.validateNinIssue = async (req, res) => {
       return res.status(502).json({
         status: "error",
         code: "VALIDATION_FAILED",
-        message: "NIN Validation submission failed at NIMC gateway. Wallet refunded.",
+        message: "NIN Validation submission failed at gateway. Wallet refunded.",
       });
     }
 

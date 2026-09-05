@@ -1,30 +1,37 @@
 const prisma = require("../config/prisma");
-const { emitEvent, emitGatewayCommand } = require("../config/socket");
+const { emitEvent } = require("../config/socket");
 const clubkonnect = require("../services/clubkonnect.service");
 
 // Tsoffin discounts a matsayin madogara (Fallback) idan ba a saita a Database ba
 const DEFAULT_DISCOUNTS = {
-  MTN: 0.02,     // 2% discount (₦98 a kowane ₦100)
+  MTN: 0.02,     // 2% discount
   AIRTEL: 0.02,  // 2% discount
   GLO: 0.03,     // 3% discount
   "9MOBILE": 0.03 // 3% discount
 };
 
-/* ======================================================
-   1. PURCHASE AIRTIME VIA MARKETPLACE API
+const cleanLocalPhone = (phone = "") => {
+  const digits = String(phone).replace(/\D/g, "");
+  if (digits.startsWith("234") && digits.length === 13) {
+    return `0${digits.slice(3)}`;
+  }
+  if (digits.length === 10 && !digits.startsWith("0")) {
+    return `0${digits}`;
+  }
+  return digits;
+};
 
-   POST /api/v1/airtime/purchase
-   Headers: { "x-api-key": "ayax_live_..." } ko Bearer JWT
-   Body: { network, phone, amount, reference }
+/* ======================================================
+   1. PURCHASE AIRTIME VIA MARKETPLACE API (MTN MOMO READY)
 ====================================================== */
 exports.purchaseAirtime = async (req, res) => {
   try {
     const user = req.user || req.apiKeyUser;
     const { network, phone, phoneNumber, amount, reference } = req.body;
 
-    const targetPhone = String(phoneNumber || phone || "").trim();
-    const numericAmount = Number(amount);
-    const normalizedNetwork = String(network || "").toUpperCase().trim();
+    const targetPhone = cleanLocalPhone(phoneNumber || phone || "");
+    const numericAmount = Math.round(Number(amount));
+    const normalizedNetwork = String(network || "MTN").toUpperCase().trim();
 
     if (!normalizedNetwork || !targetPhone || !numericAmount || numericAmount < 50) {
       return res.status(400).json({
@@ -71,7 +78,6 @@ exports.purchaseAirtime = async (req, res) => {
     let amountToCharge = numericAmount;
 
     if (pricingPlan && pricingPlan.sellingPrice > 0) {
-      // Idan an saita misali ₦98 a kowane ₦100 (sellingPrice = 98 ko 0.98)
       const rate = pricingPlan.sellingPrice <= 1 
         ? pricingPlan.sellingPrice 
         : (pricingPlan.sellingPrice / 100);
@@ -79,13 +85,12 @@ exports.purchaseAirtime = async (req, res) => {
       amountToCharge = Number((numericAmount * rate).toFixed(2));
       discountAmount = Number((numericAmount - amountToCharge).toFixed(2));
     } else {
-      // Idan babu a database, yi amfani da default rate
-      const fallbackRate = DEFAULT_DISCOUNTS[normalizedNetwork] || 0.01;
+      const fallbackRate = DEFAULT_DISCOUNTS[normalizedNetwork] || 0.02;
       discountAmount = Number((numericAmount * fallbackRate).toFixed(2));
       amountToCharge = Number((numericAmount - discountAmount).toFixed(2));
     }
 
-    // 4. Duba Kuɗin Wallet na Mai Saye
+    // 4. Duba Kuɗin Wallet na Mai Saye (Ba tare da cirewa ba tukuna)
     const wallet = await prisma.wallet.findUnique({
       where: { userId: user.id },
     });
@@ -100,10 +105,37 @@ exports.purchaseAirtime = async (req, res) => {
       });
     }
 
-    const txReference =
-      reference || `AYAX_AIR_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+    // 5. PRE-FLIGHT CHECK: DUBA LAFIYAR GSM MODEM KAFIN CIRE KUDI
+    const activeDevice = await prisma.gsmDevice.findFirst({
+      where: { 
+        status: "ONLINE",
+        lastSeen: { gte: new Date(Date.now() - 2 * 60 * 1000) }
+      },
+      include: { sims: true },
+      orderBy: { lastSeen: "desc" },
+    });
 
-    // 5. Cire Kuɗin Wallet da Adana Transaction a PENDING
+    const targetSim = activeDevice?.sims?.find(
+      (s) =>
+        s.status === "ACTIVE" &&
+        (s.carrierName?.toUpperCase().includes(normalizedNetwork) ||
+         s.displayName?.toUpperCase().includes(normalizedNetwork))
+    ) || activeDevice?.sims?.[0];
+
+    const isGatewayReady = Boolean(activeDevice && targetSim);
+    const isFallbackConfigured = Boolean(process.env.CLUBKONNECT_API_KEY || process.env.CLUBKONNECT_USER_ID);
+
+    if (!isGatewayReady && !isFallbackConfigured) {
+      return res.status(503).json({
+        status: "error",
+        code: "ROUTE_UNAVAILABLE",
+        message: `${normalizedNetwork} airtime route is currently offline. No funds were debited.`,
+      });
+    }
+
+    const txReference = reference || `AYAX_AIR_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+    // 6. CIRE KUDI A WALLET BAYAN TABBATAR DA KOFA
     const { updatedWallet, transaction } = await prisma.$transaction(async (tx) => {
       const newWallet = await tx.wallet.update({
         where: { userId: user.id },
@@ -127,48 +159,68 @@ exports.purchaseAirtime = async (req, res) => {
       return { updatedWallet: newWallet, transaction: newTx };
     });
 
-    // 6. ROUTE 1: DUBA GSM GATEWAY / MODEM
-    const activeDevice = await prisma.gsmDevice.findFirst({
-      where: { status: "ONLINE" },
-      include: { sims: true },
-      orderBy: { lastSeen: "desc" },
-    });
+    // 7. ROUTE 1: GSM GATEWAY (MTN MOMO ONLY FOR MTN)
+    if (isGatewayReady) {
+      const slotIndex = Number(targetSim.slotIndex ?? 0);
+      const pin = process.env.GSM_AIRTIME_PIN || "1997";
+      const momoPin = process.env.MOMO_PIN || "8724";
 
-    const targetSim = activeDevice?.sims?.find(
-      (s) =>
-        s.carrierName?.toUpperCase().includes(normalizedNetwork) ||
-        s.displayName?.toUpperCase().includes(normalizedNetwork)
-    );
-
-    if (activeDevice && targetSim) {
-      const slotIndex = targetSim.slotIndex ?? 1;
-      const pin = "1997"; // GSM Modem transfer pin
-
-      // Standard NCC Airtime Transfer USSD Commands (*321# ko *600#)
-      let ussdCode = `*321*${targetPhone}*${numericAmount}*${pin}#`;
-      let steps = [targetPhone, String(numericAmount), pin];
+      let ussdCode = "";
+      let steps = [];
 
       if (normalizedNetwork === "MTN") {
-        ussdCode = `*600*${targetPhone}*${numericAmount}*${pin}#`;
+        // MTN MoMo PSB Flow: *671# -> 2 -> 1 -> 3 -> Phone -> Amount -> PIN (8724)
+        ussdCode = "*671#";
+        steps = ["2", "1", "3", targetPhone, String(numericAmount), momoPin];
       } else if (normalizedNetwork === "AIRTEL") {
-        ussdCode = `*432*1*${targetPhone}*${numericAmount}*${pin}#`;
+        ussdCode = `*321*${targetPhone}*${numericAmount}*${pin}#`;
+        steps = [targetPhone, String(numericAmount), pin];
       } else if (normalizedNetwork === "GLO") {
         ussdCode = `*131*${targetPhone}*${numericAmount}*${pin}#`;
+        steps = [targetPhone, String(numericAmount), pin];
       } else if (normalizedNetwork === "9MOBILE") {
         ussdCode = `*223*${pin}*${numericAmount}*${targetPhone}#`;
+        steps = [pin, String(numericAmount), targetPhone];
       }
 
+      // Cika dukkan filayen da Android app ke nema don hana "USSD code is missing"
       const commandPayload = {
         reference: txReference,
         deviceId: activeDevice.id,
         type: "USSD",
+        action: "USSD",
         service: "AIRTIME",
-        ussdCode,
+        code: ussdCode,
+        ussd: ussdCode,
+        ussdCode: ussdCode,
+        ussd_code: ussdCode,
+        text: ussdCode,
+        rootCode: ussdCode,
         steps,
         phone: targetPhone,
-        slotIndex: Number(slotIndex),
+        targetPhone,
+        phoneNumber: targetPhone,
+        slotIndex,
+        simSlot: slotIndex,
         amount: numericAmount,
         network: normalizedNetwork,
+        routeType: normalizedNetwork === "MTN" ? "MTN_MOMO" : "DIRECT_USSD",
+      };
+
+      const socketPayload = {
+        commandId: txReference,
+        id: txReference,
+        reference: txReference,
+        type: "USSD",
+        action: "USSD",
+        code: ussdCode,
+        ussd: ussdCode,
+        ussdCode: ussdCode,
+        ussd_code: ussdCode,
+        steps,
+        slotIndex,
+        simSlot: slotIndex,
+        payload: commandPayload,
       };
 
       await prisma.gsmCommand.create({
@@ -182,10 +234,8 @@ exports.purchaseAirtime = async (req, res) => {
       }).catch(() => null);
 
       try {
-        emitEvent("gateway-command", commandPayload, activeDevice.id);
-        if (typeof emitGatewayCommand === "function") {
-          emitGatewayCommand(activeDevice.id, commandPayload);
-        }
+        emitEvent("gateway-command", socketPayload, activeDevice.id);
+        console.log(`⚡ [AIRTIME USSD DISPATCH] Ref: ${txReference} -> Code: ${ussdCode} Steps: ${JSON.stringify(steps)}`);
       } catch (socketErr) {
         console.warn("Gateway socket broadcast warning:", socketErr.message);
       }
@@ -193,7 +243,7 @@ exports.purchaseAirtime = async (req, res) => {
       return res.status(200).json({
         status: "success",
         code: "TRANSACTION_QUEUED",
-        route: "GSM_GATEWAY",
+        route: normalizedNetwork === "MTN" ? "GSM_GATEWAY_MOMO" : "GSM_GATEWAY",
         message: `Airtime transfer queued on local modem for ${targetPhone}.`,
         data: {
           reference: txReference,
@@ -208,7 +258,7 @@ exports.purchaseAirtime = async (req, res) => {
       });
     }
 
-    // 7. ROUTE 2: FALLBACK ZUWA CLUBKONNECT (Idan Babu Modem ko Ba ya Aiki)
+    // 8. ROUTE 2: FALLBACK ZUWA CLUBKONNECT
     console.log(`[AIRTIME: CLUBKONNECT] Modem offline. Forwarding ${txReference} to Clubkonnect API...`);
 
     try {
@@ -247,7 +297,6 @@ exports.purchaseAirtime = async (req, res) => {
     } catch (upstreamErr) {
       console.error("Clubkonnect Airtime Error, initiating refund:", upstreamErr.message);
 
-      // Reversal / Refund nan take
       await prisma.$transaction([
         prisma.wallet.update({
           where: { userId: user.id },
@@ -281,8 +330,6 @@ exports.purchaseAirtime = async (req, res) => {
 
 /* ======================================================
    2. QUERY AIRTIME STATUS
-
-   GET /api/v1/airtime/status/:reference
 ====================================================== */
 exports.checkAirtimeStatus = async (req, res) => {
   try {
@@ -327,8 +374,6 @@ exports.checkAirtimeStatus = async (req, res) => {
 
 /* ======================================================
    3. GET AIRTIME TRANSACTION HISTORY
-
-   GET /api/v1/airtime/history
 ====================================================== */
 exports.getAirtimeHistory = async (req, res) => {
   try {

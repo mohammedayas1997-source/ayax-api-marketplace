@@ -21,7 +21,7 @@ const cleanLocalPhone = (phone = "") => {
   return digits;
 };
 
-exports.purchaseAirtime = async ({ user, network, phone, amount, reference, channel = "DEFAULT" }) => {
+exports.purchaseAirtime = async ({ user, network, phone, amount, reference, channel = "MOMO" }) => {
   const numericAmount = Math.round(Number(amount));
   const normalizedNetwork = String(network || "MTN").toUpperCase().trim();
   const targetPhone = cleanLocalPhone(phone || "");
@@ -143,7 +143,7 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference, chan
     return { updatedWallet: newWallet, transaction: newTx };
   });
 
-  // 6. TAFARKI NA 1: GSM MODEM (GATEWAY tare da MoMo PSB)
+  // 6. TAFARKI NA 1: GSM MODEM (GATEWAY tare da MTN MoMo a Matsayin Default)
   if (isGatewayReady) {
     const slotIndex = Number(targetSim.slotIndex ?? 0);
     const pin = process.env.GSM_AIRTIME_PIN || "1997";
@@ -158,20 +158,26 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference, chan
       },
     });
 
-    const useMomo = channel === "MOMO" || process.env.DEFAULT_MTN_AIRTIME_ROUTE === "MOMO";
+    // MTN Yana Farawa Da MOMO kai tsaye (sai dai in an ce SHARE a bayyane)
+    const isMtn = normalizedNetwork === "MTN";
+    const useMomo = isMtn && channel !== "SHARE" && channel !== "ME2U";
+    
     let commandPayload = null;
     let socketPayload = null;
 
-    // HANYA A: USSD FIRST (Load < 3)
-    if (pendingJobsCount < 3) {
+    // HANYA A: USSD FIRST (Load < 3 ko kuma MTN MoMo)
+    // MoMo PSB a ko yaushe ta USSD take aiki domin bashi da tsarin SMS na yau da kullum
+    if (pendingJobsCount < 3 || useMomo) {
       let ussdCode = `*321*${targetPhone}*${numericAmount}*${pin}#`;
       let steps = [targetPhone, String(numericAmount), pin];
 
-      if (normalizedNetwork === "MTN") {
+      if (isMtn) {
         if (useMomo) {
+          // MTN MoMo Airtime Vending Code: *671*1*1*Phone*Amount*PIN#
           ussdCode = `*671*1*1*${targetPhone}*${numericAmount}*${momoPin}#`;
           steps = ["1", "1", targetPhone, String(numericAmount), momoPin];
         } else {
+          // Standard MTN Share (Me2U): *321*1*Phone*Amount*PIN#
           ussdCode = `*321*1*${targetPhone}*${numericAmount}*${pin}#`;
           steps = ["1", targetPhone, String(numericAmount), pin];
         }
@@ -215,14 +221,14 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference, chan
         payload: commandPayload,
       };
 
-      console.log(`⚡ [AIRTIME: USSD (${useMomo ? "MoMo" : "Standard"})] Ref: ${txReference} -> ${ussdCode} (Slot ${slotIndex})`);
+      console.log(`⚡ [AIRTIME: USSD (${useMomo ? "MTN MoMo PSB" : "Standard USSD"})] Ref: ${txReference} -> ${ussdCode} (Slot ${slotIndex})`);
     } 
-    // HANYA B: SMS QUEUE (Load >= 3)
+    // HANYA B: SMS QUEUE (Idan Layi ya yi cunkoso ga sauran Networks ko kuma MTN Share)
     else {
       let smsRecipient = "321";
       let smsMessage = `Transfer ${targetPhone} ${numericAmount} ${pin}`;
 
-      if (normalizedNetwork === "MTN") {
+      if (isMtn) {
         smsRecipient = "321";
         smsMessage = `Transfer ${targetPhone} ${numericAmount} ${pin}`;
       } else if (normalizedNetwork === "AIRTEL") {
@@ -300,6 +306,7 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference, chan
       discount: discountAmount,
       walletBalance: updatedWallet.balance,
       status: "PENDING",
+      channel: useMomo ? "MTN_MOMO" : "STANDARD",
     };
   }
 

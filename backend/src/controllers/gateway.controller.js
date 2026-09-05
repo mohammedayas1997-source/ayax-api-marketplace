@@ -241,15 +241,24 @@ exports.heartbeat = async (req, res) => {
       },
     });
 
-    const pendingCommands = await prisma.gsmCommand.findMany({
-      where: {
-        OR: [{ deviceId: deviceId }, { deviceId: null }],
-        status: "PENDING",
-      },
-      orderBy: { createdAt: "asc" },
-      take: 10,
-    });
+    // A gsmGateway.controller.js karkashin heartbeat:
+const pendingCommands = await prisma.gsmCommand.findMany({
+  where: {
+    OR: [{ deviceId: deviceId }, { deviceId: null }],
+    status: "PENDING",
+  },
+  orderBy: { createdAt: "asc" },
+  take: 10,
+});
 
+// Kara wannan layin don hana sake tura abu sau biyu:
+if (pendingCommands.length > 0) {
+  const ids = pendingCommands.map(c => c.id);
+  await prisma.gsmCommand.updateMany({
+    where: { id: { in: ids } },
+    data: { status: "PROCESSING" }
+  });
+}
     // A ciki gsmGateway.controller.js karkashin exports.heartbeat:
 const formattedCommands = pendingCommands.map((cmd) => {
   const payloadData =

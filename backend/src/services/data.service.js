@@ -5,7 +5,7 @@ const providerService = require("./provider.service");
 const apiUsageService = require("./apiUsage.service");
 const calculateProfit = require("../helpers/calculateProfit");
 const clubkonnect = require("./clubkonnect.service");
-const { emitEvent, emitGatewayCommand } = require("../config/socket");
+const { emitEvent } = require("../config/socket");
 
 // Helper na tsaftace lambar waya zuwa 080...
 const cleanLocalPhone = (phone = "") => {
@@ -111,28 +111,38 @@ exports.purchaseData = async ({
     module: "DATA",
   });
 
-  // Gano Adadin Data na SMS (MB da GB)
-  let raw = String(planCode || "1000").toUpperCase();
+  // Gano Adadin Data na SMS (Gyaran Bug na "1" zuwa "1000")
+  let raw = String(planCode || "").toUpperCase().trim();
   let numericMB = "1000";
   let airtelPlanText = "1GB";
 
-  if (raw.includes("500")) {
+  if (raw === "500" || raw.includes("500MB") || raw.includes("500")) {
     numericMB = "500";
     airtelPlanText = "500MB";
-  } else if (raw.includes("2GB") || raw.includes("2000")) {
+  } else if (raw === "1" || raw.includes("1GB") || raw.includes("1000") || raw.includes("1.0GB")) {
+    numericMB = "1000";
+    airtelPlanText = "1GB";
+  } else if (raw === "2" || raw.includes("2GB") || raw.includes("2000") || raw.includes("2.0GB")) {
     numericMB = "2000";
     airtelPlanText = "2GB";
-  } else if (raw.includes("3GB") || raw.includes("3000")) {
+  } else if (raw === "3" || raw.includes("3GB") || raw.includes("3000")) {
     numericMB = "3000";
     airtelPlanText = "3GB";
-  } else if (raw.includes("5GB") || raw.includes("5000")) {
+  } else if (raw === "5" || raw.includes("5GB") || raw.includes("5000")) {
     numericMB = "5000";
     airtelPlanText = "5GB";
-  } else if (raw.includes("10GB") || raw.includes("10000")) {
+  } else if (raw === "10" || raw.includes("10GB") || raw.includes("10000")) {
     numericMB = "10000";
     airtelPlanText = "10GB";
   } else {
-    numericMB = raw.replace(/[^0-9]/g, "") || "1000";
+    const extracted = raw.replace(/[^0-9]/g, "");
+    if (extracted === "1") numericMB = "1000";
+    else if (extracted === "2") numericMB = "2000";
+    else if (extracted === "3") numericMB = "3000";
+    else if (extracted === "5") numericMB = "5000";
+    else if (extracted === "10") numericMB = "10000";
+    else numericMB = extracted || "1000";
+
     airtelPlanText = `${numericMB}MB`;
   }
 
@@ -154,7 +164,7 @@ exports.purchaseData = async ({
       const slotIndex = Number(targetSim.slotIndex ?? 0);
       const pin = process.env.GSM_DATA_PIN || "1997";
 
-      // Tsara Umarnin SMS (Babu Dialing Code)
+      // Tsara Umarnin SMS
       let smsRecipient = "312";
       let smsMessage = `SME ${targetPhone} ${numericMB} ${pin}`;
 
@@ -165,7 +175,6 @@ exports.purchaseData = async ({
           smsRecipient = "312";
           smsMessage = `Transfer ${targetPhone} ${numericMB} ${pin}`;
         } else {
-          // Default MTN SME Data
           smsRecipient = "312";
           smsMessage = `SME ${targetPhone} ${numericMB} ${pin}`;
         }
@@ -215,6 +224,7 @@ exports.purchaseData = async ({
         },
       }).catch(() => null);
 
+      // KIRA GUDA DAYA KACAL NA SOCKET (Hana Tura Sau Uku)
       try {
         const socketPayload = {
           commandId: transaction.reference,
@@ -231,12 +241,6 @@ exports.purchaseData = async ({
         };
 
         emitEvent("gateway-command", socketPayload, activeDevice.id);
-        emitEvent("command", socketPayload, activeDevice.id);
-        emitEvent(`gateway-command-${activeDevice.id}`, socketPayload);
-
-        if (typeof emitGatewayCommand === "function") {
-          emitGatewayCommand(activeDevice.id, socketPayload);
-        }
       } catch (socketErr) {
         console.warn("Gateway socket warning:", socketErr.message);
       }

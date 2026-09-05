@@ -7,8 +7,20 @@ const calculateProfit = require("../helpers/calculateProfit");
 const clubkonnect = require("./clubkonnect.service");
 const { emitEvent, emitGatewayCommand } = require("../config/socket");
 
+// Helper na tsaftace lambar waya zuwa 080...
+const cleanLocalPhone = (phone = "") => {
+  const digits = String(phone).replace(/\D/g, "");
+  if (digits.startsWith("234") && digits.length === 13) {
+    return `0${digits.slice(3)}`;
+  }
+  if (digits.length === 10 && !digits.startsWith("0")) {
+    return `0${digits}`;
+  }
+  return digits;
+};
+
 /* ======================================================
-   1. PURCHASE DATA BUNDLE (HYBRID: GSM MODEM -> CLUBKONNECT)
+   1. PURCHASE DATA BUNDLE (HYBRID: GSM SMS -> CLUBKONNECT)
 ====================================================== */
 exports.purchaseData = async ({
   user,
@@ -20,7 +32,7 @@ exports.purchaseData = async ({
   amount,
   reference,
 }) => {
-  const targetPhone = String(phone || phoneNumber || "").trim();
+  const targetPhone = cleanLocalPhone(phone || phoneNumber || "");
   const resolvedNetwork = String(network || "MTN").toUpperCase();
   const userTier = String(user?.tier || "REGULAR").toUpperCase();
 
@@ -99,21 +111,33 @@ exports.purchaseData = async ({
     module: "DATA",
   });
 
-  // Tace lambar MB ta USSD
+  // Gano Adadin Data na SMS (MB da GB)
   let raw = String(planCode || "1000").toUpperCase();
   let numericMB = "1000";
-  if (raw.includes("500")) numericMB = "500";
-  else if (raw.includes("1GB") || raw.includes("1000")) numericMB = "1000";
-  else if (raw.includes("2GB") || raw.includes("2000")) numericMB = "2000";
-  else if (raw.includes("3GB") || raw.includes("3000")) numericMB = "3000";
-  else if (raw.includes("5GB") || raw.includes("5000")) numericMB = "5000";
-  else if (raw.includes("10GB") || raw.includes("10000")) numericMB = "10000";
-  else {
+  let airtelPlanText = "1GB";
+
+  if (raw.includes("500")) {
+    numericMB = "500";
+    airtelPlanText = "500MB";
+  } else if (raw.includes("2GB") || raw.includes("2000")) {
+    numericMB = "2000";
+    airtelPlanText = "2GB";
+  } else if (raw.includes("3GB") || raw.includes("3000")) {
+    numericMB = "3000";
+    airtelPlanText = "3GB";
+  } else if (raw.includes("5GB") || raw.includes("5000")) {
+    numericMB = "5000";
+    airtelPlanText = "5GB";
+  } else if (raw.includes("10GB") || raw.includes("10000")) {
+    numericMB = "10000";
+    airtelPlanText = "10GB";
+  } else {
     numericMB = raw.replace(/[^0-9]/g, "") || "1000";
+    airtelPlanText = `${numericMB}MB`;
   }
 
   try {
-    // 5. TAFARKI NA 1: DUBA GSM MODEM / GATEWAY
+    // 5. TAFARKI NA 1: DUBA GSM MODEM / GATEWAY (SMS EXECUTION)
     const activeDevice = await prisma.gsmDevice.findFirst({
       where: { status: "ONLINE" },
       include: { sims: true },
@@ -127,41 +151,56 @@ exports.purchaseData = async ({
     );
 
     if (activeDevice && targetSim) {
-      const slotIndex = targetSim.slotIndex ?? 1;
-      const pin = "1997";
+      const slotIndex = Number(targetSim.slotIndex ?? 0);
+      const pin = process.env.GSM_DATA_PIN || "1997";
 
-      let ussdCode = `*312*${targetPhone}*${numericMB}*${pin}#`;
-      let steps = [targetPhone, numericMB, pin];
+      // Tsara Umarnin SMS (Babu Dialing Code)
+      let smsRecipient = "312";
+      let smsMessage = `SME ${targetPhone} ${numericMB} ${pin}`;
 
       const planIdentifier = `${pricingPlan?.serviceCode || ""} ${pricingPlan?.serviceName || ""} ${planCode}`.toUpperCase();
+
       if (resolvedNetwork === "MTN") {
-        if (planIdentifier.includes("SME")) {
-          ussdCode = `*461*1*${targetPhone}*${numericMB}*${pin}#`;
-          steps = ["1", targetPhone, numericMB, pin];
-        } else if (planIdentifier.includes("CG") || planIdentifier.includes("CORP")) {
-          ussdCode = `*460*6*1*${targetPhone}*${numericMB}*${pin}#`;
-          steps = ["6", "1", targetPhone, numericMB, pin];
+        if (planIdentifier.includes("CG") || planIdentifier.includes("CORP")) {
+          smsRecipient = "312";
+          smsMessage = `Transfer ${targetPhone} ${numericMB} ${pin}`;
+        } else {
+          // Default MTN SME Data
+          smsRecipient = "312";
+          smsMessage = `SME ${targetPhone} ${numericMB} ${pin}`;
         }
       } else if (resolvedNetwork === "AIRTEL") {
-        ussdCode = `*141*${targetPhone}*${numericMB}#`;
-        steps = [targetPhone, numericMB];
+        smsRecipient = "141";
+        smsMessage = `SHARE ${targetPhone} ${airtelPlanText} ${pin}`;
       } else if (resolvedNetwork === "GLO") {
-        ussdCode = `*127*${numericMB}*${targetPhone}#`;
-        steps = [numericMB, targetPhone];
+        smsRecipient = "127";
+        smsMessage = `Share ${targetPhone}`;
       } else if (resolvedNetwork === "9MOBILE") {
-        ussdCode = `*229*${numericMB}*${targetPhone}#`;
-        steps = [numericMB, targetPhone];
+        smsRecipient = "229";
+        smsMessage = `SMART ${numericMB} ${targetPhone}`;
       }
+
+      console.log(
+        `[DISPATCHING TO GATEWAY (SMS)]: Ref: ${transaction.reference} -> Target Device: ${activeDevice.id} (Slot: ${slotIndex}) -> SMS: ${smsRecipient} "${smsMessage}"`
+      );
 
       const commandPayload = {
         reference: transaction.reference,
         deviceId: activeDevice.id,
-        type: "USSD",
+        type: "SMS",
+        action: "SEND_SMS",
         service: "DATA",
-        ussdCode,
-        steps,
-        phone: targetPhone,
-        slotIndex: Number(slotIndex),
+        recipient: smsRecipient,
+        sendTo: smsRecipient,
+        destination: smsRecipient,
+        phoneNumber: smsRecipient,
+        phone: smsRecipient,
+        message: smsMessage,
+        smsBody: smsMessage,
+        smsText: smsMessage,
+        targetPhone,
+        slotIndex,
+        simSlot: slotIndex,
         amount: finalAmount,
         network: resolvedNetwork,
       };
@@ -170,16 +209,33 @@ exports.purchaseData = async ({
         data: {
           reference: transaction.reference,
           deviceId: activeDevice.id,
-          type: "USSD",
+          type: "SEND_SMS",
           status: "PENDING",
           payload: commandPayload,
         },
       }).catch(() => null);
 
       try {
-        emitEvent("gateway-command", commandPayload, activeDevice.id);
+        const socketPayload = {
+          commandId: transaction.reference,
+          reference: transaction.reference,
+          type: "SMS",
+          action: "SEND_SMS",
+          recipient: smsRecipient,
+          sendTo: smsRecipient,
+          message: smsMessage,
+          smsBody: smsMessage,
+          slotIndex,
+          simSlot: slotIndex,
+          payload: commandPayload,
+        };
+
+        emitEvent("gateway-command", socketPayload, activeDevice.id);
+        emitEvent("command", socketPayload, activeDevice.id);
+        emitEvent(`gateway-command-${activeDevice.id}`, socketPayload);
+
         if (typeof emitGatewayCommand === "function") {
-          emitGatewayCommand(activeDevice.id, commandPayload);
+          emitGatewayCommand(activeDevice.id, socketPayload);
         }
       } catch (socketErr) {
         console.warn("Gateway socket warning:", socketErr.message);
@@ -210,7 +266,7 @@ exports.purchaseData = async ({
     }
 
     // 6. TAFARKI NA 2: AUTOMATIC FALLBACK ZUWA CLUBKONNECT
-    console.log(`[DATA: CLUBKONNECT] Modem offline. Forwarding ${transaction.reference} to Clubkonnect API...`);
+    console.log(`[DATA: CLUBKONNECT] Modem offline or SIM not found. Forwarding ${transaction.reference} to Clubkonnect API...`);
 
     const ckResult = await clubkonnect.vendData({
       network: resolvedNetwork,

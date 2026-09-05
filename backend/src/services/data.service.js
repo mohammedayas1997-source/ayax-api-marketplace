@@ -20,7 +20,7 @@ const cleanLocalPhone = (phone = "") => {
 };
 
 /* ======================================================
-   1. PURCHASE DATA BUNDLE (DYNAMIC: USSD FIRST -> SMS ON LOAD -> CLUBKONNECT)
+   1. PURCHASE DATA BUNDLE (SAFE DISPATCH & PRE-ROUTE CHECK)
 ====================================================== */
 exports.purchaseData = async ({
   user,
@@ -74,18 +74,46 @@ exports.purchaseData = async ({
     throw err;
   }
 
-  // 2. TABBATAR DA WALLET BALANCE
+  // 2. TABBATAR DA WALLET BALANCE (Ba tare da cirewa ba tukuna)
   const wallet = await walletService.getOrCreateWallet(user.id);
   if (Number(wallet.balance) < finalAmount) {
-    const err = new Error("Insufficient wallet balance.");
+    const err = new Error(`Insufficient wallet balance. Required: ₦${finalAmount}`);
     err.statusCode = 402;
     err.code = "INSUFFICIENT_WALLET_BALANCE";
     throw err;
   }
 
+  // 3. PRE-FLIGHT CHECK: DUBA LAFIYAR GSM MODEM & SIM KAFIN CIKAKKEN AIKI
+  const activeDevice = await prisma.gsmDevice.findFirst({
+    where: {
+      status: "ONLINE",
+      lastSeen: { gte: new Date(Date.now() - 2 * 60 * 1000) }, // Dole ya kasance ya yi magana a minti 2 da suka wuce
+    },
+    include: { sims: true },
+    orderBy: { lastSeen: "desc" },
+  });
+
+  const targetSim = activeDevice?.sims?.find(
+    (s) =>
+      s.status === "ACTIVE" &&
+      (s.carrierName?.toUpperCase().includes(resolvedNetwork) ||
+       s.displayName?.toUpperCase().includes(resolvedNetwork))
+  );
+
+  const isGatewayReady = Boolean(activeDevice && targetSim);
+  const isFallbackConfigured = Boolean(process.env.CLUBKONNECT_API_KEY || process.env.CLUBKONNECT_USER_ID);
+
+  // Idan Gateway ba ya aiki kuma babu hanyar API na biyu, KADA A CIRE KO SISI
+  if (!isGatewayReady && !isFallbackConfigured) {
+    const err = new Error(`${resolvedNetwork} network route is currently unavailable. No funds were debited from your wallet.`);
+    err.statusCode = 503;
+    err.code = "ROUTE_UNAVAILABLE";
+    throw err;
+  }
+
   const txReference = reference || `AYAX_DATA_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-  // 3. CREATE TRANSACTION RECORD
+  // 4. CREATE TRANSACTION RECORD
   const transaction = await transactionService.createTransaction({
     userId: user.id,
     type: "DEBIT",
@@ -102,7 +130,7 @@ exports.purchaseData = async ({
     },
   });
 
-  // 4. DEBIT WALLET (HOLD FUNDS)
+  // 5. CIRE KUDI A WALLET (Yanzu ne aka tabbatar da cewa akwai kofa mai aiki)
   await walletService.debitWallet({
     userId: user.id,
     amount: finalAmount,
@@ -166,20 +194,8 @@ exports.purchaseData = async ({
   }
 
   try {
-    // 5. TAFARKI NA 1: DUBA GSM MODEM / GATEWAY
-    const activeDevice = await prisma.gsmDevice.findFirst({
-      where: { status: "ONLINE" },
-      include: { sims: true },
-      orderBy: { lastSeen: "desc" },
-    });
-
-    const targetSim = activeDevice?.sims?.find(
-      (s) =>
-        s.carrierName?.toUpperCase().includes(resolvedNetwork) ||
-        s.displayName?.toUpperCase().includes(resolvedNetwork)
-    );
-
-    if (activeDevice && targetSim) {
+    // 6. TAFARKI NA 1: GSM MODEM / GATEWAY (IDAN YANA A SHIRYE)
+    if (isGatewayReady) {
       const slotIndex = Number(targetSim.slotIndex ?? 0);
       const pin = process.env.GSM_DATA_PIN || "1997";
 
@@ -208,12 +224,10 @@ exports.purchaseData = async ({
             ussdCode = `*460*6*1*${targetPhone}*${numericMB}*${pin}#`;
             steps = ["6", "1", targetPhone, numericMB, pin];
           } else {
-            // MTN SME Direct USSD (*461#)
             ussdCode = `*461*1*${targetPhone}*${numericMB}*${pin}#`;
             steps = ["1", targetPhone, numericMB, pin];
           }
         } else if (resolvedNetwork === "AIRTEL") {
-          // Airtel Direct Gifting / SME USSD
           ussdCode = `*312*${targetPhone}*${numericMB}*${pin}#`;
           steps = [targetPhone, numericMB, pin];
         } else if (resolvedNetwork === "GLO") {
@@ -337,7 +351,6 @@ exports.purchaseData = async ({
         console.log(`📨 [MODE: SMS QUEUE LOAD] Ref: ${transaction.reference} -> ${smsRecipient} "${smsMessage}" on Slot ${slotIndex}`);
       }
 
-      // KIRA GUDA DAYA KACAL NA SOCKET (Hana Tura Sau Uku)
       try {
         emitEvent("gateway-command", socketPayload, activeDevice.id);
       } catch (socketErr) {
@@ -368,7 +381,7 @@ exports.purchaseData = async ({
       };
     }
 
-    // 6. TAFARKI NA 2: AUTOMATIC FALLBACK ZUWA CLUBKONNECT
+    // 7. TAFARKI NA 2: AUTOMATIC FALLBACK ZUWA CLUBKONNECT
     console.log(`[DATA: CLUBKONNECT] Modem offline or SIM not found. Forwarding ${transaction.reference} to Clubkonnect API...`);
 
     const ckResult = await clubkonnect.vendData({
@@ -412,7 +425,7 @@ exports.purchaseData = async ({
       throw new Error(JSON.stringify(ckResult.rawResponse || "Clubkonnect vending failed."));
     }
   } catch (err) {
-    // 7. AUTO-REFUND NAN TAKE IDAN DUKKAN TAFARKI SUN GAZA
+    // 8. AUTO-REFUND NAN TAKE IDAN AN SAMU MATSALA BAYAN DEBIT
     console.error("Data purchase failure, processing refund:", err.message);
 
     await walletService.creditWallet({

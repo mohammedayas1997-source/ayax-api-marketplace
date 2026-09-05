@@ -79,7 +79,7 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference, chan
     amountToCharge = Number((numericAmount - discountAmount).toFixed(2));
   }
 
-  // 3. Duba Balance na Wallet
+  // 3. Duba Balance na Wallet (Ba tare da cirewa ba tukuna)
   const wallet = await prisma.wallet.findUnique({
     where: { userId: user.id },
   });
@@ -91,9 +91,37 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference, chan
     throw error;
   }
 
+  // 4. PRE-FLIGHT CHECK: DUBA GSM MODEM & SIM KAFIN CIKAKKEN AIKI
+  const activeDevice = await prisma.gsmDevice.findFirst({
+    where: {
+      status: "ONLINE",
+      lastSeen: { gte: new Date(Date.now() - 2 * 60 * 1000) }, // Dole ya zama ONLINE a cikin minti 2
+    },
+    include: { sims: true },
+    orderBy: { lastSeen: "desc" },
+  });
+
+  const targetSim = activeDevice?.sims?.find(
+    (s) =>
+      s.status === "ACTIVE" &&
+      (s.carrierName?.toUpperCase().includes(normalizedNetwork) ||
+       s.displayName?.toUpperCase().includes(normalizedNetwork))
+  ) || activeDevice?.sims?.[0];
+
+  const isGatewayReady = Boolean(activeDevice && targetSim);
+  const isFallbackConfigured = Boolean(process.env.CLUBKONNECT_API_KEY || process.env.CLUBKONNECT_USER_ID);
+
+  // Idan babu Gateway mai aiki kuma babu Clubkonnect, KADA A CIRE KUDI
+  if (!isGatewayReady && !isFallbackConfigured) {
+    const error = new Error(`${normalizedNetwork} airtime vending route is temporarily unavailable. No funds were debited.`);
+    error.statusCode = 503;
+    error.code = "ROUTE_UNAVAILABLE";
+    throw error;
+  }
+
   const txReference = reference || `AIRTIME_${normalizedNetwork}_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
 
-  // 4. Cire Kudi a Wallet & Ajiye Transaction a PENDING
+  // 5. CIRE KUDI A WALLET (Yanzu da aka tabbatar da cewa akwai kofa mai aiki)
   const { updatedWallet, transaction } = await prisma.$transaction(async (tx) => {
     const newWallet = await tx.wallet.update({
       where: { userId: user.id },
@@ -115,20 +143,8 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference, chan
     return { updatedWallet: newWallet, transaction: newTx };
   });
 
-  // 5. TAFARKI NA 1: GSM MODEM (GATEWAY tare da MoMo PSB)
-  const activeDevice = await prisma.gsmDevice.findFirst({
-    where: { status: "ONLINE" },
-    include: { sims: true },
-    orderBy: { lastSeen: "desc" },
-  });
-
-  const targetSim = activeDevice?.sims?.find(
-    (s) =>
-      s.carrierName?.toUpperCase().includes(normalizedNetwork) ||
-      s.displayName?.toUpperCase().includes(normalizedNetwork)
-  ) || activeDevice?.sims?.[0];
-
-  if (activeDevice && targetSim) {
+  // 6. TAFARKI NA 1: GSM MODEM (GATEWAY tare da MoMo PSB)
+  if (isGatewayReady) {
     const slotIndex = Number(targetSim.slotIndex ?? 0);
     const pin = process.env.GSM_AIRTIME_PIN || "1997";
     const momoPin = process.env.MOMO_PIN || pin;
@@ -146,20 +162,16 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference, chan
     let commandPayload = null;
     let socketPayload = null;
 
-    // ====================================================
-    // HANYA A: USSD FIRST (IDAN LAYI YANA DA SAUKI < 3)
-    // ====================================================
+    // HANYA A: USSD FIRST (Load < 3)
     if (pendingJobsCount < 3) {
       let ussdCode = `*321*${targetPhone}*${numericAmount}*${pin}#`;
       let steps = [targetPhone, String(numericAmount), pin];
 
       if (normalizedNetwork === "MTN") {
         if (useMomo) {
-          // MTN MoMo Airtime Vending Code: *671*1*1*Phone*Amount*PIN#
           ussdCode = `*671*1*1*${targetPhone}*${numericAmount}*${momoPin}#`;
           steps = ["1", "1", targetPhone, String(numericAmount), momoPin];
         } else {
-          // Standard MTN Share (Me2U): *321*1*Phone*Amount*PIN#
           ussdCode = `*321*1*${targetPhone}*${numericAmount}*${pin}#`;
           steps = ["1", targetPhone, String(numericAmount), pin];
         }
@@ -205,9 +217,7 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference, chan
 
       console.log(`⚡ [AIRTIME: USSD (${useMomo ? "MoMo" : "Standard"})] Ref: ${txReference} -> ${ussdCode} (Slot ${slotIndex})`);
     } 
-    // ====================================================
-    // HANYA B: SMS QUEUE (IDAN CUNKOSO YA YI YAWA >= 3)
-    // ====================================================
+    // HANYA B: SMS QUEUE (Load >= 3)
     else {
       let smsRecipient = "321";
       let smsMessage = `Transfer ${targetPhone} ${numericAmount} ${pin}`;
@@ -274,7 +284,6 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference, chan
       },
     }).catch(() => null);
 
-    // Kira guda ɗaya kacal ta Socket don hana maimaita transaction
     try {
       emitEvent("gateway-command", socketPayload, activeDevice.id);
     } catch (socketErr) {
@@ -294,7 +303,7 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference, chan
     };
   }
 
-  // 6. TAFARKI NA 2: CLUBKONNECT FALLBACK
+  // 7. TAFARKI NA 2: CLUBKONNECT FALLBACK
   console.log(`[AIRTIME: CLUBKONNECT] Forwarding ${txReference} to Clubkonnect API...`);
 
   try {
@@ -328,7 +337,7 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference, chan
   } catch (vendorError) {
     console.error("Vendor failed, initiating refund:", vendorError.message);
 
-    // Auto-Refund nan take
+    // Auto-Refund nan take idan kofofi sun gaza bayan an cire kudi
     await prisma.$transaction([
       prisma.wallet.update({
         where: { userId: user.id },

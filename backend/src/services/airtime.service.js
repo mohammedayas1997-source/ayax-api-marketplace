@@ -91,7 +91,7 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference }) =>
     throw error;
   }
 
-  // 4. Pre-Flight Check: Tabbatar da Gateway da SIM
+  // 4. Pre-Flight Check: Tabbatar da Gateway da SIM din da ke da alhakin MTN MoMo
   const activeDevice = await prisma.gsmDevice.findFirst({
     where: {
       status: "ONLINE",
@@ -142,26 +142,19 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference }) =>
     return { updatedWallet: newWallet, transaction: newTx };
   });
 
-  // 6. Tafarki na 1: GSM Gateway (MTN MoMo Multi-Step Session)
+  // 6. Tafarki na 1: GSM Gateway (MTN MoMo PSB *671# Kadai)
   if (isGatewayReady) {
     const slotIndex = Number(targetSim.slotIndex ?? 0);
-    const pin = process.env.GSM_AIRTIME_PIN || "8724";
-    const momoPin = process.env.MOMO_PIN || pin;
+    const pin = process.env.GSM_AIRTIME_PIN || "1997";
+    const momoPin = process.env.MOMO_PIN || "8724";
 
     let ussdCode = "";
     let steps = [];
 
     if (normalizedNetwork === "MTN") {
-      // MTN MoMo Interactive Session
-      ussdCode = "*671#";
-      steps = [
-        "2",
-        "1",
-        "3",
-        targetPhone,
-        String(numericAmount),
-        momoPin,
-      ];
+      // Menu flow: *671# -> 2 -> 1 -> 3 -> Phone -> Amount -> PIN (8724)
+      ussdCode = `*671*2*1*3*${targetPhone}*${numericAmount}*${momoPin}#`;
+      steps = ["2", "1", "3", targetPhone, String(numericAmount), momoPin];
     } else if (normalizedNetwork === "AIRTEL") {
       ussdCode = `*321*${targetPhone}*${numericAmount}*${pin}#`;
       steps = [targetPhone, String(numericAmount), pin];
@@ -181,6 +174,7 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference }) =>
       service: "AIRTIME",
       ussdCode,
       code: ussdCode,
+      rootCode: normalizedNetwork === "MTN" ? "*671#" : ussdCode,
       steps,
       phone: targetPhone,
       targetPhone,
@@ -188,7 +182,7 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference }) =>
       simSlot: slotIndex,
       amount: numericAmount,
       network: normalizedNetwork,
-      routeType: "MTN_MOMO_SESSION",
+      routeType: "MTN_MOMO",
     };
 
     const socketPayload = {
@@ -198,6 +192,7 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference }) =>
       action: "INTERACTIVE_USSD",
       ussdCode,
       code: ussdCode,
+      rootCode: normalizedNetwork === "MTN" ? "*671#" : ussdCode,
       steps,
       slotIndex,
       simSlot: slotIndex,
@@ -214,7 +209,7 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference }) =>
       },
     }).catch(() => null);
 
-    console.log(`⚡ [AIRTIME: MTN MOMO INTERACTIVE] Ref: ${txReference} -> ${ussdCode} (Steps: 2 > 1 > 3 > ${targetPhone} > ${numericAmount} > PIN)`);
+    console.log(`⚡ [AIRTIME: MTN MOMO ONLY] Ref: ${txReference} -> Steps: ${JSON.stringify(steps)} (Slot: ${slotIndex})`);
 
     try {
       emitEvent("gateway-command", socketPayload, activeDevice.id);

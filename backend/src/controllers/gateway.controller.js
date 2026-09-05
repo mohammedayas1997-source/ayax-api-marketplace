@@ -46,7 +46,6 @@ const parseExpiryToDate = (value) => {
     return new Date(text);
   }
 
-  // 1. DD/MM/YYYY ko DD-MM-YYYY
   const dmyMatch = text.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
   if (dmyMatch) {
     const [, day, month, rawYear] = dmyMatch;
@@ -55,7 +54,6 @@ const parseExpiryToDate = (value) => {
     return Number.isNaN(date.getTime()) ? null : date;
   }
 
-  // 2. DD-MMM-YYYY
   const dMonYMatch = text.match(/^(\d{1,2})[\s\-]+([A-Za-z]{3,9})[\s\-]+(\d{2,4})/);
   if (dMonYMatch) {
     const [, day, monthName, rawYear] = dMonYMatch;
@@ -67,7 +65,6 @@ const parseExpiryToDate = (value) => {
     }
   }
 
-  // 3. YYYY-MM-DD
   const ymdMatch = text.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
   if (ymdMatch) {
     const [, year, month, day] = ymdMatch;
@@ -79,28 +76,29 @@ const parseExpiryToDate = (value) => {
   return Number.isNaN(directDate.getTime()) ? null : directDate;
 };
 
-// Helper na mayar wa mai amfani da kudi idan oda ta fadi
+// Helper na mayar wa mai amfani da kudi idan oda ta fadi (Auto-Refund)
 const refundUserTransactionByRef = async (reference, reason) => {
   try {
     const txn = await prisma.transaction.findFirst({
       where: { reference },
     });
 
-    if (txn && txn.status !== "FAILED" && txn.status !== "REFUNDED") {
+    if (txn && txn.status !== "FAILED" && txn.status !== "REFUNDED" && txn.status !== "SUCCESSFUL") {
       const refundAmount = Number(txn.amount);
 
-      await prisma.wallet.updateMany({
-        where: { userId: txn.userId },
-        data: { balance: { increment: refundAmount } },
-      });
-
-      await prisma.transaction.update({
-        where: { id: txn.id },
-        data: {
-          status: "FAILED",
-          description: `Refunded: ${reason || "Network delivery failure"}`,
-        },
-      });
+      await prisma.$transaction([
+        prisma.wallet.updateMany({
+          where: { userId: txn.userId },
+          data: { balance: { increment: refundAmount } },
+        }),
+        prisma.transaction.update({
+          where: { id: txn.id },
+          data: {
+            status: "FAILED",
+            description: `Refunded (₦${refundAmount}): ${reason || "Delivery failure"}`,
+          },
+        }),
+      ]);
 
       emitEvent("wallet-updated", {
         userId: txn.userId,
@@ -108,7 +106,7 @@ const refundUserTransactionByRef = async (reference, reason) => {
         reference,
       });
 
-      console.log(`[REFUND] ₦${refundAmount} refunded for Ref: ${reference}`);
+      console.log(`💸 [AUTO-REFUND SUCCESS]: ₦${refundAmount} refunded for Ref: ${reference} (${reason})`);
     }
   } catch (refundErr) {
     console.error("Auto-refund error:", refundErr.message);
@@ -241,77 +239,101 @@ exports.heartbeat = async (req, res) => {
       },
     });
 
-    // A gsmGateway.controller.js karkashin heartbeat:
-const pendingCommands = await prisma.gsmCommand.findMany({
-  where: {
-    OR: [{ deviceId: deviceId }, { deviceId: null }],
-    status: "PENDING",
-  },
-  orderBy: { createdAt: "asc" },
-  take: 10,
-});
+    // 1. Daga tsoffin ayyukan da suka wuce minti 3 a PROCESSING, yi musu auto-refund
+    const staleTime = new Date(Date.now() - 3 * 60 * 1000);
+    const staleCommands = await prisma.gsmCommand.findMany({
+      where: {
+        deviceId,
+        status: "PROCESSING",
+        createdAt: { lte: staleTime },
+      },
+      take: 5,
+    });
 
-// Kara wannan layin don hana sake tura abu sau biyu:
-if (pendingCommands.length > 0) {
-  const ids = pendingCommands.map(c => c.id);
-  await prisma.gsmCommand.updateMany({
-    where: { id: { in: ids } },
-    data: { status: "PROCESSING" }
-  });
-}
-    // A ciki gsmGateway.controller.js karkashin exports.heartbeat:
-const formattedCommands = pendingCommands.map((cmd) => {
-  const payloadData =
-    typeof cmd.payload === "string"
-      ? JSON.parse(cmd.payload || "{}")
-      : cmd.payload || {};
+    for (const stale of staleCommands) {
+      await prisma.gsmCommand.update({
+        where: { id: stale.id },
+        data: { status: "FAILED", response: "Command timed out (No response from network)" },
+      });
+      await refundUserTransactionByRef(stale.reference, "Gateway Timeout: Network failed to respond in 3 minutes");
+    }
 
-  const smsMessageText =
-    payloadData.message ||
-    payloadData.smsText ||
-    payloadData.smsBody ||
-    payloadData.body ||
-    "";
-    
-  const targetRecipient =
-    payloadData.recipient ||
-    payloadData.sendTo ||
-    payloadData.phoneNumber ||
-    payloadData.destination ||
-    payloadData.phone ||
-    "";
+    // 2. Dauko sabbin ayyukan da ke PENDING
+    const pendingCommands = await prisma.gsmCommand.findMany({
+      where: {
+        OR: [{ deviceId: deviceId }, { deviceId: null }],
+        status: "PENDING",
+      },
+      orderBy: { createdAt: "asc" },
+      take: 5,
+    });
 
-  return {
-    id: cmd.id,
-    commandId: cmd.id,
-    reference: cmd.reference,
-    // Tura duka biyun: idan app dinka na son SMS ko SEND_SMS
-    type: "SEND_SMS",
-    action: "SEND_SMS",
-    status: cmd.status,
+    if (pendingCommands.length > 0) {
+      const ids = pendingCommands.map((c) => c.id);
+      await prisma.gsmCommand.updateMany({
+        where: { id: { in: ids } },
+        data: { status: "PROCESSING" },
+      });
+    }
 
-    // Cikakken bayanan SMS ga kowanne field name da Android app ke bukata
-    message: smsMessageText,
-    smsText: smsMessageText,
-    smsBody: smsMessageText,
-    body: smsMessageText,
-    recipient: targetRecipient,
-    sendTo: targetRecipient,
-    destination: targetRecipient,
-    phoneNumber: targetRecipient,
-    phone: targetRecipient,
-    targetPhone: payloadData.targetPhone || targetRecipient,
+    const formattedCommands = pendingCommands.map((cmd) => {
+      const payloadData =
+        typeof cmd.payload === "string"
+          ? JSON.parse(cmd.payload || "{}")
+          : cmd.payload || {};
 
-    // SIM Slot
-    slotIndex: Number(payloadData.slotIndex ?? payloadData.simSlot ?? 0),
-    simSlot: Number(payloadData.slotIndex ?? payloadData.simSlot ?? 0),
-    simId: payloadData.simId || null,
+      const smsMessageText =
+        payloadData.message ||
+        payloadData.smsText ||
+        payloadData.smsBody ||
+        payloadData.body ||
+        "";
 
-    amount: Number(payloadData.amount || 0),
-    network: payloadData.network || null,
-    payload: payloadData,
-  };
-});
+      const targetRecipient =
+        payloadData.recipient ||
+        payloadData.sendTo ||
+        payloadData.phoneNumber ||
+        payloadData.destination ||
+        payloadData.phone ||
+        "";
+
+      const isUssd = cmd.type === "USSD" || payloadData.type === "USSD";
+
+      return {
+        id: cmd.id,
+        commandId: cmd.id,
+        reference: cmd.reference,
+        type: isUssd ? "USSD" : "SEND_SMS",
+        action: isUssd ? "USSD" : "SEND_SMS",
+        status: "PROCESSING",
+
+        // USSD
+        ussdCode: payloadData.ussdCode || payloadData.code || "",
+        code: payloadData.ussdCode || payloadData.code || "",
+        steps: payloadData.steps || [],
+
+        // SMS
+        message: smsMessageText,
+        smsText: smsMessageText,
+        smsBody: smsMessageText,
+        body: smsMessageText,
+        recipient: targetRecipient,
+        sendTo: targetRecipient,
+        destination: targetRecipient,
+        phoneNumber: targetRecipient,
+        phone: targetRecipient,
+        targetPhone: payloadData.targetPhone || targetRecipient,
+
+        // SIM Slot
+        slotIndex: Number(payloadData.slotIndex ?? payloadData.simSlot ?? 0),
+        simSlot: Number(payloadData.slotIndex ?? payloadData.simSlot ?? 0),
+        simId: payloadData.simId || null,
+
+        amount: Number(payloadData.amount || 0),
+        network: payloadData.network || null,
+        payload: payloadData,
+      };
+    });
 
     emitEvent("gsm-device-heartbeat", { device: updated });
 
@@ -428,7 +450,7 @@ exports.renameDevice = async (req, res) => {
   }
 };
 
-// 8. receiveIncomingSms (INBOUND SMS FEEDBACK & RECONCILIATION)
+// 8. receiveIncomingSms (INBOUND SMS FEEDBACK & AUTO-REFUND RECONCILIATION)
 exports.receiveIncomingSms = async (req, res) => {
   try {
     const {
@@ -468,46 +490,79 @@ exports.receiveIncomingSms = async (req, res) => {
       },
     });
 
-    // 2. Duba ko saƙon martani ne na Transaction daga Telco (Success / Fail)
+    // 2. Duba Feedback na Telco (Success / Fail)
+    const lowerMsg = String(message || "").toLowerCase();
     const feedback = parseTransactionFeedback ? parseTransactionFeedback(message) : { status: "UNKNOWN" };
     const detectedPhone = parsePhoneNumber(message);
 
-    // Idan an gano lambar waya a jikin saƙon, nemo transaction din da ke jiran turawa
+    const isFailureMessage =
+      lowerMsg.includes("incorrect") ||
+      lowerMsg.includes("oops") ||
+      lowerMsg.includes("not eligible") ||
+      lowerMsg.includes("failed") ||
+      lowerMsg.includes("insufficient") ||
+      lowerMsg.includes("invalid pin") ||
+      feedback.status === "FAILED" ||
+      feedback.status === "INSUFFICIENT_BALANCE";
+
+    const isSuccessMessage =
+      lowerMsg.includes("successful") ||
+      lowerMsg.includes("transferred") ||
+      lowerMsg.includes("you have gifted") ||
+      feedback.status === "SUCCESS";
+
+    // 3. NEMO TRANSACTION: Ko ta lambar waya, ko kuma Transaction na karshe da ke PROCESSING a wannan layin
+    let targetCmd = null;
+
     if (detectedPhone) {
-      const pendingCmd = await prisma.gsmCommand.findFirst({
+      targetCmd = await prisma.gsmCommand.findFirst({
         where: {
+          deviceId,
           status: { in: ["PENDING", "PROCESSING"] },
           payload: { path: ["targetPhone"], equals: detectedPhone },
         },
         orderBy: { createdAt: "desc" },
       });
+    }
 
-      if (pendingCmd) {
-        if (feedback.status === "SUCCESS") {
-          await markCommandSuccessful({
-            reference: pendingCmd.reference,
-            message: message.slice(0, 190),
-          });
-          await prisma.transaction.updateMany({
-            where: { reference: pendingCmd.reference },
-            data: {
-              status: "SUCCESSFUL",
-              description: `Confirmed via Telco SMS: ${message.slice(0, 180)}`,
-            },
-          });
-          console.log(`[SMS RECONCILED] Success for Ref: ${pendingCmd.reference} (${detectedPhone})`);
-        } else if (["FAILED", "INSUFFICIENT_BALANCE", "INVALID_PIN"].includes(feedback.status)) {
-          await markCommandFailed({
-            reference: pendingCmd.reference,
-            message: message.slice(0, 190),
-          });
-          await refundUserTransactionByRef(pendingCmd.reference, feedback.status);
-          console.log(`[SMS RECONCILED] Failed for Ref: ${pendingCmd.reference} - Refunded`);
-        }
+    // IDAN SAKON BAYA DA LAMBAR WAYA A CIKI (Kamar MTN Oops message), DAUKO NA KARSHE A WANNAN LAYIN
+    if (!targetCmd && (isFailureMessage || isSuccessMessage)) {
+      targetCmd = await prisma.gsmCommand.findFirst({
+        where: {
+          deviceId,
+          status: { in: ["PENDING", "PROCESSING"] },
+          createdAt: { gte: new Date(Date.now() - 3 * 60 * 1000) }, // A cikin minti 3 da suka wuce
+        },
+        orderBy: { createdAt: "desc" },
+      });
+    }
+
+    if (targetCmd) {
+      if (isSuccessMessage) {
+        await markCommandSuccessful({
+          reference: targetCmd.reference,
+          message: message.slice(0, 190),
+        });
+        await prisma.transaction.updateMany({
+          where: { reference: targetCmd.reference },
+          data: {
+            status: "SUCCESSFUL",
+            description: `Confirmed via Telco SMS: ${message.slice(0, 180)}`,
+          },
+        });
+        console.log(`✅ [SMS RECONCILED: SUCCESS] Ref: ${targetCmd.reference}`);
+      } else if (isFailureMessage) {
+        await markCommandFailed({
+          reference: targetCmd.reference,
+          message: message.slice(0, 190),
+        });
+        // AUTO-REFUND NAN TAKE
+        await refundUserTransactionByRef(targetCmd.reference, message.slice(0, 150));
+        console.log(`❌ [SMS RECONCILED: FAILED & REFUNDED] Ref: ${targetCmd.reference}`);
       }
     }
 
-    // 3. Duba Balance idan saƙon duba balance ne
+    // 4. Duba Balance idan saƙon duba balance ne
     const parsedDataBalance = parseDataBalance(message);
     const parsedAirtimeBalance = parseAirtimeBalance(message);
 
@@ -1081,7 +1136,7 @@ exports.receiveCommandResult = async (req, res) => {
     let command = existingCommand;
     let updatedSim = null;
 
-    // Idan saƙon SMS na Transaction ne (ba Balance check ba)
+    // Idan saƙon SMS/USSD na Transaction ne (ba Balance check ba)
     if (!isBalanceCommand && !isPhoneNumberCommand) {
       if (successStates.includes(normalizedStatus) || feedback.status === "SUCCESS") {
         command = await markCommandSuccessful({
@@ -1102,6 +1157,7 @@ exports.receiveCommandResult = async (req, res) => {
           message: finalMessage || "Delivery failed",
         });
 
+        // AUTO-REFUND NAN TAKE
         await refundUserTransactionByRef(reference, finalMessage || feedback.status);
       }
 

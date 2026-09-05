@@ -20,7 +20,7 @@ const cleanLocalPhone = (phone = "") => {
 };
 
 /* ======================================================
-   1. PURCHASE DATA BUNDLE (HYBRID: GSM SMS -> CLUBKONNECT)
+   1. PURCHASE DATA BUNDLE (DYNAMIC: USSD FIRST -> SMS ON LOAD -> CLUBKONNECT)
 ====================================================== */
 exports.purchaseData = async ({
   user,
@@ -111,7 +111,7 @@ exports.purchaseData = async ({
     module: "DATA",
   });
 
-  // Gano Adadin Data na SMS da Package Code
+  // Gano Adadin Data (MB, GB da Haruffan Package)
   let raw = String(planCode || "").toUpperCase().trim();
   let numericMB = "1000";
   let mtnSmeCode = "SMEB"; // Default 1GB
@@ -166,7 +166,7 @@ exports.purchaseData = async ({
   }
 
   try {
-    // 5. TAFARKI NA 1: DUBA GSM MODEM / GATEWAY (SMS EXECUTION)
+    // 5. TAFARKI NA 1: DUBA GSM MODEM / GATEWAY
     const activeDevice = await prisma.gsmDevice.findFirst({
       where: { status: "ONLINE" },
       include: { sims: true },
@@ -183,69 +183,134 @@ exports.purchaseData = async ({
       const slotIndex = Number(targetSim.slotIndex ?? 0);
       const pin = process.env.GSM_DATA_PIN || "1997";
 
-      let smsRecipient = "312";
-      let smsMessage = "";
+      // Duba Yawan Ayyukan Da Ke Layi (Queue Load Checker)
+      const pendingJobsCount = await prisma.gsmCommand.count({
+        where: {
+          deviceId: activeDevice.id,
+          status: { in: ["PENDING", "PROCESSING"] },
+          createdAt: { gte: new Date(Date.now() - 60 * 1000) },
+        },
+      });
 
       const planIdentifier = `${pricingPlan?.serviceCode || ""} ${pricingPlan?.serviceName || ""} ${planCode}`.toUpperCase();
+      let commandPayload = null;
+      let socketPayload = null;
 
-      if (resolvedNetwork === "MTN") {
-        smsRecipient = "312";
-        if (planIdentifier.includes("CG") || planIdentifier.includes("CORP")) {
-          // MTN Corporate Gifting
-          smsMessage = `Transfer ${targetPhone} ${numericMB} ${pin}`;
-        } else {
-          // MTN SME Direct: SMEB 080... 1997
-          smsMessage = `${mtnSmeCode} ${targetPhone} ${pin}`;
+      // ==========================================
+      // A. YANAYIN USSD (IDAN LAYI YANA DA SAUKI < 3)
+      // ==========================================
+      if (pendingJobsCount < 3) {
+        let ussdCode = `*312*${targetPhone}*${numericMB}*${pin}#`;
+        let steps = [targetPhone, numericMB, pin];
+
+        if (resolvedNetwork === "MTN") {
+          if (planIdentifier.includes("CG") || planIdentifier.includes("CORP")) {
+            ussdCode = `*460*6*1*${targetPhone}*${numericMB}*${pin}#`;
+            steps = ["6", "1", targetPhone, numericMB, pin];
+          } else {
+            // MTN SME Direct USSD (*461#)
+            ussdCode = `*461*1*${targetPhone}*${numericMB}*${pin}#`;
+            steps = ["1", targetPhone, numericMB, pin];
+          }
+        } else if (resolvedNetwork === "AIRTEL") {
+          // Airtel Direct Gifting / SME USSD
+          ussdCode = `*312*${targetPhone}*${numericMB}*${pin}#`;
+          steps = [targetPhone, numericMB, pin];
+        } else if (resolvedNetwork === "GLO") {
+          ussdCode = `*127*${numericMB}*${targetPhone}#`;
+          steps = [numericMB, targetPhone];
+        } else if (resolvedNetwork === "9MOBILE") {
+          ussdCode = `*229*${numericMB}*${targetPhone}#`;
+          steps = [numericMB, targetPhone];
         }
-      } else if (resolvedNetwork === "AIRTEL") {
-        smsRecipient = "141";
-        smsMessage = `SHARE ${targetPhone} ${airtelPlanText} ${pin}`;
-      } else if (resolvedNetwork === "GLO") {
-        smsRecipient = "127";
-        smsMessage = `Share ${targetPhone}`;
-      } else if (resolvedNetwork === "9MOBILE") {
-        smsRecipient = "229";
-        smsMessage = `SMART ${numericMB} ${targetPhone}`;
-      }
 
-      console.log(
-        `[DISPATCHING TO GATEWAY (SMS)]: Ref: ${transaction.reference} -> Target Device: ${activeDevice.id} (Slot: ${slotIndex}) -> SMS: ${smsRecipient} "${smsMessage}"`
-      );
+        commandPayload = {
+          reference: transaction.reference,
+          deviceId: activeDevice.id,
+          type: "USSD",
+          service: "DATA",
+          ussdCode,
+          code: ussdCode,
+          steps,
+          phone: targetPhone,
+          targetPhone,
+          slotIndex,
+          simSlot: slotIndex,
+          amount: finalAmount,
+          network: resolvedNetwork,
+        };
 
-      const commandPayload = {
-        reference: transaction.reference,
-        deviceId: activeDevice.id,
-        type: "SEND_SMS",
-        action: "SEND_SMS",
-        service: "DATA",
-        recipient: smsRecipient,
-        sendTo: smsRecipient,
-        destination: smsRecipient,
-        phoneNumber: smsRecipient,
-        phone: smsRecipient,
-        message: smsMessage,
-        smsBody: smsMessage,
-        smsText: smsMessage,
-        targetPhone,
-        slotIndex,
-        simSlot: slotIndex,
-        amount: finalAmount,
-        network: resolvedNetwork,
-      };
+        socketPayload = {
+          commandId: transaction.reference,
+          reference: transaction.reference,
+          type: "USSD",
+          ussdCode,
+          code: ussdCode,
+          steps,
+          slotIndex,
+          simSlot: slotIndex,
+          payload: commandPayload,
+        };
 
-      await prisma.gsmCommand.create({
-        data: {
+        await prisma.gsmCommand.create({
+          data: {
+            reference: transaction.reference,
+            deviceId: activeDevice.id,
+            type: "USSD",
+            status: "PENDING",
+            payload: commandPayload,
+          },
+        }).catch(() => null);
+
+        console.log(`⚡ [MODE: USSD FIRST] Ref: ${transaction.reference} -> ${ussdCode} on Slot ${slotIndex}`);
+      } 
+      // ==========================================
+      // B. YANAYIN SMS (IDAN CUNKOSO YA YI YAWA >= 3)
+      // ==========================================
+      else {
+        let smsRecipient = "312";
+        let smsMessage = "";
+
+        if (resolvedNetwork === "MTN") {
+          smsRecipient = "312";
+          if (planIdentifier.includes("CG") || planIdentifier.includes("CORP")) {
+            smsMessage = `Transfer ${targetPhone} ${numericMB} ${pin}`;
+          } else {
+            smsMessage = `${mtnSmeCode} ${targetPhone} ${pin}`;
+          }
+        } else if (resolvedNetwork === "AIRTEL") {
+          smsRecipient = "141";
+          smsMessage = `SHARE ${targetPhone} ${airtelPlanText} ${pin}`;
+        } else if (resolvedNetwork === "GLO") {
+          smsRecipient = "127";
+          smsMessage = `Share ${targetPhone}`;
+        } else if (resolvedNetwork === "9MOBILE") {
+          smsRecipient = "229";
+          smsMessage = `SMART ${numericMB} ${targetPhone}`;
+        }
+
+        commandPayload = {
           reference: transaction.reference,
           deviceId: activeDevice.id,
           type: "SEND_SMS",
-          status: "PENDING",
-          payload: commandPayload,
-        },
-      }).catch(() => null);
+          action: "SEND_SMS",
+          service: "DATA",
+          recipient: smsRecipient,
+          sendTo: smsRecipient,
+          destination: smsRecipient,
+          phoneNumber: smsRecipient,
+          phone: smsRecipient,
+          message: smsMessage,
+          smsBody: smsMessage,
+          smsText: smsMessage,
+          targetPhone,
+          slotIndex,
+          simSlot: slotIndex,
+          amount: finalAmount,
+          network: resolvedNetwork,
+        };
 
-      // KIRA GUDA DAYA KACAL NA SOCKET (Hana Tura Sau Uku)
-      try {
-        const socketPayload = {
+        socketPayload = {
           commandId: transaction.reference,
           reference: transaction.reference,
           type: "SEND_SMS",
@@ -259,6 +324,21 @@ exports.purchaseData = async ({
           payload: commandPayload,
         };
 
+        await prisma.gsmCommand.create({
+          data: {
+            reference: transaction.reference,
+            deviceId: activeDevice.id,
+            type: "SEND_SMS",
+            status: "PENDING",
+            payload: commandPayload,
+          },
+        }).catch(() => null);
+
+        console.log(`📨 [MODE: SMS QUEUE LOAD] Ref: ${transaction.reference} -> ${smsRecipient} "${smsMessage}" on Slot ${slotIndex}`);
+      }
+
+      // KIRA GUDA DAYA KACAL NA SOCKET (Hana Tura Sau Uku)
+      try {
         emitEvent("gateway-command", socketPayload, activeDevice.id);
       } catch (socketErr) {
         console.warn("Gateway socket warning:", socketErr.message);

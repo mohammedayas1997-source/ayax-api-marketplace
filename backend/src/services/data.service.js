@@ -111,38 +111,57 @@ exports.purchaseData = async ({
     module: "DATA",
   });
 
-  // Gano Adadin Data na SMS (Gyaran Bug na "1" zuwa "1000")
+  // Gano Adadin Data na SMS da Package Code
   let raw = String(planCode || "").toUpperCase().trim();
   let numericMB = "1000";
+  let mtnSmeCode = "SMEB"; // Default 1GB
   let airtelPlanText = "1GB";
 
   if (raw === "500" || raw.includes("500MB") || raw.includes("500")) {
     numericMB = "500";
+    mtnSmeCode = "SMEA";
     airtelPlanText = "500MB";
   } else if (raw === "1" || raw.includes("1GB") || raw.includes("1000") || raw.includes("1.0GB")) {
     numericMB = "1000";
+    mtnSmeCode = "SMEB";
     airtelPlanText = "1GB";
   } else if (raw === "2" || raw.includes("2GB") || raw.includes("2000") || raw.includes("2.0GB")) {
     numericMB = "2000";
+    mtnSmeCode = "SMEC";
     airtelPlanText = "2GB";
   } else if (raw === "3" || raw.includes("3GB") || raw.includes("3000")) {
     numericMB = "3000";
+    mtnSmeCode = "SMED";
     airtelPlanText = "3GB";
   } else if (raw === "5" || raw.includes("5GB") || raw.includes("5000")) {
     numericMB = "5000";
+    mtnSmeCode = "SMEE";
     airtelPlanText = "5GB";
   } else if (raw === "10" || raw.includes("10GB") || raw.includes("10000")) {
     numericMB = "10000";
+    mtnSmeCode = "SMEF";
     airtelPlanText = "10GB";
   } else {
     const extracted = raw.replace(/[^0-9]/g, "");
-    if (extracted === "1") numericMB = "1000";
-    else if (extracted === "2") numericMB = "2000";
-    else if (extracted === "3") numericMB = "3000";
-    else if (extracted === "5") numericMB = "5000";
-    else if (extracted === "10") numericMB = "10000";
-    else numericMB = extracted || "1000";
-
+    if (extracted === "1") {
+      numericMB = "1000";
+      mtnSmeCode = "SMEB";
+    } else if (extracted === "2") {
+      numericMB = "2000";
+      mtnSmeCode = "SMEC";
+    } else if (extracted === "3") {
+      numericMB = "3000";
+      mtnSmeCode = "SMED";
+    } else if (extracted === "5") {
+      numericMB = "5000";
+      mtnSmeCode = "SMEE";
+    } else if (extracted === "10") {
+      numericMB = "10000";
+      mtnSmeCode = "SMEF";
+    } else {
+      numericMB = extracted || "1000";
+      mtnSmeCode = "SMEB";
+    }
     airtelPlanText = `${numericMB}MB`;
   }
 
@@ -164,19 +183,19 @@ exports.purchaseData = async ({
       const slotIndex = Number(targetSim.slotIndex ?? 0);
       const pin = process.env.GSM_DATA_PIN || "1997";
 
-      // Tsara Umarnin SMS
       let smsRecipient = "312";
-      let smsMessage = `SME ${targetPhone} ${numericMB} ${pin}`;
+      let smsMessage = "";
 
       const planIdentifier = `${pricingPlan?.serviceCode || ""} ${pricingPlan?.serviceName || ""} ${planCode}`.toUpperCase();
 
       if (resolvedNetwork === "MTN") {
+        smsRecipient = "312";
         if (planIdentifier.includes("CG") || planIdentifier.includes("CORP")) {
-          smsRecipient = "312";
+          // MTN Corporate Gifting
           smsMessage = `Transfer ${targetPhone} ${numericMB} ${pin}`;
         } else {
-          smsRecipient = "312";
-          smsMessage = `SME ${targetPhone} ${numericMB} ${pin}`;
+          // MTN SME Direct: SMEB 080... 1997
+          smsMessage = `${mtnSmeCode} ${targetPhone} ${pin}`;
         }
       } else if (resolvedNetwork === "AIRTEL") {
         smsRecipient = "141";

@@ -165,62 +165,71 @@ exports.purchaseAirtime = async (req, res) => {
       const pin = process.env.GSM_AIRTIME_PIN || "1997";
       const momoPin = process.env.MOMO_PIN || "8724";
 
-      let ussdCode = "";
+      let ussdCode = "*671#";
       let steps = [];
+      let pauseDialString = "";
+      let directCode = "";
 
       if (normalizedNetwork === "MTN") {
-        // MTN MoMo PSB Flow: *671# -> 2 -> 1 -> 3 -> Phone -> Amount -> PIN (8724)
-        ussdCode = "*671#";
+        // Matakan MoMo: Menu 2 (Airtime/Data) -> 1 (Airtime) -> 3 (Others) -> Phone -> Amount -> PIN
         steps = ["2", "1", "3", targetPhone, String(numericAmount), momoPin];
+        ussdCode = "*671#";
+        pauseDialString = `*671#,2,1,3,${targetPhone},${numericAmount},${momoPin}#`;
+        directCode = `*671*2*1*3*${targetPhone}*${numericAmount}*${momoPin}#`;
       } else if (normalizedNetwork === "AIRTEL") {
         ussdCode = `*321*${targetPhone}*${numericAmount}*${pin}#`;
         steps = [targetPhone, String(numericAmount), pin];
+        pauseDialString = ussdCode;
+        directCode = ussdCode;
       } else if (normalizedNetwork === "GLO") {
         ussdCode = `*131*${targetPhone}*${numericAmount}*${pin}#`;
         steps = [targetPhone, String(numericAmount), pin];
+        pauseDialString = ussdCode;
+        directCode = ussdCode;
       } else if (normalizedNetwork === "9MOBILE") {
         ussdCode = `*223*${pin}*${numericAmount}*${targetPhone}#`;
         steps = [pin, String(numericAmount), targetPhone];
+        pauseDialString = ussdCode;
+        directCode = ussdCode;
       }
 
-      // Cika dukkan filayen da Android app ke nema don hana "USSD code is missing"
+      // Cika dukkan filaye don Accessibility Service ya gane kuma ya cika popup
       const commandPayload = {
         reference: txReference,
+        commandId: txReference,
+        id: txReference,
         deviceId: activeDevice.id,
         type: "USSD",
         action: "USSD",
         service: "AIRTIME",
+
+        // Lambobin USSD a sassa daban-daban
         code: ussdCode,
         ussd: ussdCode,
         ussdCode: ussdCode,
         ussd_code: ussdCode,
         text: ussdCode,
         rootCode: ussdCode,
-        steps,
+
+        // Cikakken layin da wayar za ta danna ta atomatik tare da tazarar dakatawa (Pause)
+        dialString: pauseDialString,
+        fullCode: directCode,
+
+        // Matakan shigar da amsa a dialogue/popup
+        steps: steps,
+        sessionSteps: steps.join(","),
+        stepsString: steps.join(","),
+        inputSteps: steps,
+        responses: steps,
+
         phone: targetPhone,
-        targetPhone,
+        targetPhone: targetPhone,
         phoneNumber: targetPhone,
-        slotIndex,
+        slotIndex: slotIndex,
         simSlot: slotIndex,
         amount: numericAmount,
         network: normalizedNetwork,
         routeType: normalizedNetwork === "MTN" ? "MTN_MOMO" : "DIRECT_USSD",
-      };
-
-      const socketPayload = {
-        commandId: txReference,
-        id: txReference,
-        reference: txReference,
-        type: "USSD",
-        action: "USSD",
-        code: ussdCode,
-        ussd: ussdCode,
-        ussdCode: ussdCode,
-        ussd_code: ussdCode,
-        steps,
-        slotIndex,
-        simSlot: slotIndex,
-        payload: commandPayload,
       };
 
       await prisma.gsmCommand.create({
@@ -234,8 +243,9 @@ exports.purchaseAirtime = async (req, res) => {
       }).catch(() => null);
 
       try {
-        emitEvent("gateway-command", socketPayload, activeDevice.id);
-        console.log(`⚡ [AIRTIME USSD DISPATCH] Ref: ${txReference} -> Code: ${ussdCode} Steps: ${JSON.stringify(steps)}`);
+        emitEvent("gateway-command", commandPayload, activeDevice.id);
+        emitEvent("command", commandPayload, activeDevice.id);
+        console.log(`⚡ [AIRTIME USSD DISPATCH] Ref: ${txReference} -> Root: ${ussdCode} Steps: ${JSON.stringify(steps)}`);
       } catch (socketErr) {
         console.warn("Gateway socket broadcast warning:", socketErr.message);
       }

@@ -250,68 +250,59 @@ exports.heartbeat = async (req, res) => {
       take: 10,
     });
 
-    const formattedCommands = pendingCommands.map((cmd) => {
-      const payloadData =
-        typeof cmd.payload === "string"
-          ? JSON.parse(cmd.payload || "{}")
-          : cmd.payload || {};
+    // A ciki gsmGateway.controller.js karkashin exports.heartbeat:
+const formattedCommands = pendingCommands.map((cmd) => {
+  const payloadData =
+    typeof cmd.payload === "string"
+      ? JSON.parse(cmd.payload || "{}")
+      : cmd.payload || {};
 
-      const finalType = cmd.type || payloadData.type || "SMS";
-      const smsMessageText =
-        payloadData.message ||
-        payloadData.smsText ||
-        payloadData.smsBody ||
-        payloadData.body ||
-        "";
-      const targetRecipient =
-        payloadData.recipient ||
-        payloadData.sendTo ||
-        payloadData.phoneNumber ||
-        payloadData.destination ||
-        payloadData.phone ||
-        "";
+  const smsMessageText =
+    payloadData.message ||
+    payloadData.smsText ||
+    payloadData.smsBody ||
+    payloadData.body ||
+    "";
+    
+  const targetRecipient =
+    payloadData.recipient ||
+    payloadData.sendTo ||
+    payloadData.phoneNumber ||
+    payloadData.destination ||
+    payloadData.phone ||
+    "";
 
-      return {
-        id: cmd.id,
-        commandId: cmd.id,
-        reference: cmd.reference,
-        type: finalType,
-        deviceId: cmd.deviceId || deviceId,
-        status: cmd.status,
+  return {
+    id: cmd.id,
+    commandId: cmd.id,
+    reference: cmd.reference,
+    // Tura duka biyun: idan app dinka na son SMS ko SEND_SMS
+    type: "SMS",
+    action: "SEND_SMS",
+    status: cmd.status,
 
-        // SMS Commands
-        message: smsMessageText,
-        smsText: smsMessageText,
-        smsBody: smsMessageText,
-        body: smsMessageText,
-        recipient: targetRecipient,
-        sendTo: targetRecipient,
-        destination: targetRecipient,
-        phoneNumber: targetRecipient,
-        phone: payloadData.targetPhone || targetRecipient,
-        targetPhone: payloadData.targetPhone || targetRecipient,
+    // Cikakken bayanan SMS ga kowanne field name da Android app ke bukata
+    message: smsMessageText,
+    smsText: smsMessageText,
+    smsBody: smsMessageText,
+    body: smsMessageText,
+    recipient: targetRecipient,
+    sendTo: targetRecipient,
+    destination: targetRecipient,
+    phoneNumber: targetRecipient,
+    phone: targetRecipient,
+    targetPhone: payloadData.targetPhone || targetRecipient,
 
-        // USSD Commands (don balance check)
-        ussdCode: payloadData.ussdCode || payloadData.code || payloadData.command || "",
-        code: payloadData.ussdCode || payloadData.code || "",
-        steps: payloadData.steps || [],
+    // SIM Slot
+    slotIndex: Number(payloadData.slotIndex ?? payloadData.simSlot ?? 0),
+    simSlot: Number(payloadData.slotIndex ?? payloadData.simSlot ?? 0),
+    simId: payloadData.simId || null,
 
-        // SIM Routing
-        slotIndex:
-          payloadData.slotIndex !== undefined
-            ? Number(payloadData.slotIndex)
-            : Number(payloadData.simSlot || 0),
-        simSlot:
-          payloadData.slotIndex !== undefined
-            ? Number(payloadData.slotIndex)
-            : Number(payloadData.simSlot || 0),
-        simId: payloadData.simId || null,
-
-        amount: Number(payloadData.amount || 0),
-        network: payloadData.network || null,
-        payload: payloadData,
-      };
-    });
+    amount: Number(payloadData.amount || 0),
+    network: payloadData.network || null,
+    payload: payloadData,
+  };
+});
 
     emitEvent("gsm-device-heartbeat", { device: updated });
 

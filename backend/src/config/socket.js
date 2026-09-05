@@ -1,6 +1,9 @@
 let io = null;
 const prisma = require("../config/prisma");
 
+// Buffer don hana mayar da device OFFLINE nan take idan socket ya dan yanke na dakika kadan
+const disconnectTimeouts = new Map();
+
 exports.initSocket = (server) => {
   const { Server } = require("socket.io");
 
@@ -9,8 +12,11 @@ exports.initSocket = (server) => {
       origin: "*",
       methods: ["GET", "POST", "PATCH", "DELETE"],
     },
+    // Saita ping da zai rike connection da karfi a network din waya
     pingInterval: 10000,
-    pingTimeout: 5000,
+    pingTimeout: 7000,
+    connectTimeout: 20000,
+    transports: ["websocket", "polling"],
   });
 
   io.on("connection", async (socket) => {
@@ -23,7 +29,13 @@ exports.initSocket = (server) => {
 
     const bindDeviceToSocket = async (targetDeviceId, source = "Handshake") => {
       if (!targetDeviceId) return;
-      
+
+      // Idan akwai pending disconnect timeout, soke shi domin wayar ta dawo
+      if (disconnectTimeouts.has(targetDeviceId)) {
+        clearTimeout(disconnectTimeouts.get(targetDeviceId));
+        disconnectTimeouts.delete(targetDeviceId);
+      }
+
       socket.deviceId = targetDeviceId;
       socket.join(targetDeviceId);
       socket.join(`device_${targetDeviceId}`);
@@ -38,6 +50,9 @@ exports.initSocket = (server) => {
           },
         });
         console.log(`📱 [GSM BOUND (${source})]: ${targetDeviceId} -> Room: ${targetDeviceId}`);
+
+        // Aika tabbaci ga wayar cewa ta shiga tsaf
+        socket.emit("registered", { status: "OK", deviceId: targetDeviceId });
       } catch (err) {
         console.log("DB Bind Error:", err.message);
       }
@@ -89,30 +104,41 @@ exports.initSocket = (server) => {
       io.emit("gateway-log", payload);
     });
 
-    socket.on("disconnect", async () => {
+    socket.on("disconnect", async (reason) => {
       const activeDevId = socket.deviceId;
-      console.log(`[SOCKET DISCONNECTED]: ${socket.id} | Device: ${activeDevId || "None"}`);
+      console.log(`[SOCKET DISCONNECTED]: ${socket.id} | Device: ${activeDevId || "None"} | Reason: ${reason}`);
 
       if (activeDevId) {
-        try {
-          const dev = await prisma.gsmDevice.findUnique({
-            where: { id: activeDevId },
-          });
-
-          if (dev && dev.socketId === socket.id) {
-            await prisma.gsmDevice.update({
-              where: { id: activeDevId },
-              data: {
-                socketId: null,
-                status: "OFFLINE",
-                lastSeen: new Date(),
-              },
-            });
-            console.log(`[GSM DEVICE OFFLINE]: ${activeDevId}`);
-          }
-        } catch (e) {
-          console.log("Disconnect DB Error:", e.message);
+        // Kada a mayar da shi OFFLINE nan take; jira dakika 25 idan zai sake hadawa
+        if (disconnectTimeouts.has(activeDevId)) {
+          clearTimeout(disconnectTimeouts.get(activeDevId));
         }
+
+        const timeout = setTimeout(async () => {
+          try {
+            const dev = await prisma.gsmDevice.findUnique({
+              where: { id: activeDevId },
+            });
+
+            if (dev && dev.socketId === socket.id) {
+              await prisma.gsmDevice.update({
+                where: { id: activeDevId },
+                data: {
+                  socketId: null,
+                  status: "OFFLINE",
+                  lastSeen: new Date(),
+                },
+              });
+              console.log(`[GSM DEVICE OFFLINE CONFIRMED]: ${activeDevId}`);
+            }
+          } catch (e) {
+            console.log("Disconnect DB Error:", e.message);
+          } finally {
+            disconnectTimeouts.delete(activeDevId);
+          }
+        }, 25000); // 25 seconds grace period
+
+        disconnectTimeouts.set(activeDevId, timeout);
       }
     });
   });
@@ -131,7 +157,7 @@ exports.emitEvent = (event, payload, room = null) => {
   io.emit(event, payload);
 };
 
-// 3. Tura Command ta dukkan hanyoyi da Android App ke nema
+// 3. Tura Command ta Room na Device
 exports.emitGatewayCommand = (deviceId, command) => {
   if (!io) {
     console.error("[EMIT ERROR]: Socket.io is not initialized.");
@@ -140,11 +166,8 @@ exports.emitGatewayCommand = (deviceId, command) => {
 
   console.log(`🚀 [DISPATCHING TO GATEWAY]: Ref: ${command.reference} -> Target Device: ${deviceId}`);
 
-  // Watsa shi ta ko wane channel da wayar ka zata iya sauraro
+  // Tura umarnin zuwa dakin na'urar (Room)
   io.to(deviceId).emit("gateway-command", command);
-  io.to(deviceId).emit("command", command);
-  io.to(`device_${deviceId}`).emit("gateway-command", command);
-  io.emit(`gateway-command-${deviceId}`, command);
 
   return true;
 };

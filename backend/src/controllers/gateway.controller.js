@@ -204,7 +204,7 @@ exports.pairDevice = async (req, res) => {
   }
 };
 
-// 2. heartbeat
+// 2. heartbeat (MAFARIN GYARA DON MAGANCE 'USSD code is missing')
 exports.heartbeat = async (req, res) => {
   try {
     const { deviceId, secretKey, battery, charging, signal, internet } = req.body;
@@ -282,6 +282,21 @@ exports.heartbeat = async (req, res) => {
           ? JSON.parse(cmd.payload || "{}")
           : cmd.payload || {};
 
+      const isUssd = 
+        String(cmd.type).toUpperCase() === "USSD" || 
+        String(payloadData.type).toUpperCase() === "USSD" ||
+        String(payloadData.action).toUpperCase() === "USSD" ||
+        Boolean(payloadData.ussdCode || payloadData.code || payloadData.ussd);
+
+      // Zaro ainihin USSD Code da dukkan filayen da Android app zai iya nema
+      const ussdCodeVal =
+        payloadData.code ||
+        payloadData.ussd ||
+        payloadData.ussdCode ||
+        payloadData.ussd_code ||
+        payloadData.rootCode ||
+        (isUssd ? "*671#" : "");
+
       const smsMessageText =
         payloadData.message ||
         payloadData.smsText ||
@@ -297,7 +312,9 @@ exports.heartbeat = async (req, res) => {
         payloadData.phone ||
         "";
 
-      const isUssd = cmd.type === "USSD" || payloadData.type === "USSD";
+      const stepsArray = Array.isArray(payloadData.steps) 
+        ? payloadData.steps 
+        : (payloadData.steps ? [payloadData.steps] : []);
 
       return {
         id: cmd.id,
@@ -307,12 +324,16 @@ exports.heartbeat = async (req, res) => {
         action: isUssd ? "USSD" : "SEND_SMS",
         status: "PROCESSING",
 
-        // USSD
-        ussdCode: payloadData.ussdCode || payloadData.code || "",
-        code: payloadData.ussdCode || payloadData.code || "",
-        steps: payloadData.steps || [],
+        // USSD: Cika DUKKAN filayen da Android app ke nema don hana "USSD code is missing"
+        code: ussdCodeVal,
+        ussd: ussdCodeVal,
+        ussdCode: ussdCodeVal,
+        ussd_code: ussdCodeVal,
+        text: isUssd ? ussdCodeVal : smsMessageText,
+        rootCode: ussdCodeVal,
+        steps: stepsArray,
 
-        // SMS
+        // SMS fields
         message: smsMessageText,
         smsText: smsMessageText,
         smsBody: smsMessageText,
@@ -331,7 +352,15 @@ exports.heartbeat = async (req, res) => {
 
         amount: Number(payloadData.amount || 0),
         network: payloadData.network || null,
-        payload: payloadData,
+        routeType: payloadData.routeType || (isUssd ? "MTN_MOMO" : "SMS"),
+        payload: {
+          ...payloadData,
+          code: ussdCodeVal,
+          ussd: ussdCodeVal,
+          ussdCode: ussdCodeVal,
+          ussd_code: ussdCodeVal,
+          steps: stepsArray
+        },
       };
     });
 
@@ -481,7 +510,6 @@ exports.receiveIncomingSms = async (req, res) => {
       });
     }
 
-    // 1. Ajiye SMS a smsInbox
     const sms = await prisma.smsInbox.create({
       data: {
         deviceId,
@@ -490,7 +518,6 @@ exports.receiveIncomingSms = async (req, res) => {
       },
     });
 
-    // 2. Duba Feedback na Telco (Success / Fail)
     const lowerMsg = String(message || "").toLowerCase();
     const feedback = parseTransactionFeedback ? parseTransactionFeedback(message) : { status: "UNKNOWN" };
     const detectedPhone = parsePhoneNumber(message);
@@ -511,7 +538,6 @@ exports.receiveIncomingSms = async (req, res) => {
       lowerMsg.includes("you have gifted") ||
       feedback.status === "SUCCESS";
 
-    // 3. NEMO TRANSACTION: Ko ta lambar waya, ko kuma Transaction na karshe da ke PROCESSING a wannan layin
     let targetCmd = null;
 
     if (detectedPhone) {
@@ -525,13 +551,12 @@ exports.receiveIncomingSms = async (req, res) => {
       });
     }
 
-    // IDAN SAKON BAYA DA LAMBAR WAYA A CIKI (Kamar MTN Oops message), DAUKO NA KARSHE A WANNAN LAYIN
     if (!targetCmd && (isFailureMessage || isSuccessMessage)) {
       targetCmd = await prisma.gsmCommand.findFirst({
         where: {
           deviceId,
           status: { in: ["PENDING", "PROCESSING"] },
-          createdAt: { gte: new Date(Date.now() - 3 * 60 * 1000) }, // A cikin minti 3 da suka wuce
+          createdAt: { gte: new Date(Date.now() - 3 * 60 * 1000) },
         },
         orderBy: { createdAt: "desc" },
       });
@@ -556,13 +581,11 @@ exports.receiveIncomingSms = async (req, res) => {
           reference: targetCmd.reference,
           message: message.slice(0, 190),
         });
-        // AUTO-REFUND NAN TAKE
         await refundUserTransactionByRef(targetCmd.reference, message.slice(0, 150));
         console.log(`❌ [SMS RECONCILED: FAILED & REFUNDED] Ref: ${targetCmd.reference}`);
       }
     }
 
-    // 4. Duba Balance idan saƙon duba balance ne
     const parsedDataBalance = parseDataBalance(message);
     const parsedAirtimeBalance = parseAirtimeBalance(message);
 
@@ -1136,7 +1159,6 @@ exports.receiveCommandResult = async (req, res) => {
     let command = existingCommand;
     let updatedSim = null;
 
-    // Idan saƙon SMS/USSD na Transaction ne (ba Balance check ba)
     if (!isBalanceCommand && !isPhoneNumberCommand) {
       if (successStates.includes(normalizedStatus) || feedback.status === "SUCCESS") {
         command = await markCommandSuccessful({
@@ -1157,7 +1179,6 @@ exports.receiveCommandResult = async (req, res) => {
           message: finalMessage || "Delivery failed",
         });
 
-        // AUTO-REFUND NAN TAKE
         await refundUserTransactionByRef(reference, finalMessage || feedback.status);
       }
 
@@ -1167,7 +1188,6 @@ exports.receiveCommandResult = async (req, res) => {
       });
     }
 
-    // Bangaren Balance Check (USSD Parsing)
     if (waitingStates.includes(normalizedStatus)) {
       command = await markCommandProcessing({
         reference,

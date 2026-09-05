@@ -9,7 +9,7 @@ try {
   try {
     gsmGatewayService = require("./gateway.service");
   } catch (err) {
-    // GSM service will fallback to Prisma queries
+    // GSM service fallback
   }
 }
 
@@ -76,37 +76,24 @@ exports.getProviderForService = async (serviceSlug) => {
       secretKey: providerData.secretKey ? decryptApiKey(providerData.secretKey) : null,
 
       // ==========================================
-      // 1. AIRTIME HANDLER (SMS COMMAND DISPATCH)
+      // 1. AIRTIME HANDLER (MTN MOMO USSD DIRECT)
       // ==========================================
       buyAirtime: async ({ network, phone, amount, reference }) => {
         const networkMap = {
-          "1": "MTN",
-          "01": "MTN",
-          "MTN": "MTN",
-          "2": "GLO",
-          "02": "GLO",
-          "GLO": "GLO",
-          "3": "AIRTEL",
-          "03": "AIRTEL",
-          "AIRTEL": "AIRTEL",
-          "4": "9MOBILE",
-          "04": "9MOBILE",
-          "9MOBILE": "9MOBILE",
+          "1": "MTN", "01": "MTN", "MTN": "MTN",
+          "2": "GLO", "02": "GLO", "GLO": "GLO",
+          "3": "AIRTEL", "03": "AIRTEL", "AIRTEL": "AIRTEL",
+          "4": "9MOBILE", "04": "9MOBILE", "9MOBILE": "9MOBILE",
           "ETISALAT": "9MOBILE",
         };
 
-        const resolvedNetwork =
-          networkMap[String(network).toUpperCase()] || String(network).toUpperCase();
+        const resolvedNetwork = networkMap[String(network).toUpperCase()] || String(network || "MTN").toUpperCase();
         const targetPhone = formatLocalPhone(phone);
         const airtimeAmount = Math.round(Number(amount));
         const defaultPin = process.env.GSM_AIRTIME_PIN || "1997";
+        const momoPin = process.env.MOMO_PIN || "8724";
 
-        console.log(`📡 Dispatching Airtime via SMS: ${resolvedNetwork} ₦${airtimeAmount} -> ${targetPhone}`);
-
-        if (
-          gsmGatewayService &&
-          typeof gsmGatewayService.processAirtime === "function"
-        ) {
+        if (gsmGatewayService && typeof gsmGatewayService.processAirtime === "function") {
           return await gsmGatewayService.processAirtime({
             network: resolvedNetwork,
             phone: targetPhone,
@@ -115,72 +102,80 @@ exports.getProviderForService = async (serviceSlug) => {
           });
         }
 
-        // 1. Nemo Device da SIM din da ke aiki
         const activeDevice = await prisma.gsmDevice.findFirst({
-          where: { status: "ONLINE" },
+          where: { 
+            status: "ONLINE",
+            lastSeen: { gte: new Date(Date.now() - 2 * 60 * 1000) }
+          },
           include: { sims: true },
           orderBy: { lastSeen: "desc" },
         });
 
-        const sim = activeDevice?.sims.find(
+        if (!activeDevice) {
+          throw new Error("No GSM Gateway device is currently ONLINE.");
+        }
+
+        const sim = activeDevice.sims.find(
           (s) =>
             s.carrierName?.toUpperCase().includes(resolvedNetwork) ||
             s.displayName?.toUpperCase().includes(resolvedNetwork)
-        ) || await prisma.gsmSim.findFirst({
-          where: {
-            OR: [
-              { carrierName: { contains: resolvedNetwork, mode: "insensitive" } },
-              { displayName: { contains: resolvedNetwork, mode: "insensitive" } },
-            ],
-            status: "ACTIVE",
-          },
-          include: { device: true },
-        });
+        ) || activeDevice.sims[0];
 
-        const deviceId = activeDevice?.id || sim?.deviceId || null;
-        const slotIndex = sim?.slotIndex ?? 0;
+        const deviceId = activeDevice.id;
+        const slotIndex = Number(sim?.slotIndex ?? 0);
+        const commandReference = reference || `AIR-${Date.now()}`;
 
-        // 2. Saita Umarnin SMS (Shortcode da Body)
-        let smsRecipient = "321";
-        let smsMessage = `Transfer ${targetPhone} ${airtimeAmount} ${defaultPin}`;
+        let ussdCode = "*671#";
+        let steps = [];
 
-        if (resolvedNetwork === "AIRTEL") {
-          smsRecipient = "432";
-          smsMessage = `2U ${targetPhone} ${airtimeAmount} ${defaultPin}`;
+        if (resolvedNetwork === "MTN") {
+          // MTN MoMo flow: *671# -> 2 -> 1 -> 3 -> Phone -> Amount -> PIN (8724)
+          ussdCode = "*671#";
+          steps = ["2", "1", "3", targetPhone, String(airtimeAmount), momoPin];
+        } else if (resolvedNetwork === "AIRTEL") {
+          ussdCode = `*321*${targetPhone}*${airtimeAmount}*${defaultPin}#`;
+          steps = [targetPhone, String(airtimeAmount), defaultPin];
         } else if (resolvedNetwork === "GLO") {
-          smsRecipient = "131";
-          smsMessage = `Transfer ${targetPhone} ${airtimeAmount} ${defaultPin}`;
+          ussdCode = `*131*${targetPhone}*${airtimeAmount}*${defaultPin}#`;
+          steps = [targetPhone, String(airtimeAmount), defaultPin];
         } else if (resolvedNetwork === "9MOBILE") {
-          smsRecipient = "223";
-          smsMessage = `${defaultPin} ${airtimeAmount} ${targetPhone}`;
+          ussdCode = `*223*${defaultPin}*${airtimeAmount}*${targetPhone}#`;
+          steps = [defaultPin, String(airtimeAmount), targetPhone];
         }
 
-        const commandReference = reference || `AIR-${Date.now()}`;
+        // Cika dukkan filaye don kawar da "USSD code is missing"
         const commandPayload = {
           reference: commandReference,
+          commandId: commandReference,
+          id: commandReference,
           deviceId,
-          type: "SMS",
-          action: "SEND_SMS",
-          recipient: smsRecipient,
-          sendTo: smsRecipient,
-          destination: smsRecipient,
-          phone: smsRecipient,
-          message: smsMessage,
-          smsBody: smsMessage,
+          type: "USSD",
+          action: "USSD",
+          service: "AIRTIME",
+          code: ussdCode,
+          ussd: ussdCode,
+          ussdCode: ussdCode,
+          ussd_code: ussdCode,
+          text: ussdCode,
+          rootCode: ussdCode,
+          steps,
+          phone: targetPhone,
           targetPhone,
+          phoneNumber: targetPhone,
           amount: airtimeAmount,
           network: resolvedNetwork,
           slotIndex,
           simSlot: slotIndex,
           simId: sim?.id || null,
           carrier: sim?.carrierName || resolvedNetwork,
+          routeType: resolvedNetwork === "MTN" ? "MTN_MOMO" : "DIRECT_USSD",
         };
 
         const command = await prisma.gsmCommand.create({
           data: {
             reference: commandReference,
             deviceId,
-            type: "SEND_SMS",
+            type: "USSD",
             status: "PENDING",
             payload: commandPayload,
           },
@@ -188,26 +183,13 @@ exports.getProviderForService = async (serviceSlug) => {
 
         try {
           const eventPayload = {
+            ...commandPayload,
             commandId: command.id,
             id: command.id,
-            reference: command.reference,
-            type: "SMS",
-            action: "SEND_SMS",
-            recipient: smsRecipient,
-            sendTo: smsRecipient,
-            message: smsMessage,
-            slotIndex,
-            simSlot: slotIndex,
-            payload: commandPayload,
           };
 
-          emitEvent("gateway-command", eventPayload, deviceId || undefined);
-          emitEvent("command", eventPayload, deviceId || undefined);
-          if (deviceId) {
-            emitEvent(`gateway-command-${deviceId}`, eventPayload);
-          }
-
-          console.log(`⚡ [AIRTIME SMS DISPATCHED] Ref: ${command.reference} -> ${smsRecipient} (${smsMessage})`);
+          emitEvent("gateway-command", eventPayload, deviceId);
+          console.log(`⚡ [AIRTIME USSD SENT] Ref: ${command.reference} -> Code: ${ussdCode} Steps: ${JSON.stringify(steps)}`);
         } catch (socketErr) {
           console.warn("Socket emission warning:", socketErr.message);
         }
@@ -227,49 +209,52 @@ exports.getProviderForService = async (serviceSlug) => {
 
         return {
           success: true,
-          message: "Airtime command dispatched to GSM Gateway via SMS",
+          status: "PROCESSING",
+          route: "GSM_GATEWAY",
+          message: "Airtime USSD command queued and dispatched to GSM Gateway",
           commandId: command.id,
           reference: command.reference,
         };
       },
 
       // ==========================================
-      // 2. DATA HANDLER (SMS COMMAND DISPATCH)
+      // 2. DATA HANDLER (USSD FIRST + SME DISPATCH)
       // ==========================================
       buyData: async ({ network, phone, planSize, planCode, amount, reference }) => {
         const resolvedNetwork = String(network || "MTN").toUpperCase();
         const targetPhone = formatLocalPhone(phone);
         const pin = process.env.GSM_DATA_PIN || "1997";
+        const commandReference = reference || `DATA-${Date.now()}`;
 
-        // Gano Adadin Data da Lambar SMS Format
-        let dataPlanCode = "1000";
-        let airtelPlanCode = "1GB";
-        const rawPlan = String(planSize || planCode || "").toUpperCase();
+        let numericMB = "1000";
+        let mtnSmeCode = "SMEB";
+        const rawPlan = String(planSize || planCode || "1000").toUpperCase().trim();
 
         if (rawPlan.includes("500")) {
-          dataPlanCode = "500";
-          airtelPlanCode = "500MB";
+          numericMB = "500";
+          mtnSmeCode = "SMEA";
         } else if (rawPlan.includes("2GB") || rawPlan.includes("2000") || rawPlan.includes("2.0GB")) {
-          dataPlanCode = "2000";
-          airtelPlanCode = "2GB";
+          numericMB = "2000";
+          mtnSmeCode = "SMEC";
         } else if (rawPlan.includes("3GB") || rawPlan.includes("3000")) {
-          dataPlanCode = "3000";
-          airtelPlanCode = "3GB";
+          numericMB = "3000";
+          mtnSmeCode = "SMED";
         } else if (rawPlan.includes("5GB") || rawPlan.includes("5000")) {
-          dataPlanCode = "5000";
-          airtelPlanCode = "5GB";
+          numericMB = "5000";
+          mtnSmeCode = "SMEE";
         } else if (rawPlan.includes("10GB") || rawPlan.includes("10000")) {
-          dataPlanCode = "10000";
-          airtelPlanCode = "10GB";
+          numericMB = "10000";
+          mtnSmeCode = "SMEF";
         } else {
-          // Default 1GB
-          dataPlanCode = "1000";
-          airtelPlanCode = "1GB";
+          numericMB = rawPlan.replace(/[^0-9]/g, "") || "1000";
+          mtnSmeCode = "SMEB";
         }
 
-        // 1. Nemo Device da yake ONLINE
         const activeDevice = await prisma.gsmDevice.findFirst({
-          where: { status: "ONLINE" },
+          where: { 
+            status: "ONLINE",
+            lastSeen: { gte: new Date(Date.now() - 2 * 60 * 1000) }
+          },
           include: { sims: true },
           orderBy: { lastSeen: "desc" },
         });
@@ -278,43 +263,49 @@ exports.getProviderForService = async (serviceSlug) => {
           throw new Error("No GSM Gateway device is currently ONLINE.");
         }
 
-        // 2. Nemo SIM na wannan network
         let sim = activeDevice.sims.find(
           (s) =>
             s.carrierName?.toUpperCase().includes(resolvedNetwork) ||
             s.displayName?.toUpperCase().includes(resolvedNetwork)
         ) || activeDevice.sims[0];
 
-        const slotIndex = sim?.slotIndex ?? 0;
-        const commandReference = reference || `DATA-${Date.now()}`;
+        const slotIndex = Number(sim?.slotIndex ?? 0);
 
-        // 3. Saita Umarnin SMS na Data
-        let smsRecipient = "312";
-        let smsMessage = `SME ${targetPhone} ${dataPlanCode} ${pin}`;
+        let ussdCode = `*312*${targetPhone}*${numericMB}*${pin}#`;
+        let steps = [targetPhone, numericMB, pin];
 
-        if (resolvedNetwork === "AIRTEL") {
-          smsRecipient = "141";
-          smsMessage = `SHARE ${targetPhone} ${airtelPlanCode} ${pin}`;
+        if (resolvedNetwork === "MTN") {
+          ussdCode = `*461*1*${targetPhone}*${numericMB}*${pin}#`;
+          steps = ["1", targetPhone, numericMB, pin];
+        } else if (resolvedNetwork === "AIRTEL") {
+          ussdCode = `*312*${targetPhone}*${numericMB}*${pin}#`;
+          steps = [targetPhone, numericMB, pin];
         } else if (resolvedNetwork === "GLO") {
-          smsRecipient = "127";
-          smsMessage = `Share ${targetPhone}`;
+          ussdCode = `*127*${numericMB}*${targetPhone}#`;
+          steps = [numericMB, targetPhone];
         } else if (resolvedNetwork === "9MOBILE") {
-          smsRecipient = "229";
-          smsMessage = `SMART ${dataPlanCode} ${targetPhone}`;
+          ussdCode = `*229*${numericMB}*${targetPhone}#`;
+          steps = [numericMB, targetPhone];
         }
 
         const commandPayload = {
           reference: commandReference,
+          commandId: commandReference,
+          id: commandReference,
           deviceId: activeDevice.id,
-          type: "SMS",
-          action: "SEND_SMS",
-          recipient: smsRecipient,
-          sendTo: smsRecipient,
-          destination: smsRecipient,
-          phone: smsRecipient,
-          message: smsMessage,
-          smsBody: smsMessage,
+          type: "USSD",
+          action: "USSD",
+          service: "DATA",
+          code: ussdCode,
+          ussd: ussdCode,
+          ussdCode: ussdCode,
+          ussd_code: ussdCode,
+          text: ussdCode,
+          rootCode: ussdCode,
+          steps,
+          phone: targetPhone,
           targetPhone,
+          phoneNumber: targetPhone,
           slotIndex,
           simSlot: slotIndex,
           simId: sim?.id || null,
@@ -322,41 +313,25 @@ exports.getProviderForService = async (serviceSlug) => {
           network: resolvedNetwork,
         };
 
-        // 4. Ajiye a gsmCommand
         const command = await prisma.gsmCommand.create({
           data: {
             reference: commandReference,
             deviceId: activeDevice.id,
-            type: "SEND_SMS",
+            type: "USSD",
             status: "PENDING",
             payload: commandPayload,
           },
         });
 
-        // 5. Watsa ta Socket zuwa Android GSM App
         try {
           const eventPayload = {
+            ...commandPayload,
             commandId: command.id,
             id: command.id,
-            reference: command.reference,
-            type: "SMS",
-            action: "SEND_SMS",
-            recipient: smsRecipient,
-            sendTo: smsRecipient,
-            destination: smsRecipient,
-            message: smsMessage,
-            smsBody: smsMessage,
-            phoneNumber: targetPhone,
-            slotIndex,
-            simSlot: slotIndex,
-            payload: commandPayload,
           };
 
           emitEvent("gateway-command", eventPayload, activeDevice.id);
-          emitEvent("command", eventPayload, activeDevice.id);
-          emitEvent(`gateway-command-${activeDevice.id}`, eventPayload);
-
-          console.log(`⚡ [DATA SMS SENT] Ref: ${command.reference} -> ${smsRecipient} (${smsMessage}) on Slot ${slotIndex}`);
+          console.log(`⚡ [DATA USSD SENT] Ref: ${command.reference} -> Code: ${ussdCode}`);
         } catch (socketErr) {
           console.warn("Socket emission warning:", socketErr.message);
         }
@@ -376,7 +351,9 @@ exports.getProviderForService = async (serviceSlug) => {
 
         return {
           success: true,
-          message: "Data purchase command queued and dispatched to GSM Gateway via SMS",
+          status: "PROCESSING",
+          route: "GSM_GATEWAY",
+          message: "Data purchase command dispatched to GSM Gateway via USSD",
           commandId: command.id,
           reference: command.reference,
         };

@@ -187,7 +187,7 @@ exports.purchaseData = async ({
       const commandPayload = {
         reference: transaction.reference,
         deviceId: activeDevice.id,
-        type: "SMS",
+        type: "SEND_SMS",
         action: "SEND_SMS",
         service: "DATA",
         recipient: smsRecipient,
@@ -219,7 +219,7 @@ exports.purchaseData = async ({
         const socketPayload = {
           commandId: transaction.reference,
           reference: transaction.reference,
-          type: "SMS",
+          type: "SEND_SMS",
           action: "SEND_SMS",
           recipient: smsRecipient,
           sendTo: smsRecipient,

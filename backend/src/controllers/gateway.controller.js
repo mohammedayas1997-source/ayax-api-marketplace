@@ -277,7 +277,7 @@ const formattedCommands = pendingCommands.map((cmd) => {
     commandId: cmd.id,
     reference: cmd.reference,
     // Tura duka biyun: idan app dinka na son SMS ko SEND_SMS
-    type: "SMS",
+    type: "SEND_SMS",
     action: "SEND_SMS",
     status: cmd.status,
 

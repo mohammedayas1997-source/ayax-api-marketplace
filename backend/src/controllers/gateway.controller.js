@@ -11,6 +11,7 @@ const {
   parseDataBalance,
   parseExpiryDate,
   parsePhoneNumber,
+  parseTransactionFeedback,
 } = require("../services/ussdParser.service");
 const {
   sendBalanceCheckCommand,
@@ -41,12 +42,11 @@ const parseExpiryToDate = (value) => {
 
   const text = String(value).trim();
 
-  // Idan ISO string ne daga kwanaki (valid for X days)
   if (text.includes("T") && !Number.isNaN(new Date(text).getTime())) {
     return new Date(text);
   }
 
-  // 1. DD/MM/YYYY ko DD-MM-YYYY (tare da ko babu time)
+  // 1. DD/MM/YYYY ko DD-MM-YYYY
   const dmyMatch = text.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
   if (dmyMatch) {
     const [, day, month, rawYear] = dmyMatch;
@@ -55,7 +55,7 @@ const parseExpiryToDate = (value) => {
     return Number.isNaN(date.getTime()) ? null : date;
   }
 
-  // 2. DD-MMM-YYYY (misali: 25-Aug-2026 ko 25 Aug 2026)
+  // 2. DD-MMM-YYYY
   const dMonYMatch = text.match(/^(\d{1,2})[\s\-]+([A-Za-z]{3,9})[\s\-]+(\d{2,4})/);
   if (dMonYMatch) {
     const [, day, monthName, rawYear] = dMonYMatch;
@@ -77,6 +77,42 @@ const parseExpiryToDate = (value) => {
 
   const directDate = new Date(text);
   return Number.isNaN(directDate.getTime()) ? null : directDate;
+};
+
+// Helper na mayar wa mai amfani da kudi idan oda ta fadi
+const refundUserTransactionByRef = async (reference, reason) => {
+  try {
+    const txn = await prisma.transaction.findFirst({
+      where: { reference },
+    });
+
+    if (txn && txn.status !== "FAILED" && txn.status !== "REFUNDED") {
+      const refundAmount = Number(txn.amount);
+
+      await prisma.wallet.updateMany({
+        where: { userId: txn.userId },
+        data: { balance: { increment: refundAmount } },
+      });
+
+      await prisma.transaction.update({
+        where: { id: txn.id },
+        data: {
+          status: "FAILED",
+          description: `Refunded: ${reason || "Network delivery failure"}`,
+        },
+      });
+
+      emitEvent("wallet-updated", {
+        userId: txn.userId,
+        refundedAmount: refundAmount,
+        reference,
+      });
+
+      console.log(`[REFUND] ₦${refundAmount} refunded for Ref: ${reference}`);
+    }
+  } catch (refundErr) {
+    console.error("Auto-refund error:", refundErr.message);
+  }
 };
 
 // 1. pairDevice
@@ -170,7 +206,7 @@ exports.pairDevice = async (req, res) => {
   }
 };
 
-// 2. heartbeat (AN GYARA FORMAT NA DATA SMS DA USSD DON ANDROID APP)
+// 2. heartbeat
 exports.heartbeat = async (req, res) => {
   try {
     const { deviceId, secretKey, battery, charging, signal, internet } = req.body;
@@ -205,34 +241,33 @@ exports.heartbeat = async (req, res) => {
       },
     });
 
-    // 1. Dauko dukkan PENDING commands na wannan device
     const pendingCommands = await prisma.gsmCommand.findMany({
       where: {
         OR: [{ deviceId: deviceId }, { deviceId: null }],
         status: "PENDING",
       },
-      orderBy: {
-        createdAt: "asc",
-      },
+      orderBy: { createdAt: "asc" },
       take: 10,
     });
 
-    // 2. Fito da dukkan bayanan payload zuwa Root Level (Cikakken Data don SMS da USSD)
     const formattedCommands = pendingCommands.map((cmd) => {
       const payloadData =
         typeof cmd.payload === "string"
           ? JSON.parse(cmd.payload || "{}")
           : cmd.payload || {};
 
-      const finalType = cmd.type || payloadData.type || "USSD";
+      const finalType = cmd.type || payloadData.type || "SMS";
       const smsMessageText =
         payloadData.message ||
         payloadData.smsText ||
+        payloadData.smsBody ||
         payloadData.body ||
         "";
       const targetRecipient =
-        payloadData.phoneNumber ||
         payloadData.recipient ||
+        payloadData.sendTo ||
+        payloadData.phoneNumber ||
+        payloadData.destination ||
         payloadData.phone ||
         "";
 
@@ -243,22 +278,25 @@ exports.heartbeat = async (req, res) => {
         type: finalType,
         deviceId: cmd.deviceId || deviceId,
         status: cmd.status,
-        
-        // SMS Payload Fields (Don Siyan Data na 131)
+
+        // SMS Commands
         message: smsMessageText,
         smsText: smsMessageText,
+        smsBody: smsMessageText,
         body: smsMessageText,
         recipient: targetRecipient,
+        sendTo: targetRecipient,
+        destination: targetRecipient,
         phoneNumber: targetRecipient,
         phone: payloadData.targetPhone || targetRecipient,
         targetPhone: payloadData.targetPhone || targetRecipient,
 
-        // USSD Payload Fields (Don Airtime / Direct USSD)
+        // USSD Commands (don balance check)
         ussdCode: payloadData.ussdCode || payloadData.code || payloadData.command || "",
         code: payloadData.ussdCode || payloadData.code || "",
         steps: payloadData.steps || [],
 
-        // SIM Card Slot Controls
+        // SIM Routing
         slotIndex:
           payloadData.slotIndex !== undefined
             ? Number(payloadData.slotIndex)
@@ -269,13 +307,8 @@ exports.heartbeat = async (req, res) => {
             : Number(payloadData.simSlot || 0),
         simId: payloadData.simId || null,
 
-        // Financial & Session Data
         amount: Number(payloadData.amount || 0),
-        sizeInMb: payloadData.sizeInMb || null,
         network: payloadData.network || null,
-        reply: payloadData.reply || null,
-        sessionId: payloadData.sessionId || null,
-        step: Number(payloadData.step || 1),
         payload: payloadData,
       };
     });
@@ -323,14 +356,10 @@ exports.getDevices = async (req, res) => {
     const devices = await prisma.gsmDevice.findMany({
       include: {
         sims: {
-          orderBy: {
-            slotIndex: "asc",
-          },
+          orderBy: { slotIndex: "asc" },
         },
       },
-      orderBy: {
-        createdAt: "desc",
-      },
+      orderBy: { createdAt: "desc" },
     });
 
     return res.json({ success: true, devices });
@@ -399,7 +428,7 @@ exports.renameDevice = async (req, res) => {
   }
 };
 
-// 8. receiveIncomingSms
+// 8. receiveIncomingSms (INBOUND SMS FEEDBACK & RECONCILIATION)
 exports.receiveIncomingSms = async (req, res) => {
   try {
     const {
@@ -420,10 +449,7 @@ exports.receiveIncomingSms = async (req, res) => {
     }
 
     const device = await prisma.gsmDevice.findFirst({
-      where: {
-        id: deviceId,
-        secretKey,
-      },
+      where: { id: deviceId, secretKey },
     });
 
     if (!device) {
@@ -433,6 +459,7 @@ exports.receiveIncomingSms = async (req, res) => {
       });
     }
 
+    // 1. Ajiye SMS a smsInbox
     const sms = await prisma.smsInbox.create({
       data: {
         deviceId,
@@ -441,6 +468,46 @@ exports.receiveIncomingSms = async (req, res) => {
       },
     });
 
+    // 2. Duba ko saƙon martani ne na Transaction daga Telco (Success / Fail)
+    const feedback = parseTransactionFeedback ? parseTransactionFeedback(message) : { status: "UNKNOWN" };
+    const detectedPhone = parsePhoneNumber(message);
+
+    // Idan an gano lambar waya a jikin saƙon, nemo transaction din da ke jiran turawa
+    if (detectedPhone) {
+      const pendingCmd = await prisma.gsmCommand.findFirst({
+        where: {
+          status: { in: ["PENDING", "PROCESSING"] },
+          payload: { path: ["targetPhone"], equals: detectedPhone },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (pendingCmd) {
+        if (feedback.status === "SUCCESS") {
+          await markCommandSuccessful({
+            reference: pendingCmd.reference,
+            message: message.slice(0, 190),
+          });
+          await prisma.transaction.updateMany({
+            where: { reference: pendingCmd.reference },
+            data: {
+              status: "SUCCESSFUL",
+              description: `Confirmed via Telco SMS: ${message.slice(0, 180)}`,
+            },
+          });
+          console.log(`[SMS RECONCILED] Success for Ref: ${pendingCmd.reference} (${detectedPhone})`);
+        } else if (["FAILED", "INSUFFICIENT_BALANCE", "INVALID_PIN"].includes(feedback.status)) {
+          await markCommandFailed({
+            reference: pendingCmd.reference,
+            message: message.slice(0, 190),
+          });
+          await refundUserTransactionByRef(pendingCmd.reference, feedback.status);
+          console.log(`[SMS RECONCILED] Failed for Ref: ${pendingCmd.reference} - Refunded`);
+        }
+      }
+    }
+
+    // 3. Duba Balance idan saƙon duba balance ne
     const parsedDataBalance = parseDataBalance(message);
     const parsedAirtimeBalance = parseAirtimeBalance(message);
 
@@ -465,19 +532,11 @@ exports.receiveIncomingSms = async (req, res) => {
             lastBalanceCheck: new Date(),
           };
 
-          if (
-            parsedDataBalance !== null &&
-            parsedDataBalance !== undefined &&
-            String(parsedDataBalance).trim() !== ""
-          ) {
+          if (parsedDataBalance !== null && parsedDataBalance !== undefined && String(parsedDataBalance).trim() !== "") {
             updateData.dataBalance = String(parsedDataBalance).trim();
           }
 
-          if (
-            parsedAirtimeBalance !== null &&
-            parsedAirtimeBalance !== undefined &&
-            !Number.isNaN(Number(parsedAirtimeBalance))
-          ) {
+          if (parsedAirtimeBalance !== null && parsedAirtimeBalance !== undefined && !Number.isNaN(Number(parsedAirtimeBalance))) {
             updateData.airtimeBalance = Number(parsedAirtimeBalance);
           }
 
@@ -496,9 +555,7 @@ exports.receiveIncomingSms = async (req, res) => {
 
           if (hasBalance) {
             updatedSim = await prisma.gsmSim.update({
-              where: {
-                id: sim.id,
-              },
+              where: { id: sim.id },
               data: updateData,
             });
 
@@ -526,14 +583,14 @@ exports.receiveIncomingSms = async (req, res) => {
       slotIndex,
       subscriptionId,
       receivedAt,
+      feedbackStatus: feedback.status,
     });
 
     return res.status(201).json({
       success: true,
-      message: updatedSim
-        ? "SMS received and SIM balance updated"
-        : "SMS received successfully",
+      message: "SMS received and processed successfully",
       sms,
+      feedbackStatus: feedback.status,
       airtimeBalance: parsedAirtimeBalance,
       dataBalance: parsedDataBalance,
       sim: updatedSim,
@@ -582,10 +639,7 @@ exports.syncSims = async (req, res) => {
     }
 
     const device = await prisma.gsmDevice.findFirst({
-      where: {
-        id: deviceId,
-        secretKey,
-      },
+      where: { id: deviceId, secretKey },
     });
 
     if (!device) {
@@ -599,12 +653,8 @@ exports.syncSims = async (req, res) => {
 
     for (const sim of sims) {
       const slotIndex = Number(sim.slotIndex);
+      if (!Number.isInteger(slotIndex) || slotIndex < 0) continue;
 
-      if (!Number.isInteger(slotIndex) || slotIndex < 0) {
-        continue;
-      }
-
-      // Idan akwai tsohon SIM a database wanda aka riga aka saita lambar wayarsa, kada a shafe ta
       const existingSim = await prisma.gsmSim.findUnique({
         where: {
           deviceId_slotIndex: {
@@ -682,15 +732,9 @@ exports.getDeviceSims = async (req, res) => {
       orderBy: { slotIndex: "asc" },
     });
 
-    return res.json({
-      success: true,
-      sims,
-    });
+    return res.json({ success: true, sims });
   } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: error.message,
-    });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -729,10 +773,7 @@ exports.refreshSimBalance = async (req, res) => {
       command,
     });
   } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: error.message,
-    });
+    return res.status(400).json({ success: false, message: error.message });
   }
 };
 
@@ -742,46 +783,25 @@ exports.getGatewayDevices = async (req, res) => {
     const devices = await prisma.gsmDevice.findMany({
       include: {
         sims: {
-          orderBy: {
-            slotIndex: "asc",
-          },
+          orderBy: { slotIndex: "asc" },
         },
       },
-      orderBy: {
-        createdAt: "desc",
-      },
+      orderBy: { createdAt: "desc" },
     });
 
-    return res.json({
-      success: true,
-      devices,
-    });
+    return res.json({ success: true, devices });
   } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: error.message,
-    });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
 // 14. updateLocation
 exports.updateLocation = async (req, res) => {
   try {
-    const {
-      deviceId,
-      secretKey,
-      latitude,
-      longitude,
-      accuracy,
-      speed,
-      bearing,
-    } = req.body;
+    const { deviceId, secretKey, latitude, longitude, accuracy, speed, bearing } = req.body;
 
     const device = await prisma.gsmDevice.findFirst({
-      where: {
-        id: deviceId,
-        secretKey,
-      },
+      where: { id: deviceId, secretKey },
     });
 
     if (!device) {
@@ -792,9 +812,7 @@ exports.updateLocation = async (req, res) => {
     }
 
     const updated = await prisma.gsmDevice.update({
-      where: {
-        id: deviceId,
-      },
+      where: { id: deviceId },
       data: {
         latitude,
         longitude,
@@ -815,15 +833,9 @@ exports.updateLocation = async (req, res) => {
       locationAt: updated.locationAt,
     });
 
-    return res.json({
-      success: true,
-      message: "Location updated",
-    });
+    return res.json({ success: true, message: "Location updated" });
   } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: error.message,
-    });
+    return res.status(400).json({ success: false, message: error.message });
   }
 };
 
@@ -844,14 +856,8 @@ exports.receiveSecurityAlert = async (req, res) => {
     }
 
     const alert = await prisma.gatewaySecurityAlert.create({
-      data: {
-        deviceId,
-        type,
-        message,
-      },
-      include: {
-        device: true,
-      },
+      data: { deviceId, type, message },
+      include: { device: true },
     });
 
     emitEvent("gateway-security-alert", { alert });
@@ -862,10 +868,7 @@ exports.receiveSecurityAlert = async (req, res) => {
       alert,
     });
   } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: error.message,
-    });
+    return res.status(400).json({ success: false, message: error.message });
   }
 };
 
@@ -873,24 +876,14 @@ exports.receiveSecurityAlert = async (req, res) => {
 exports.getSecurityAlerts = async (req, res) => {
   try {
     const alerts = await prisma.gatewaySecurityAlert.findMany({
-      include: {
-        device: true,
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
+      include: { device: true },
+      orderBy: { createdAt: "desc" },
       take: 200,
     });
 
-    return res.json({
-      success: true,
-      alerts,
-    });
+    return res.json({ success: true, alerts });
   } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: error.message,
-    });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -898,26 +891,15 @@ exports.getSecurityAlerts = async (req, res) => {
 exports.resolveSecurityAlert = async (req, res) => {
   try {
     const alert = await prisma.gatewaySecurityAlert.update({
-      where: {
-        id: req.params.id,
-      },
-      data: {
-        resolved: true,
-      },
+      where: { id: req.params.id },
+      data: { resolved: true },
     });
 
     emitEvent("gateway-security-alert-resolved", { alert });
 
-    return res.json({
-      success: true,
-      message: "Alert resolved",
-      alert,
-    });
+    return res.json({ success: true, message: "Alert resolved", alert });
   } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: error.message,
-    });
+    return res.status(400).json({ success: false, message: error.message });
   }
 };
 
@@ -992,14 +974,11 @@ exports.lockGatewayDevice = async (req, res) => {
       message: "Lock command sent successfully",
     });
   } catch (error) {
-    return res.status(400).json({
-      success: false,
-      message: error.message,
-    });
+    return res.status(400).json({ success: false, message: error.message });
   }
 };
 
-// receiveCommandResult: Process USSD/SMS Command Results and SIM Balances
+// 21. receiveCommandResult (USSD / SMS DELIVERY CONFIRMATION)
 exports.receiveCommandResult = async (req, res) => {
   try {
     const {
@@ -1033,7 +1012,6 @@ exports.receiveCommandResult = async (req, res) => {
       where: { reference },
     });
 
-    // If command is not found in gsmCommand, check transaction or acknowledge to stop retry loops
     if (!existingCommand) {
       const fallbackTxn = await prisma.transaction.findFirst({
         where: { reference },
@@ -1052,29 +1030,10 @@ exports.receiveCommandResult = async (req, res) => {
             },
           });
         } else if (["FAILED", "FAILURE", "ERROR", "CANCELLED"].includes(normStatus)) {
-          if (fallbackTxn.status !== "FAILED" && fallbackTxn.status !== "REFUNDED") {
-            const refundAmount = Number(fallbackTxn.amount);
-            await prisma.wallet.updateMany({
-              where: { userId: fallbackTxn.userId },
-              data: { balance: { increment: refundAmount } },
-            });
-            await prisma.transaction.update({
-              where: { id: fallbackTxn.id },
-              data: {
-                status: "FAILED",
-                description: `Refunded: ${finalMsg || "Gateway rejected"}`,
-              },
-            });
-            emitEvent("wallet-updated", {
-              userId: fallbackTxn.userId,
-              refundedAmount: refundAmount,
-              reference,
-            });
-          }
+          await refundUserTransactionByRef(reference, finalMsg || "Gateway rejected");
         }
       }
 
-      // Return 200 OK so Android okhttp client clears its queue
       return res.status(200).json({
         success: true,
         cleared: true,
@@ -1102,45 +1061,13 @@ exports.receiveCommandResult = async (req, res) => {
 
     emitEvent("gateway-command-updated", { reference });
 
-    const normalizedMessage = finalMessage.toLowerCase();
-
     const waitingStates = ["WAITING", "PROCESSING", "PENDING", "SENT"];
     const successStates = ["SUCCESS", "SUCCESSFUL", "COMPLETED", "DELIVERED"];
     const failedStates = ["FAILED", "FAILURE", "ERROR", "CANCELLED"];
 
-    const waitingKeywords = [
-      "awaiting network response", "awaiting ussd response", "request submitted",
-      "request opened", "command received", "loading", "please wait",
-      "processing", "sending", "running", "connecting", "ussd running",
-      "ussd request sent", "checking", "fetching", "working", "dialing",
-      "executing", "wait...",
-    ];
+    const feedback = parseTransactionFeedback ? parseTransactionFeedback(finalMessage) : { status: "UNKNOWN" };
 
-    const invalidKeywords = [
-      "invalid", "invalid choice", "invalid option", "wrong selection",
-      "connection problem", "network error", "try again later", "failed",
-      "error", "problem performing request", "timed out", "timeout"
-    ];
-
-    const isTemporaryMessage = waitingKeywords.some((keyword) => normalizedMessage.includes(keyword));
-    const isInvalidUssdMessage = invalidKeywords.some((keyword) => normalizedMessage.includes(keyword));
-
-    const autoReplyMatch =
-      finalMessage.match(/reply\s+(?:with\s+)?(\d+)/i) ||
-      finalMessage.match(/select\s+(\d+)/i) ||
-      finalMessage.match(/choose\s+(\d+)/i) ||
-      finalMessage.match(/press\s+(\d+)/i) ||
-      finalMessage.match(/enter\s+(\d+)/i);
-
-    const autoReply = autoReplyMatch?.[1] || null;
     const payload = existingCommand.payload || {};
-
-    const ussdSession = {
-      sessionId: payload.sessionId || null,
-      step: Number(payload.step || 1),
-      nextCode: payload.nextCode || null,
-    };
-
     const simId = payload.simId || req.body.simId || null;
     const balanceType = String(
       payload.balanceType || req.body.balanceType || payload.service || req.body.service || payload.type || req.body.requestType || ""
@@ -1151,147 +1078,54 @@ exports.receiveCommandResult = async (req, res) => {
     const isDataCommand = ["DATA", "DATA_BALANCE", "CHECK_DATA"].includes(balanceType);
     const isBalanceCommand = Boolean(simId) && (isAirtimeCommand || isDataCommand);
 
-    // Automatic Refund Helper
-    const refundUserTransaction = async (reason) => {
-      try {
-        const txn = await prisma.transaction.findFirst({
-          where: { reference },
-        });
-
-        if (txn && txn.status !== "FAILED" && txn.status !== "REFUNDED") {
-          const refundAmount = Number(txn.amount);
-
-          await prisma.wallet.updateMany({
-            where: { userId: txn.userId },
-            data: {
-              balance: { increment: refundAmount },
-            },
-          });
-
-          await prisma.transaction.update({
-            where: { id: txn.id },
-            data: {
-              status: "FAILED",
-              description: `Refunded: ${reason || "Network delivery failure"}`,
-            },
-          });
-
-          emitEvent("wallet-updated", {
-            userId: txn.userId,
-            refundedAmount: refundAmount,
-            reference,
-          });
-
-          console.log(`Auto-refunded ₦${refundAmount} for Ref: ${reference}`);
-        }
-      } catch (refundErr) {
-        console.error("Auto-refund error:", refundErr.message);
-      }
-    };
-
     let command = existingCommand;
     let updatedSim = null;
 
-    if (
-      (isBalanceCommand || isPhoneNumberCommand) &&
-      (waitingStates.includes(normalizedStatus) || isTemporaryMessage) &&
-      !successStates.includes(normalizedStatus)
-    ) {
-      command = await markCommandProcessing({
-        reference,
-        message: finalMessage || "Waiting for complete USSD response",
-      });
-
-      await prisma.gsmUssdLog.create({
-        data: {
-          id: crypto.randomUUID(),
-          deviceId,
+    // Idan saƙon SMS na Transaction ne (ba Balance check ba)
+    if (!isBalanceCommand && !isPhoneNumberCommand) {
+      if (successStates.includes(normalizedStatus) || feedback.status === "SUCCESS") {
+        command = await markCommandSuccessful({
           reference,
-          request: null,
-          response: finalMessage,
-          status: normalizedStatus,
-        },
-      });
-
-      emitEvent("gateway-ussd-waiting", {
-        deviceId,
-        reference,
-        sessionId: ussdSession.sessionId,
-        step: ussdSession.step,
-        message: finalMessage,
-      });
-
-      if (autoReply && ussdSession.sessionId) {
-        const nextReference = "USSD-" + crypto.randomBytes(6).toString("hex").toUpperCase();
-
-        await prisma.gsmCommand.create({
-          data: {
-            reference: nextReference,
-            deviceId,
-            type: "USSD",
-            status: "PENDING",
-            payload: {
-              sessionId: ussdSession.sessionId,
-              step: ussdSession.step + 1,
-              reply: autoReply,
-              simId,
-              balanceType,
-            },
-          },
+          message: finalMessage || "Delivered successfully",
         });
 
-        emitEvent(
-          "gateway-command",
-          {
-            reference: nextReference,
-            type: "USSD",
-            reply: autoReply,
-            sessionId: ussdSession.sessionId,
+        await prisma.transaction.updateMany({
+          where: { reference },
+          data: {
+            status: "SUCCESSFUL",
+            description: finalMessage ? `Completed: ${finalMessage.slice(0, 190)}` : undefined,
           },
-          deviceId
-        );
+        });
+      } else if (failedStates.includes(normalizedStatus) || ["FAILED", "INSUFFICIENT_BALANCE", "INVALID_PIN"].includes(feedback.status)) {
+        command = await markCommandFailed({
+          reference,
+          message: finalMessage || "Delivery failed",
+        });
+
+        await refundUserTransactionByRef(reference, finalMessage || feedback.status);
       }
 
       return res.json({
         success: true,
-        pending: true,
-        waiting: true,
         command,
       });
     }
 
-    if (isInvalidUssdMessage && !successStates.includes(normalizedStatus)) {
-      command = await markCommandFailed({
+    // Bangaren Balance Check (USSD Parsing)
+    if (waitingStates.includes(normalizedStatus)) {
+      command = await markCommandProcessing({
         reference,
-        message: finalMessage || "Network rejected request",
+        message: finalMessage || "Processing USSD balance check",
       });
 
-      await refundUserTransaction(finalMessage || "Network rejected request");
-
-      await prisma.gsmDevice.update({
-        where: { id: deviceId },
-        data: { status: "ONLINE", lastSeen: new Date() },
-      });
-
-      return res.status(200).json({
+      return res.json({
         success: true,
-        code: "INVALID_USSD_RESPONSE",
-        message: "Network rejected the request. User refunded.",
+        pending: true,
         command,
-        sim: null,
       });
     }
 
-    if (normalizedStatus === "WAITING" || waitingStates.includes(normalizedStatus) || normalizedStatus === "SENT") {
-      if (!successStates.includes(normalizedStatus) && !isTemporaryMessage) {
-        command = await markCommandProcessing({
-          reference,
-          message: finalMessage || "Command is being processed",
-        });
-      }
-    }
-
-    if (successStates.includes(normalizedStatus) || (!waitingStates.includes(normalizedStatus) && !isTemporaryMessage)) {
+    if (successStates.includes(normalizedStatus)) {
       let airtimeBalance = null;
       let dataBalance = null;
       let expiryValue = null;
@@ -1302,80 +1136,25 @@ exports.receiveCommandResult = async (req, res) => {
       }
 
       if (isDataCommand) {
-        const parsedDataBalance = parseDataBalance(finalMessage);
-        if (parsedDataBalance !== null && parsedDataBalance !== undefined && String(parsedDataBalance).trim() !== "") {
-          dataBalance = String(parsedDataBalance).trim();
+        const parsedData = parseDataBalance(finalMessage);
+        if (parsedData !== null && parsedData !== undefined && String(parsedData).trim() !== "") {
+          dataBalance = String(parsedData).trim();
         }
       }
 
       expiryValue = parseExpiryDate(finalMessage);
 
-      const hasAirtimeBalance = airtimeBalance !== null && airtimeBalance !== undefined && !Number.isNaN(Number(airtimeBalance));
-      const hasDataBalance = dataBalance !== null && dataBalance !== undefined && String(dataBalance).trim() !== "";
+      const hasAirtimeBalance = airtimeBalance !== null && !Number.isNaN(Number(airtimeBalance));
+      const hasDataBalance = dataBalance !== null && String(dataBalance).trim() !== "";
       const hasPhoneNumber = Boolean(parsedPhone);
-
-      if (isPhoneNumberCommand && !hasPhoneNumber && !isInvalidUssdMessage && !failedStates.includes(normalizedStatus)) {
-        command = await markCommandProcessing({
-          reference,
-          message: finalMessage || "Waiting for phone number response",
-        });
-
-        return res.json({
-          success: true,
-          pending: true,
-          waiting: true,
-          message: "Waiting for phone number",
-          command,
-        });
-      }
-
-      if (isBalanceCommand && !hasAirtimeBalance && !hasDataBalance && !isInvalidUssdMessage && !failedStates.includes(normalizedStatus)) {
-        command = await markCommandProcessing({
-          reference,
-          message: finalMessage || "Waiting for final balance response",
-        });
-
-        return res.json({
-          success: true,
-          pending: true,
-          waiting: true,
-          message: "Waiting for valid balance payload",
-          command,
-        });
-      }
-
-      if (isBalanceCommand && !hasAirtimeBalance && !hasDataBalance && !hasPhoneNumber) {
-        command = await markCommandFailed({
-          reference,
-          message: "Could not parse balance from USSD response",
-        });
-
-        return res.status(200).json({
-          success: true,
-          code: "PARSE_BALANCE_FAILED",
-          message: "USSD response received but failed to parse balance",
-          response: finalMessage,
-          command,
-        });
-      }
 
       command = await markCommandSuccessful({
         reference,
-        message: finalMessage || "Command executed successfully",
-      });
-
-      await prisma.transaction.updateMany({
-        where: { reference },
-        data: {
-          status: "SUCCESSFUL",
-          description: finalMessage ? `Completed: ${finalMessage.slice(0, 190)}` : undefined,
-        },
+        message: finalMessage || "USSD executed successfully",
       });
 
       if (simId) {
-        const simUpdateData = {
-          lastSyncAt: new Date(),
-        };
+        const simUpdateData = { lastSyncAt: new Date() };
 
         if (hasAirtimeBalance) {
           simUpdateData.airtimeBalance = Number(airtimeBalance);
@@ -1396,7 +1175,6 @@ exports.receiveCommandResult = async (req, res) => {
 
         if (hasPhoneNumber) {
           simUpdateData.phoneNumber = parsedPhone;
-          console.log(`Persisted SIM phone: ${parsedPhone} for SIM: ${simId}`);
         }
 
         updatedSim = await prisma.gsmSim.update({
@@ -1404,39 +1182,21 @@ exports.receiveCommandResult = async (req, res) => {
           data: simUpdateData,
         });
 
-        emitEvent("gsm-sims-synced", {
+        emitEvent("gsm-sim-balance-updated", {
           deviceId,
-          sims: [updatedSim],
+          simId: updatedSim.id,
+          slotIndex: updatedSim.slotIndex,
+          airtimeBalance: updatedSim.airtimeBalance,
+          dataBalance: updatedSim.dataBalance,
+          expiryDate: updatedSim.expiryDate,
+          sim: updatedSim,
         });
-
-        if (hasAirtimeBalance || hasDataBalance || expiryValue) {
-          emitEvent("gsm-sim-balance-updated", {
-            deviceId,
-            simId: updatedSim.id,
-            slotIndex: updatedSim.slotIndex,
-            airtimeBalance: updatedSim.airtimeBalance,
-            dataBalance: updatedSim.dataBalance,
-            expiryDate: updatedSim.expiryDate,
-            sim: updatedSim,
-          });
-        }
-
-        if (hasPhoneNumber) {
-          emitEvent("gsm-sim-number-updated", {
-            deviceId,
-            simId: updatedSim.id,
-            phoneNumber: updatedSim.phoneNumber,
-            sim: updatedSim,
-          });
-        }
       }
     } else if (failedStates.includes(normalizedStatus)) {
       command = await markCommandFailed({
         reference,
-        message: finalMessage || "Command failed",
+        message: finalMessage || "Balance check failed",
       });
-
-      await refundUserTransaction(finalMessage || "Command failed on GSM Gateway");
     }
 
     return res.json({
@@ -1495,7 +1255,7 @@ exports.updateSimNumber = async (req, res) => {
   }
 };
 
-// 22b. fetchSimPhoneNumber (Automatic USSD Check)
+// 23. fetchSimPhoneNumber (Automatic USSD Check)
 exports.fetchSimPhoneNumber = async (req, res) => {
   try {
     const { simId } = req.body;
@@ -1538,7 +1298,7 @@ exports.fetchSimPhoneNumber = async (req, res) => {
   }
 };
 
-// 23. getGsmAnalytics
+// 24. getGsmAnalytics
 exports.getGsmAnalytics = async (req, res) => {
   try {
     const totalDevices = await prisma.gsmDevice.count();

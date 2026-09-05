@@ -17,6 +17,10 @@ const normalizeUnit = (unit = "") => {
     return "MB";
   }
 
+  if (["T", "TERA"].includes(value)) {
+    return "TB";
+  }
+
   if (value === "K") {
     return "KB";
   }
@@ -24,48 +28,42 @@ const normalizeUnit = (unit = "") => {
   return value;
 };
 
-/*
- * MOMO WALLET & AIRTIME BALANCE PARSER
- */
-function parseAirtimeBalance(message = "") {
-  console.log("RAW BALANCE MESSAGE:", message);
-  const text = normalize(message);
-  console.log("NORMALIZED TEXT:", text);
-
-  if (!text) {
+const parseMoneyValue = (value) => {
+  if (value === undefined || value === null) {
     return null;
   }
+
+  const cleaned = String(value)
+    .replace(/,/g, "")
+    .replace(/\s+/g, "")
+    .trim();
+
+  if (!/^\d+(?:\.\d+)?$/.test(cleaned)) {
+    return null;
+  }
+
+  const amount = Number(cleaned);
+
+  if (!Number.isFinite(amount) || amount < 0) {
+    return null;
+  }
+
+  return amount;
+};
+
+/*
+ * MOMO WALLET & AIRTIME BALANCE PARSER (USSD / SMS)
+ */
+function parseAirtimeBalance(message = "") {
+  const text = normalize(message);
+  if (!text) return null;
 
   const dataUnitPattern = /\b(?:TB|GB|GIGS?|G|MB|MEGS?|M|KB|K)\b/i;
   const percentagePattern = /%/;
   const phoneNumberPattern = /\b(?:\+?234|0)[789][01]\d{8}\b/;
-  const datePattern = /\b(?:\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})\b/;
+  const datePattern = /\b(?:\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}|\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2})\b/;
   const timePattern = /\b\d{1,2}:\d{2}(?::\d{2})?\b/;
 
-  const parseMoneyValue = (value) => {
-    if (value === undefined || value === null) {
-      return null;
-    }
-
-    const cleaned = String(value)
-      .replace(/,/g, "")
-      .replace(/\s+/g, "")
-      .trim();
-
-    if (!/^\d+(?:\.\d+)?$/.test(cleaned)) {
-      return null;
-    }
-
-    const amount = Number(cleaned);
-
-    if (!Number.isFinite(amount) || amount < 0) {
-      return null;
-    }
-
-    return amount;
-  };
-
-  // 1. MoMo & Main Account specific regex patterns
   const exactPatterns = [
     /(?:momo\s*balance|momo\s*wallet|wallet\s*balance|available\s*balance|main\s*account|account\s*bal|account|balance|bal|credit|main|pulse)[:\s]*(?:is\s*)?(?:₦|NGN|N)?\s*([\d\s,]+(?:\.\d+)?)/i,
     /(?:₦|NGN|\bN)\s*([\d\s,]+(?:\.\d+)?)/i,
@@ -76,18 +74,13 @@ function parseAirtimeBalance(message = "") {
     const match = text.match(pattern);
     if (match && match[1]) {
       const amount = parseMoneyValue(match[1]);
-      if (amount !== null) {
-        console.log("MATCHED MOMO/AIRTIME AMOUNT:", amount);
-        return amount;
-      }
+      if (amount !== null) return amount;
     }
   }
 
-  // 2. General currency pattern fallback
   const allMatches = [...text.matchAll(/(?:₦|NGN|\bN)?\s*([0-9]+(?:\.[0-9]{2})?)/gi)];
   for (const match of allMatches) {
     const matchedText = match[0] || "";
-    
     if (
       dataUnitPattern.test(matchedText) ||
       percentagePattern.test(matchedText) ||
@@ -99,28 +92,23 @@ function parseAirtimeBalance(message = "") {
     }
 
     const amount = parseMoneyValue(match[1]);
-    if (amount !== null) {
-      console.log("MATCHED AMOUNT (GENERAL):", amount);
-      return amount;
-    }
+    if (amount !== null) return amount;
   }
 
   return null;
 }
 
-exports.parseAirtimeBalance = parseAirtimeBalance;
-
 /*
  * SME DATA & BUNDLE BALANCE PARSER
  */
-exports.parseDataBalance = (message = "") => {
+function parseDataBalance(message = "") {
   const text = normalize(message);
+  if (!text) return null;
 
   if (/don't have any active data bundle|no active data|expired/i.test(text)) {
     return "0MB";
   }
 
-  // Handle SME Data SMS balance (e.g. "Your SME data balance is: 45000MB" or "45.5GB")
   const smeMatch = text.match(/(?:sme\s*(?:data)?\s*balance|data\s*balance|balance)[:\s]*(?:is\s*)?([0-9]+(?:\.[0-9]+)?)\s*(MB|GB|TB)/i);
   if (smeMatch) {
     const value = smeMatch[1];
@@ -135,9 +123,7 @@ exports.parseDataBalance = (message = "") => {
   ];
 
   if (matches.length === 0) {
-    if (/data\s*balance/i.test(text)) {
-      return "0MB";
-    }
+    if (/data\s*balance/i.test(text)) return "0MB";
     return null;
   }
 
@@ -148,33 +134,25 @@ exports.parseDataBalance = (message = "") => {
     const amount = Number(match[1]);
     const unit = normalizeUnit(match[2]);
 
-    if (!Number.isFinite(amount)) {
-      continue;
-    }
+    if (!Number.isFinite(amount)) continue;
 
     const key = `${amount}-${unit}`;
-
     if (!seen.has(key)) {
       seen.add(key);
       balances.push(`${amount} ${unit}`);
     }
   }
 
-  if (balances.length === 0) {
-    return null;
-  }
-
-  return balances.join(" + ");
-};
+  return balances.length > 0 ? balances.join(" + ") : null;
+}
 
 /*
- * ROBUST EXPIRY DATE PARSER (MTN, AIRTEL, GLO, 9MOBILE)
+ * EXPIRY DATE PARSER
  */
-exports.parseExpiryDate = (message = "") => {
+function parseExpiryDate(message = "") {
   if (!message) return null;
   const text = normalize(message);
 
-  // 1. Gano kwanaki (misali: "valid for 30 days" ko "validity: 30 days")
   const daysMatch = text.match(/(?:valid\s+for|validity[:\s]+)(\d+)\s*days?/i);
   if (daysMatch && daysMatch[1]) {
     const days = parseInt(daysMatch[1], 10);
@@ -183,7 +161,6 @@ exports.parseExpiryDate = (message = "") => {
     return targetDate.toISOString();
   }
 
-  // 2. Gano Date tare da Kalmomin Telco (Expires on, Valid till, Exp Date)
   const patterns = [
     /(?:expires?|expiry|valid\s+till|valid\s+until|validity|exp\.?\s*date|exp)[:\s]+(?:on\s+)?(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)/i,
     /(?:expires?|expiry|valid\s+till|valid\s+until|validity|exp)[:\s]+(?:on\s+)?(\d{1,2}[\s\-]+[A-Za-z]{3,9}[\s\-]+\d{2,4}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)/i,
@@ -199,11 +176,12 @@ exports.parseExpiryDate = (message = "") => {
   }
 
   return null;
-};
+}
+
 /*
- * UNIVERSAL PHONE NUMBER PARSER (MTN, AIRTEL, GLO, 9MOBILE)
+ * UNIVERSAL PHONE NUMBER PARSER
  */
-exports.parsePhoneNumber = (message = "") => {
+function parsePhoneNumber(message = "") {
   if (!message) return null;
   const text = String(message)
     .replace(/\r/g, " ")
@@ -211,23 +189,113 @@ exports.parsePhoneNumber = (message = "") => {
     .replace(/,/g, "")
     .trim();
 
-  // 1. Gano saƙonni masu dauke da kalmomi kamar "MSISDN", "Number", "MDN", "Phone"
   const labelMatch = text.match(/(?:msisdn|mdn|number|mobile|phone|no)[:\s]*(?:is\s*)?(?:\+?234|0)?([789][01]\d{8})/i);
   if (labelMatch && labelMatch[1]) {
     return `0${labelMatch[1]}`;
   }
 
-  // 2. Gano lambar da ta fara da 234 (misali: 234803..., 234805..., 234802..., 234809...)
   const intlMatch = text.match(/(?:\+?234)([789][01]\d{8})/);
   if (intlMatch && intlMatch[1]) {
     return `0${intlMatch[1]}`;
   }
 
-  // 3. Gano kowace lambar Najeriya mai lambobi 11 (080, 081, 090, 091, 070)
   const localMatch = text.match(/\b(0[789][01]\d{8})\b/);
   if (localMatch && localMatch[1]) {
     return localMatch[1];
   }
 
   return null;
+}
+
+/*
+ * BUILD SMS COMMANDS (MTN & AIRTEL AIRTIME / DATA)
+ * Yana haɗa command ɗin da wayar GSM Gateway za ta tura ta SMS
+ */
+function buildSmsCommand({ network, type, recipient, amountOrPlan, pin }) {
+  const cleanPhone = parsePhoneNumber(recipient) || recipient;
+  const net = String(network).toUpperCase().trim();
+  const sType = String(type).toUpperCase().trim();
+
+  if (net === "MTN") {
+    if (sType === "AIRTIME") {
+      return {
+        recipient: "321", // MTN Share (Me2U) shortcode
+        message: `Transfer ${cleanPhone} ${amountOrPlan} ${pin}`
+      };
+    }
+
+    if (sType === "DATA") {
+      // SME Data Share (SME / Corporate Gifting)
+      return {
+        recipient: "312",
+        message: `SME ${cleanPhone} ${amountOrPlan} ${pin}`
+      };
+    }
+  }
+
+  if (net === "AIRTEL") {
+    if (sType === "AIRTIME") {
+      return {
+        recipient: "432", // Airtel Me2U shortcode
+        message: `2U ${cleanPhone} ${amountOrPlan} ${pin}`
+      };
+    }
+
+    if (sType === "DATA") {
+      // Airtel Data Gifting / Share
+      return {
+        recipient: "141",
+        message: `SHARE ${cleanPhone} ${amountOrPlan} ${pin}`
+      };
+    }
+  }
+
+  throw new Error(`Unsupported network [${network}] or service type [${type}] for SMS execution`);
+}
+
+/*
+ * PARSE TELCO SMS FEEDBACK (SUCCESS / FAIL DETECTION)
+ * Yana gane ko saƙon da telco ta dawo da shi nasara ne ko akwai matsala
+ */
+function parseTransactionFeedback(message = "") {
+  const text = normalize(message);
+  if (!text) return { status: "UNKNOWN", raw: message };
+
+  // Nasara (Success)
+  const isSuccess = /(?:successful|transferred|recharge\s*of|shared\s*with|credited|completed|sent\s*to)/i.test(text) &&
+                    !/(?:not\s*successful|unsuccessful|failed|insufficient)/i.test(text);
+
+  if (isSuccess) {
+    return {
+      status: "SUCCESS",
+      message: text,
+      reference: text.match(/(?:ref|txn|id)[:\s]*([a-zA-Z0-9_-]+)/i)?.[1] || null
+    };
+  }
+
+  // Rashin isassun kuɗi / data (Insufficient Balance)
+  if (/(?:insufficient|low\s*balance|not\s*enough)/i.test(text)) {
+    return { status: "INSUFFICIENT_BALANCE", message: text };
+  }
+
+  // Kuskuren PIN
+  if (/(?:incorrect\s*pin|invalid\s*pin|wrong\s*pin)/i.test(text)) {
+    return { status: "INVALID_PIN", message: text };
+  }
+
+  // Cunkoso ko gazawa (Failed)
+  if (/(?:failed|error|unable|blocked|barred|try\s*again)/i.test(text)) {
+    return { status: "FAILED", message: text };
+  }
+
+  return { status: "PENDING", message: text };
+}
+
+module.exports = {
+  parseAirtimeBalance,
+  parseDataBalance,
+  parseExpiryDate,
+  parsePhoneNumber,
+  buildSmsCommand,
+  parseTransactionFeedback
 };

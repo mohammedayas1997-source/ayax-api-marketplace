@@ -1,5 +1,5 @@
 const prisma = require("../config/prisma");
-const { emitEvent, emitGatewayCommand } = require("../config/socket");
+const { emitEvent } = require("../config/socket");
 const clubkonnect = require("./clubkonnect.service");
 
 const DEFAULT_DISCOUNTS = {
@@ -9,10 +9,22 @@ const DEFAULT_DISCOUNTS = {
   "9MOBILE": 0.03,
 };
 
-exports.purchaseAirtime = async ({ user, network, phone, amount, reference }) => {
-  const numericAmount = Number(amount);
-  const normalizedNetwork = String(network || "").toUpperCase().trim();
-  const targetPhone = String(phone || "").trim();
+// Helper na tsaftace lambar waya zuwa 080...
+const cleanLocalPhone = (phone = "") => {
+  const digits = String(phone).replace(/\D/g, "");
+  if (digits.startsWith("234") && digits.length === 13) {
+    return `0${digits.slice(3)}`;
+  }
+  if (digits.length === 10 && !digits.startsWith("0")) {
+    return `0${digits}`;
+  }
+  return digits;
+};
+
+exports.purchaseAirtime = async ({ user, network, phone, amount, reference, channel = "DEFAULT" }) => {
+  const numericAmount = Math.round(Number(amount));
+  const normalizedNetwork = String(network || "MTN").toUpperCase().trim();
+  const targetPhone = cleanLocalPhone(phone || "");
 
   if (!user || !user.id) {
     const error = new Error("Authentication is required.");
@@ -62,7 +74,7 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference }) =>
     amountToCharge = Number((numericAmount * rate).toFixed(2));
     discountAmount = Number((numericAmount - amountToCharge).toFixed(2));
   } else {
-    const fallbackRate = DEFAULT_DISCOUNTS[normalizedNetwork] || 0.01;
+    const fallbackRate = DEFAULT_DISCOUNTS[normalizedNetwork] || 0.02;
     discountAmount = Number((numericAmount * fallbackRate).toFixed(2));
     amountToCharge = Number((numericAmount - discountAmount).toFixed(2));
   }
@@ -103,7 +115,7 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference }) =>
     return { updatedWallet: newWallet, transaction: newTx };
   });
 
-  // 5. TAFARKI NA 1: GSM MODEM (GATEWAY)
+  // 5. TAFARKI NA 1: GSM MODEM (GATEWAY tare da MoMo PSB)
   const activeDevice = await prisma.gsmDevice.findFirst({
     where: { status: "ONLINE" },
     include: { sims: true },
@@ -114,53 +126,157 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference }) =>
     (s) =>
       s.carrierName?.toUpperCase().includes(normalizedNetwork) ||
       s.displayName?.toUpperCase().includes(normalizedNetwork)
-  );
+  ) || activeDevice?.sims?.[0];
 
   if (activeDevice && targetSim) {
-    const slotIndex = targetSim.slotIndex ?? 1;
-    const pin = "1997";
+    const slotIndex = Number(targetSim.slotIndex ?? 0);
+    const pin = process.env.GSM_AIRTIME_PIN || "1997";
+    const momoPin = process.env.MOMO_PIN || pin;
 
-    let ussdCode = `*321*${targetPhone}*${numericAmount}*${pin}#`;
-    let steps = [targetPhone, String(numericAmount), pin];
+    // Duba cunkoso a kan na'urar
+    const pendingJobsCount = await prisma.gsmCommand.count({
+      where: {
+        deviceId: activeDevice.id,
+        status: { in: ["PENDING", "PROCESSING"] },
+        createdAt: { gte: new Date(Date.now() - 60 * 1000) },
+      },
+    });
 
-    if (normalizedNetwork === "MTN") {
-      ussdCode = `*600*${targetPhone}*${numericAmount}*${pin}#`;
-    } else if (normalizedNetwork === "AIRTEL") {
-      ussdCode = `*432*1*${targetPhone}*${numericAmount}*${pin}#`;
-    } else if (normalizedNetwork === "GLO") {
-      ussdCode = `*131*${targetPhone}*${numericAmount}*${pin}#`;
-    } else if (normalizedNetwork === "9MOBILE") {
-      ussdCode = `*223*${pin}*${numericAmount}*${targetPhone}#`;
+    const useMomo = channel === "MOMO" || process.env.DEFAULT_MTN_AIRTIME_ROUTE === "MOMO";
+    let commandPayload = null;
+    let socketPayload = null;
+
+    // ====================================================
+    // HANYA A: USSD FIRST (IDAN LAYI YANA DA SAUKI < 3)
+    // ====================================================
+    if (pendingJobsCount < 3) {
+      let ussdCode = `*321*${targetPhone}*${numericAmount}*${pin}#`;
+      let steps = [targetPhone, String(numericAmount), pin];
+
+      if (normalizedNetwork === "MTN") {
+        if (useMomo) {
+          // MTN MoMo Airtime Vending Code: *671*1*1*Phone*Amount*PIN#
+          ussdCode = `*671*1*1*${targetPhone}*${numericAmount}*${momoPin}#`;
+          steps = ["1", "1", targetPhone, String(numericAmount), momoPin];
+        } else {
+          // Standard MTN Share (Me2U): *321*1*Phone*Amount*PIN#
+          ussdCode = `*321*1*${targetPhone}*${numericAmount}*${pin}#`;
+          steps = ["1", targetPhone, String(numericAmount), pin];
+        }
+      } else if (normalizedNetwork === "AIRTEL") {
+        ussdCode = `*321*${targetPhone}*${numericAmount}*${pin}#`;
+        steps = [targetPhone, String(numericAmount), pin];
+      } else if (normalizedNetwork === "GLO") {
+        ussdCode = `*131*${targetPhone}*${numericAmount}*${pin}#`;
+        steps = [targetPhone, String(numericAmount), pin];
+      } else if (normalizedNetwork === "9MOBILE") {
+        ussdCode = `*223*${pin}*${numericAmount}*${targetPhone}#`;
+        steps = [pin, String(numericAmount), targetPhone];
+      }
+
+      commandPayload = {
+        reference: txReference,
+        deviceId: activeDevice.id,
+        type: "USSD",
+        service: "AIRTIME",
+        ussdCode,
+        code: ussdCode,
+        steps,
+        phone: targetPhone,
+        targetPhone,
+        slotIndex,
+        simSlot: slotIndex,
+        amount: numericAmount,
+        network: normalizedNetwork,
+        routeType: useMomo ? "MTN_MOMO" : "DIRECT_USSD",
+      };
+
+      socketPayload = {
+        commandId: txReference,
+        reference: txReference,
+        type: "USSD",
+        ussdCode,
+        code: ussdCode,
+        steps,
+        slotIndex,
+        simSlot: slotIndex,
+        payload: commandPayload,
+      };
+
+      console.log(`⚡ [AIRTIME: USSD (${useMomo ? "MoMo" : "Standard"})] Ref: ${txReference} -> ${ussdCode} (Slot ${slotIndex})`);
+    } 
+    // ====================================================
+    // HANYA B: SMS QUEUE (IDAN CUNKOSO YA YI YAWA >= 3)
+    // ====================================================
+    else {
+      let smsRecipient = "321";
+      let smsMessage = `Transfer ${targetPhone} ${numericAmount} ${pin}`;
+
+      if (normalizedNetwork === "MTN") {
+        smsRecipient = "321";
+        smsMessage = `Transfer ${targetPhone} ${numericAmount} ${pin}`;
+      } else if (normalizedNetwork === "AIRTEL") {
+        smsRecipient = "432";
+        smsMessage = `2U ${targetPhone} ${numericAmount} ${pin}`;
+      } else if (normalizedNetwork === "GLO") {
+        smsRecipient = "131";
+        smsMessage = `Transfer ${targetPhone} ${numericAmount} ${pin}`;
+      } else if (normalizedNetwork === "9MOBILE") {
+        smsRecipient = "223";
+        smsMessage = `${pin} ${numericAmount} ${targetPhone}`;
+      }
+
+      commandPayload = {
+        reference: txReference,
+        deviceId: activeDevice.id,
+        type: "SEND_SMS",
+        action: "SEND_SMS",
+        service: "AIRTIME",
+        recipient: smsRecipient,
+        sendTo: smsRecipient,
+        destination: smsRecipient,
+        phoneNumber: smsRecipient,
+        phone: smsRecipient,
+        message: smsMessage,
+        smsBody: smsMessage,
+        smsText: smsMessage,
+        targetPhone,
+        slotIndex,
+        simSlot: slotIndex,
+        amount: numericAmount,
+        network: normalizedNetwork,
+      };
+
+      socketPayload = {
+        commandId: txReference,
+        reference: txReference,
+        type: "SEND_SMS",
+        action: "SEND_SMS",
+        recipient: smsRecipient,
+        sendTo: smsRecipient,
+        message: smsMessage,
+        smsBody: smsMessage,
+        slotIndex,
+        simSlot: slotIndex,
+        payload: commandPayload,
+      };
+
+      console.log(`📨 [AIRTIME: SMS QUEUE] Ref: ${txReference} -> ${smsRecipient} "${smsMessage}" (Slot ${slotIndex})`);
     }
-
-    const commandPayload = {
-      reference: txReference,
-      deviceId: activeDevice.id,
-      type: "USSD",
-      service: "AIRTIME",
-      ussdCode,
-      steps,
-      phone: targetPhone,
-      slotIndex: Number(slotIndex),
-      amount: numericAmount,
-      network: normalizedNetwork,
-    };
 
     await prisma.gsmCommand.create({
       data: {
         reference: txReference,
         deviceId: activeDevice.id,
-        type: "USSD",
+        type: commandPayload.type,
         status: "PENDING",
         payload: commandPayload,
       },
     }).catch(() => null);
 
+    // Kira guda ɗaya kacal ta Socket don hana maimaita transaction
     try {
-      emitEvent("gateway-command", commandPayload, activeDevice.id);
-      if (typeof emitGatewayCommand === "function") {
-        emitGatewayCommand(activeDevice.id, commandPayload);
-      }
+      emitEvent("gateway-command", socketPayload, activeDevice.id);
     } catch (socketErr) {
       console.warn("Gateway socket warning:", socketErr.message);
     }
@@ -212,7 +328,7 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference }) =>
   } catch (vendorError) {
     console.error("Vendor failed, initiating refund:", vendorError.message);
 
-    // Reversal / Refund
+    // Auto-Refund nan take
     await prisma.$transaction([
       prisma.wallet.update({
         where: { userId: user.id },

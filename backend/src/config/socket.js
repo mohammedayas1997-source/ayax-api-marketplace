@@ -12,7 +12,6 @@ exports.initSocket = (server) => {
       origin: "*",
       methods: ["GET", "POST", "PATCH", "DELETE"],
     },
-    // Saita ping da zai rike connection da karfi a network din waya
     pingInterval: 10000,
     pingTimeout: 7000,
     connectTimeout: 20000,
@@ -20,7 +19,6 @@ exports.initSocket = (server) => {
   });
 
   io.on("connection", async (socket) => {
-    // 1. Duba deviceId ta handshake (auth, query, headers)
     let deviceId =
       socket.handshake.auth?.deviceId ||
       socket.handshake.query?.deviceId ||
@@ -30,15 +28,16 @@ exports.initSocket = (server) => {
     const bindDeviceToSocket = async (targetDeviceId, source = "Handshake") => {
       if (!targetDeviceId) return;
 
-      // Idan akwai pending disconnect timeout, soke shi domin wayar ta dawo
       if (disconnectTimeouts.has(targetDeviceId)) {
         clearTimeout(disconnectTimeouts.get(targetDeviceId));
         disconnectTimeouts.delete(targetDeviceId);
       }
 
       socket.deviceId = targetDeviceId;
+      // Shigar da socket din a dukkan rooms da wayar za ta iya bukata
       socket.join(targetDeviceId);
       socket.join(`device_${targetDeviceId}`);
+      socket.join(`gateway_${targetDeviceId}`);
 
       try {
         await prisma.gsmDevice.updateMany({
@@ -49,9 +48,7 @@ exports.initSocket = (server) => {
             lastSeen: new Date(),
           },
         });
-        console.log(`📱 [GSM BOUND (${source})]: ${targetDeviceId} -> Room: ${targetDeviceId}`);
-
-        // Aika tabbaci ga wayar cewa ta shiga tsaf
+        console.log(`📱 [GSM BOUND (${source})]: ${targetDeviceId} -> Joined Rooms`);
         socket.emit("registered", { status: "OK", deviceId: targetDeviceId });
       } catch (err) {
         console.log("DB Bind Error:", err.message);
@@ -64,7 +61,6 @@ exports.initSocket = (server) => {
       console.log(`[SOCKET CONNECTED]: ${socket.id} | Device: Pending Identification`);
     }
 
-    // 2. Saurari duk wani event da Android App zai iya aiko da ID nashi
     const registrationEvents = [
       "register",
       "register-device",
@@ -109,7 +105,6 @@ exports.initSocket = (server) => {
       console.log(`[SOCKET DISCONNECTED]: ${socket.id} | Device: ${activeDevId || "None"} | Reason: ${reason}`);
 
       if (activeDevId) {
-        // Kada a mayar da shi OFFLINE nan take; jira dakika 25 idan zai sake hadawa
         if (disconnectTimeouts.has(activeDevId)) {
           clearTimeout(disconnectTimeouts.get(activeDevId));
         }
@@ -136,7 +131,7 @@ exports.initSocket = (server) => {
           } finally {
             disconnectTimeouts.delete(activeDevId);
           }
-        }, 25000); // 25 seconds grace period
+        }, 25000);
 
         disconnectTimeouts.set(activeDevId, timeout);
       }
@@ -148,26 +143,86 @@ exports.initSocket = (server) => {
 
 exports.getIO = () => io;
 
-exports.emitEvent = (event, payload, room = null) => {
-  if (!io) return;
-  if (room) {
-    io.to(room).emit(event, payload);
-    return;
-  }
-  io.emit(event, payload);
+// Helper na gina daidaitaccen payload mai bayyane ba tare da boye code ba
+const normalizeCommandPayload = (payload) => {
+  const inner = payload?.payload || {};
+  const isUssd =
+    payload?.type === "USSD" ||
+    inner?.type === "USSD" ||
+    Boolean(payload?.ussdCode || payload?.code || inner?.ussdCode || inner?.code);
+
+  const rawCode =
+    payload?.code ||
+    payload?.ussd ||
+    payload?.ussdCode ||
+    payload?.ussd_code ||
+    payload?.rootCode ||
+    inner?.code ||
+    inner?.ussd ||
+    inner?.ussdCode ||
+    inner?.ussd_code ||
+    inner?.rootCode ||
+    (isUssd ? "*671#" : "");
+
+  const stepsArray = Array.isArray(payload?.steps)
+    ? payload.steps
+    : Array.isArray(inner?.steps)
+    ? inner.steps
+    : [];
+
+  return {
+    ...inner,
+    ...payload,
+    // Filaye a bayyane a saman JSON don Android app ya gani kai tsaye
+    id: payload?.id || payload?.commandId || inner?.id || inner?.commandId,
+    commandId: payload?.commandId || payload?.id || inner?.commandId || inner?.id,
+    reference: payload?.reference || inner?.reference,
+    type: isUssd ? "USSD" : "SEND_SMS",
+    action: isUssd ? "USSD" : "SEND_SMS",
+    code: rawCode,
+    ussd: rawCode,
+    ussdCode: rawCode,
+    ussd_code: rawCode,
+    rootCode: rawCode,
+    text: isUssd ? rawCode : (payload?.message || inner?.message || ""),
+    steps: stepsArray,
+    slotIndex: Number(payload?.slotIndex ?? inner?.slotIndex ?? payload?.simSlot ?? inner?.simSlot ?? 0),
+    simSlot: Number(payload?.slotIndex ?? inner?.slotIndex ?? payload?.simSlot ?? inner?.simSlot ?? 0),
+    targetPhone: payload?.targetPhone || payload?.phone || inner?.targetPhone || inner?.phone || "",
+    phone: payload?.targetPhone || payload?.phone || inner?.targetPhone || inner?.phone || "",
+  };
 };
 
-// 3. Tura Command ta Room na Device
+exports.emitEvent = (event, payload, room = null) => {
+  if (!io) return;
+  const safePayload = normalizeCommandPayload(payload);
+
+  if (room) {
+    // Tura a dukkan dakunan da ke da alaka da wayar
+    io.to(room).emit(event, safePayload);
+    io.to(`device_${room}`).emit(event, safePayload);
+    io.to(`gateway_${room}`).emit(event, safePayload);
+    return;
+  }
+  io.emit(event, safePayload);
+};
+
 exports.emitGatewayCommand = (deviceId, command) => {
   if (!io) {
     console.error("[EMIT ERROR]: Socket.io is not initialized.");
     return false;
   }
 
-  console.log(`🚀 [DISPATCHING TO GATEWAY]: Ref: ${command.reference} -> Target Device: ${deviceId}`);
+  const safeCommand = normalizeCommandPayload(command);
+  console.log(`🚀 [DISPATCHING TO GATEWAY]: Ref: ${safeCommand.reference} -> Code: ${safeCommand.code} Steps: ${JSON.stringify(safeCommand.steps)}`);
 
-  // Tura umarnin zuwa dakin na'urar (Room)
-  io.to(deviceId).emit("gateway-command", command);
+  // Tura wa dukkan sunayen events da Android ke saurare a cikin dakunan wayar
+  const targetRooms = [deviceId, `device_${deviceId}`, `gateway_${deviceId}`];
+
+  targetRooms.forEach((r) => {
+    io.to(r).emit("gateway-command", safeCommand);
+    io.to(r).emit("command", safeCommand);
+  });
 
   return true;
 };

@@ -2,14 +2,76 @@ const prisma = require("../config/prisma");
 const abjiktech = require("../services/abjiktech.service");
 
 /* ======================================================
-   HELPER FUNCTIONS (WALLET CHARGE & REFUND)
+   HELPER FUNCTIONS (WALLET RESOLUTION, CHARGE & REFUND)
 ====================================================== */
 
+// Helper don gano asalin User ID da Wallet ko ta API Key ne ko Session
+async function resolveUserWallet(user) {
+  if (!user) return null;
+
+  const candidateIds = [
+    user.id,
+    user._id,
+    user.userId,
+    user.accountId,
+    user.user?.id,
+    user.apiKeyUser?.id,
+  ].filter(Boolean);
+
+  let wallet = null;
+  let validUserId = null;
+
+  for (const id of candidateIds) {
+    try {
+      wallet = await prisma.wallet.findFirst({
+        where: {
+          OR: [
+            { userId: String(id) },
+            { id: String(id) },
+          ],
+        },
+      });
+      if (wallet) {
+        validUserId = wallet.userId || id;
+        break;
+      }
+    } catch (_) {}
+  }
+
+  // Idan ba a samu ta ID ba, duba email
+  if (!wallet && user.email) {
+    try {
+      const dbUser = await prisma.user.findFirst({
+        where: { email: user.email },
+        include: { wallet: true },
+      });
+      if (dbUser?.wallet) {
+        wallet = dbUser.wallet;
+        validUserId = dbUser.id;
+      }
+    } catch (_) {}
+  }
+
+  return { wallet, userId: validUserId || user.id };
+}
+
 // Cire kudi a wallet da ajiye pending/processing transaction
-async function chargeWallet({ userId, cost, service, description, reference }) {
-  const wallet = await prisma.wallet.findUnique({ where: { userId } });
-  if (!wallet || Number(wallet.balance) < cost) {
-    const err = new Error(`Insufficient wallet balance. NGN ${cost} is required for this service.`);
+async function chargeWallet({ user, cost, service, description, reference }) {
+  const { wallet, userId } = await resolveUserWallet(user);
+
+  if (!wallet) {
+    const err = new Error("User billing wallet account could not be found. Check API credentials.");
+    err.statusCode = 404;
+    err.code = "WALLET_NOT_FOUND";
+    throw err;
+  }
+
+  const currentBalance = Number(wallet.balance ?? 0);
+
+  if (currentBalance < Number(cost)) {
+    const err = new Error(
+      `Insufficient wallet balance. NGN ${cost} is required, but available balance is NGN ${currentBalance}.`
+    );
     err.statusCode = 402;
     err.code = "INSUFFICIENT_BALANCE";
     throw err;
@@ -17,13 +79,13 @@ async function chargeWallet({ userId, cost, service, description, reference }) {
 
   const { updatedWallet, transaction } = await prisma.$transaction(async (tx) => {
     const w = await tx.wallet.update({
-      where: { userId },
+      where: { id: wallet.id },
       data: { balance: { decrement: cost } },
     });
 
     const t = await tx.transaction.create({
       data: {
-        userId,
+        userId: String(userId),
         type: "DEBIT",
         service,
         amount: cost,
@@ -36,21 +98,37 @@ async function chargeWallet({ userId, cost, service, description, reference }) {
     return { updatedWallet: w, transaction: t };
   });
 
-  return { updatedWallet, transaction };
+  return { updatedWallet, transaction, userId };
 }
 
 // Mayar da kudi ga wallet nan take idan upstream ya bada kuskure
 async function refundTransaction({ userId, cost, transactionId, reason }) {
-  await prisma.$transaction([
-    prisma.wallet.update({
-      where: { userId },
-      data: { balance: { increment: cost } },
-    }),
-    prisma.transaction.update({
-      where: { id: transactionId },
-      data: { status: "FAILED", description: `FAILED & REFUNDED: ${reason}` },
-    }),
-  ]).catch((err) => console.error("Refund processing failed:", err.message));
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Nemo wallet don maida kudin
+      const targetWallet = await tx.wallet.findFirst({
+        where: {
+          OR: [{ userId: String(userId) }, { id: String(userId) }],
+        },
+      });
+
+      if (targetWallet) {
+        await tx.wallet.update({
+          where: { id: targetWallet.id },
+          data: { balance: { increment: Number(cost) } },
+        });
+      }
+
+      if (transactionId) {
+        await tx.transaction.update({
+          where: { id: transactionId },
+          data: { status: "FAILED", description: `FAILED & REFUNDED: ${reason}` },
+        });
+      }
+    });
+  } catch (err) {
+    console.error("Refund processing failed:", err.message);
+  }
 }
 
 /* ======================================================
@@ -58,6 +136,10 @@ async function refundTransaction({ userId, cost, transactionId, reason }) {
    POST /api/v1/identity/nin/verify
 ====================================================== */
 exports.verifyNin = async (req, res) => {
+  let chargedTransaction = null;
+  let chargedUserId = null;
+  let chargedCost = 0;
+
   try {
     const user = req.user || req.apiKeyUser;
     const { nin, slipType = "Standard Slip", reference } = req.body;
@@ -71,7 +153,7 @@ exports.verifyNin = async (req, res) => {
       });
     }
 
-    if (!user || !user.id) {
+    if (!user) {
       return res.status(401).json({
         status: "error",
         code: "UNAUTHORIZED",
@@ -81,43 +163,51 @@ exports.verifyNin = async (req, res) => {
 
     const userTier = String(user.tier || (user.role === "DEVELOPER" ? "STANDARD" : "REGULAR")).toUpperCase();
 
-    const pricing = await prisma.servicePricing.findFirst({
-      where: {
-        category: "IDENTITY",
-        enabled: true,
-        tier: userTier,
-        OR: [
-          { serviceCode: "NIN_VERIFY" },
-          { serviceCode: { contains: "NIN" } },
-        ],
-      },
-    });
+    let pricing = null;
+    try {
+      pricing = await prisma.servicePricing.findFirst({
+        where: {
+          category: "IDENTITY",
+          enabled: true,
+          tier: userTier,
+          OR: [
+            { serviceCode: "NIN_VERIFY" },
+            { serviceCode: { contains: "NIN" } },
+          ],
+        },
+      });
+    } catch (_) {}
 
     const cost = Number(pricing?.sellingPrice || 100);
+    chargedCost = cost;
     const txRef = reference || `AYAX_NIN_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-    const { updatedWallet, transaction } = await chargeWallet({
-      userId: user.id,
+    const { updatedWallet, transaction, userId } = await chargeWallet({
+      user,
       cost,
       service: "NIN VERIFICATION",
       description: `NIN Verification for [${cleanNin}] (${slipType})`,
       reference: txRef,
     });
 
+    chargedTransaction = transaction;
+    chargedUserId = userId;
+
     const result = await abjiktech.verifyNIN(cleanNin, slipType);
 
-    if (!result.success) {
+    if (!result || !result.success) {
+      const failureReason = result?.message || "Gateway response failed";
       await refundTransaction({
-        userId: user.id,
-        cost,
-        transactionId: transaction.id,
-        reason: result.message || "Gateway response failed",
+        userId: chargedUserId,
+        cost: chargedCost,
+        transactionId: chargedTransaction.id,
+        reason: failureReason,
       });
 
       return res.status(502).json({
         status: "error",
         code: "GATEWAY_ERROR",
-        message: result.message || "NIN record not found or gateway unavailable. Wallet refunded.",
+        message: failureReason,
       });
     }
 
@@ -134,15 +224,25 @@ exports.verifyNin = async (req, res) => {
         reference: txRef,
         nin: cleanNin,
         slipType,
-        details: result,
+        details: result.data || result,
         amountCharged: cost,
         walletBalance: updatedWallet.balance,
       },
     });
   } catch (error) {
-    console.error("NIN Verification error:", error);
+    if (chargedTransaction && chargedUserId) {
+      await refundTransaction({
+        userId: chargedUserId,
+        cost: chargedCost,
+        transactionId: chargedTransaction.id,
+        reason: error.message,
+      });
+    }
+
+    console.error("NIN Verification error:", error.message);
     return res.status(error.statusCode || 500).json({
       status: "error",
+      code: error.code || "INTERNAL_ERROR",
       message: error.message || "An error occurred during NIN verification.",
     });
   }
@@ -153,6 +253,10 @@ exports.verifyNin = async (req, res) => {
    POST /api/v1/identity/nin/verify-phone
 ====================================================== */
 exports.verifyNinByPhone = async (req, res) => {
+  let chargedTransaction = null;
+  let chargedUserId = null;
+  let chargedCost = 0;
+
   try {
     const user = req.user || req.apiKeyUser;
     const { phone, slipType = "Standard Slip", reference } = req.body;
@@ -166,45 +270,61 @@ exports.verifyNinByPhone = async (req, res) => {
       });
     }
 
+    if (!user) {
+      return res.status(401).json({
+        status: "error",
+        code: "UNAUTHORIZED",
+        message: "Authentication is required.",
+      });
+    }
+
     const userTier = String(user.tier || (user.role === "DEVELOPER" ? "STANDARD" : "REGULAR")).toUpperCase();
 
-    const pricing = await prisma.servicePricing.findFirst({
-      where: {
-        category: "IDENTITY",
-        enabled: true,
-        tier: userTier,
-        OR: [
-          { serviceCode: "NIN_PHONE_VERIFY" },
-          { serviceCode: "NIN_VERIFY" },
-        ],
-      },
-    });
+    let pricing = null;
+    try {
+      pricing = await prisma.servicePricing.findFirst({
+        where: {
+          category: "IDENTITY",
+          enabled: true,
+          tier: userTier,
+          OR: [
+            { serviceCode: "NIN_PHONE_VERIFY" },
+            { serviceCode: "NIN_VERIFY" },
+          ],
+        },
+      });
+    } catch (_) {}
 
     const cost = Number(pricing?.sellingPrice || 100);
+    chargedCost = cost;
     const txRef = reference || `AYAX_PHN_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-    const { updatedWallet, transaction } = await chargeWallet({
-      userId: user.id,
+    const { updatedWallet, transaction, userId } = await chargeWallet({
+      user,
       cost,
       service: "NIN PHONE VERIFICATION",
       description: `NIN Phone Verification for [${cleanPhone}] (${slipType})`,
       reference: txRef,
     });
 
+    chargedTransaction = transaction;
+    chargedUserId = userId;
+
     const result = await abjiktech.verifyNINByPhone(cleanPhone, slipType);
 
-    if (!result.success) {
+    if (!result || !result.success) {
+      const failureReason = result?.message || "Phone lookup failed";
       await refundTransaction({
-        userId: user.id,
-        cost,
-        transactionId: transaction.id,
-        reason: result.message || "Phone lookup failed",
+        userId: chargedUserId,
+        cost: chargedCost,
+        transactionId: chargedTransaction.id,
+        reason: failureReason,
       });
 
       return res.status(502).json({
         status: "error",
         code: "GATEWAY_ERROR",
-        message: result.message || "No NIN linked to this phone number or gateway error. Wallet refunded.",
+        message: failureReason,
       });
     }
 
@@ -221,15 +341,25 @@ exports.verifyNinByPhone = async (req, res) => {
         reference: txRef,
         phone: cleanPhone,
         slipType,
-        details: result,
+        details: result.data || result,
         amountCharged: cost,
         walletBalance: updatedWallet.balance,
       },
     });
   } catch (error) {
-    console.error("NIN Phone Verification error:", error);
+    if (chargedTransaction && chargedUserId) {
+      await refundTransaction({
+        userId: chargedUserId,
+        cost: chargedCost,
+        transactionId: chargedTransaction.id,
+        reason: error.message,
+      });
+    }
+
+    console.error("NIN Phone Verification error:", error.message);
     return res.status(error.statusCode || 500).json({
       status: "error",
+      code: error.code || "INTERNAL_ERROR",
       message: error.message || "An error occurred during phone verification.",
     });
   }
@@ -240,6 +370,10 @@ exports.verifyNinByPhone = async (req, res) => {
    POST /api/v1/identity/bvn/verify
 ====================================================== */
 exports.verifyBvn = async (req, res) => {
+  let chargedTransaction = null;
+  let chargedUserId = null;
+  let chargedCost = 0;
+
   try {
     const user = req.user || req.apiKeyUser;
     const { bvn, slipType = "Standard Slip", reference } = req.body;
@@ -253,45 +387,61 @@ exports.verifyBvn = async (req, res) => {
       });
     }
 
+    if (!user) {
+      return res.status(401).json({
+        status: "error",
+        code: "UNAUTHORIZED",
+        message: "Authentication is required.",
+      });
+    }
+
     const userTier = String(user.tier || (user.role === "DEVELOPER" ? "STANDARD" : "REGULAR")).toUpperCase();
 
-    const pricing = await prisma.servicePricing.findFirst({
-      where: {
-        category: "IDENTITY",
-        enabled: true,
-        tier: userTier,
-        OR: [
-          { serviceCode: "BVN_VERIFY" },
-          { serviceCode: { contains: "BVN" } },
-        ],
-      },
-    });
+    let pricing = null;
+    try {
+      pricing = await prisma.servicePricing.findFirst({
+        where: {
+          category: "IDENTITY",
+          enabled: true,
+          tier: userTier,
+          OR: [
+            { serviceCode: "BVN_VERIFY" },
+            { serviceCode: { contains: "BVN" } },
+          ],
+        },
+      });
+    } catch (_) {}
 
     const cost = Number(pricing?.sellingPrice || 70);
+    chargedCost = cost;
     const txRef = reference || `AYAX_BVN_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-    const { updatedWallet, transaction } = await chargeWallet({
-      userId: user.id,
+    const { updatedWallet, transaction, userId } = await chargeWallet({
+      user,
       cost,
       service: "BVN VERIFICATION",
       description: `BVN Verification for [${cleanBvn}] (${slipType})`,
       reference: txRef,
     });
 
+    chargedTransaction = transaction;
+    chargedUserId = userId;
+
     const result = await abjiktech.verifyBVN(cleanBvn, slipType);
 
-    if (!result.success) {
+    if (!result || !result.success) {
+      const failureReason = result?.message || "BVN verification failed";
       await refundTransaction({
-        userId: user.id,
-        cost,
-        transactionId: transaction.id,
-        reason: result.message || "BVN verification failed",
+        userId: chargedUserId,
+        cost: chargedCost,
+        transactionId: chargedTransaction.id,
+        reason: failureReason,
       });
 
       return res.status(502).json({
         status: "error",
         code: "GATEWAY_ERROR",
-        message: result.message || "BVN record not found or gateway unavailable. Wallet refunded.",
+        message: failureReason,
       });
     }
 
@@ -308,15 +458,25 @@ exports.verifyBvn = async (req, res) => {
         reference: txRef,
         bvn: cleanBvn,
         slipType,
-        details: result,
+        details: result.data || result,
         amountCharged: cost,
         walletBalance: updatedWallet.balance,
       },
     });
   } catch (error) {
-    console.error("BVN Verification error:", error);
+    if (chargedTransaction && chargedUserId) {
+      await refundTransaction({
+        userId: chargedUserId,
+        cost: chargedCost,
+        transactionId: chargedTransaction.id,
+        reason: error.message,
+      });
+    }
+
+    console.error("BVN Verification error:", error.message);
     return res.status(error.statusCode || 500).json({
       status: "error",
+      code: error.code || "INTERNAL_ERROR",
       message: error.message || "An error occurred during BVN verification.",
     });
   }
@@ -327,6 +487,10 @@ exports.verifyBvn = async (req, res) => {
    POST /api/v1/identity/nin/validate
 ====================================================== */
 exports.validateNinIssue = async (req, res) => {
+  let chargedTransaction = null;
+  let chargedUserId = null;
+  let chargedCost = 0;
+
   try {
     const user = req.user || req.apiKeyUser;
     const { nin, issueType, errorType, reference } = req.body;
@@ -340,7 +504,14 @@ exports.validateNinIssue = async (req, res) => {
       });
     }
 
-    // Daidaita sunayen kurakurai zuwa na Abjiktech (no_record, simbank_validation, modification, photo_error)
+    if (!user) {
+      return res.status(401).json({
+        status: "error",
+        code: "UNAUTHORIZED",
+        message: "Authentication is required.",
+      });
+    }
+
     const rawType = String(errorType || issueType || "no_record").toLowerCase();
     let mappedError = "no_record";
 
@@ -351,43 +522,51 @@ exports.validateNinIssue = async (req, res) => {
 
     const userTier = String(user.tier || (user.role === "DEVELOPER" ? "STANDARD" : "REGULAR")).toUpperCase();
 
-    const pricing = await prisma.servicePricing.findFirst({
-      where: {
-        category: "IDENTITY",
-        enabled: true,
-        tier: userTier,
-        OR: [
-          { serviceCode: `NIN_VALIDATION_${mappedError.toUpperCase()}` },
-          { serviceCode: "NIN_VALIDATION" },
-        ],
-      },
-    });
+    let pricing = null;
+    try {
+      pricing = await prisma.servicePricing.findFirst({
+        where: {
+          category: "IDENTITY",
+          enabled: true,
+          tier: userTier,
+          OR: [
+            { serviceCode: `NIN_VALIDATION_${mappedError.toUpperCase()}` },
+            { serviceCode: "NIN_VALIDATION" },
+          ],
+        },
+      });
+    } catch (_) {}
 
     const cost = Number(pricing?.sellingPrice || 1500);
+    chargedCost = cost;
     const txRef = reference || `AYAX_VAL_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-    const { updatedWallet, transaction } = await chargeWallet({
-      userId: user.id,
+    const { updatedWallet, transaction, userId } = await chargeWallet({
+      user,
       cost,
       service: "NIN VALIDATION",
       description: `NIN Validation (${mappedError}) for [${cleanNin}]`,
       reference: txRef,
     });
 
+    chargedTransaction = transaction;
+    chargedUserId = userId;
+
     const result = await abjiktech.submitNinValidation({ nin: cleanNin, errorType: mappedError });
 
     if (!result || result.success === false) {
+      const failureReason = result?.message || "Validation submission rejected";
       await refundTransaction({
-        userId: user.id,
-        cost,
-        transactionId: transaction.id,
-        reason: result?.message || "Validation submission rejected",
+        userId: chargedUserId,
+        cost: chargedCost,
+        transactionId: chargedTransaction.id,
+        reason: failureReason,
       });
 
       return res.status(400).json({
         status: "error",
         code: "VALIDATION_FAILED",
-        message: result?.message || "Validation submission failed. Wallet refunded.",
+        message: failureReason,
       });
     }
 
@@ -412,9 +591,19 @@ exports.validateNinIssue = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("NIN Validation error:", error);
+    if (chargedTransaction && chargedUserId) {
+      await refundTransaction({
+        userId: chargedUserId,
+        cost: chargedCost,
+        transactionId: chargedTransaction.id,
+        reason: error.message,
+      });
+    }
+
+    console.error("NIN Validation error:", error.message);
     return res.status(error.statusCode || 500).json({
       status: "error",
+      code: error.code || "INTERNAL_ERROR",
       message: error.message || "An error occurred during validation submission.",
     });
   }
@@ -442,6 +631,10 @@ exports.checkNinValidationStatus = async (req, res) => {
    POST /api/v1/identity/ipe/submit
 ====================================================== */
 exports.submitIpeClearance = async (req, res) => {
+  let chargedTransaction = null;
+  let chargedUserId = null;
+  let chargedCost = 0;
+
   try {
     const user = req.user || req.apiKeyUser;
     const { trackingID, reference } = req.body;
@@ -455,36 +648,52 @@ exports.submitIpeClearance = async (req, res) => {
       });
     }
 
+    if (!user) {
+      return res.status(401).json({
+        status: "error",
+        code: "UNAUTHORIZED",
+        message: "Authentication is required.",
+      });
+    }
+
     const userTier = String(user.tier || "REGULAR").toUpperCase();
-    const pricing = await prisma.servicePricing.findFirst({
-      where: { category: "IDENTITY", enabled: true, tier: userTier, serviceCode: "IPE_CLEARANCE" },
-    });
+    let pricing = null;
+    try {
+      pricing = await prisma.servicePricing.findFirst({
+        where: { category: "IDENTITY", enabled: true, tier: userTier, serviceCode: "IPE_CLEARANCE" },
+      });
+    } catch (_) {}
 
     const cost = Number(pricing?.sellingPrice || 2000);
+    chargedCost = cost;
     const txRef = reference || `AYAX_IPE_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-    const { updatedWallet, transaction } = await chargeWallet({
-      userId: user.id,
+    const { updatedWallet, transaction, userId } = await chargeWallet({
+      user,
       cost,
       service: "IPE CLEARANCE",
       description: `IPE Clearance for Tracking ID [${cleanTrackingID}]`,
       reference: txRef,
     });
 
+    chargedTransaction = transaction;
+    chargedUserId = userId;
+
     const result = await abjiktech.submitIpeClearance(cleanTrackingID);
 
     if (!result || result.success === false) {
+      const failureReason = result?.message || "IPE clearance submission failed";
       await refundTransaction({
-        userId: user.id,
-        cost,
-        transactionId: transaction.id,
-        reason: result?.message || "IPE clearance submission failed",
+        userId: chargedUserId,
+        cost: chargedCost,
+        transactionId: chargedTransaction.id,
+        reason: failureReason,
       });
 
       return res.status(400).json({
         status: "error",
         code: "SUBMISSION_FAILED",
-        message: result?.message || "IPE clearance submission failed. Wallet refunded.",
+        message: failureReason,
       });
     }
 
@@ -501,9 +710,19 @@ exports.submitIpeClearance = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("IPE Clearance error:", error);
+    if (chargedTransaction && chargedUserId) {
+      await refundTransaction({
+        userId: chargedUserId,
+        cost: chargedCost,
+        transactionId: chargedTransaction.id,
+        reason: error.message,
+      });
+    }
+
+    console.error("IPE Clearance error:", error.message);
     return res.status(error.statusCode || 500).json({
       status: "error",
+      code: error.code || "INTERNAL_ERROR",
       message: error.message || "An error occurred during IPE clearance submission.",
     });
   }
@@ -528,6 +747,10 @@ exports.checkIpeStatus = async (req, res) => {
    POST /api/v1/identity/personalization/submit
 ====================================================== */
 exports.submitPersonalization = async (req, res) => {
+  let chargedTransaction = null;
+  let chargedUserId = null;
+  let chargedCost = 0;
+
   try {
     const user = req.user || req.apiKeyUser;
     const { trackingId, reference } = req.body;
@@ -541,36 +764,52 @@ exports.submitPersonalization = async (req, res) => {
       });
     }
 
+    if (!user) {
+      return res.status(401).json({
+        status: "error",
+        code: "UNAUTHORIZED",
+        message: "Authentication is required.",
+      });
+    }
+
     const userTier = String(user.tier || "REGULAR").toUpperCase();
-    const pricing = await prisma.servicePricing.findFirst({
-      where: { category: "IDENTITY", enabled: true, tier: userTier, serviceCode: "NIN_PERSONALIZATION" },
-    });
+    let pricing = null;
+    try {
+      pricing = await prisma.servicePricing.findFirst({
+        where: { category: "IDENTITY", enabled: true, tier: userTier, serviceCode: "NIN_PERSONALIZATION" },
+      });
+    } catch (_) {}
 
     const cost = Number(pricing?.sellingPrice || 1200);
+    chargedCost = cost;
     const txRef = reference || `AYAX_PERS_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-    const { updatedWallet, transaction } = await chargeWallet({
-      userId: user.id,
+    const { updatedWallet, transaction, userId } = await chargeWallet({
+      user,
       cost,
       service: "NIN PERSONALIZATION",
       description: `NIN Personalization for [${cleanTID}]`,
       reference: txRef,
     });
 
+    chargedTransaction = transaction;
+    chargedUserId = userId;
+
     const result = await abjiktech.submitPersonalization(cleanTID);
 
     if (!result || result.success === false) {
+      const failureReason = result?.message || "Personalization request failed";
       await refundTransaction({
-        userId: user.id,
-        cost,
-        transactionId: transaction.id,
-        reason: result?.message || "Personalization request failed",
+        userId: chargedUserId,
+        cost: chargedCost,
+        transactionId: chargedTransaction.id,
+        reason: failureReason,
       });
 
       return res.status(400).json({
         status: "error",
         code: "PERSONALIZATION_FAILED",
-        message: result?.message || "Personalization submission failed. Wallet refunded.",
+        message: failureReason,
       });
     }
 
@@ -587,9 +826,19 @@ exports.submitPersonalization = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Personalization error:", error);
+    if (chargedTransaction && chargedUserId) {
+      await refundTransaction({
+        userId: chargedUserId,
+        cost: chargedCost,
+        transactionId: chargedTransaction.id,
+        reason: error.message,
+      });
+    }
+
+    console.error("Personalization error:", error.message);
     return res.status(error.statusCode || 500).json({
       status: "error",
+      code: error.code || "INTERNAL_ERROR",
       message: error.message || "An error occurred during personalization submission.",
     });
   }

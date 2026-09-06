@@ -23,9 +23,12 @@ const ENDPOINTS = {
   PHONE_STANDARD: `${BASE_URL}/api/verification/nin_by_phone_standard.php`,
   PHONE_REGULAR: `${BASE_URL}/api/verification/nin_by_phone_regular.php`,
 
-  // BVN
+  // BVN by BVN
   BVN_PREMIUM: `${BASE_URL}/api/verification/bvn_premium_slip.php`,
   BVN_STANDARD: `${BASE_URL}/api/verification/bvn_full_details_slip.php`,
+
+  // BVN by Phone
+  BVN_PHONE: `${BASE_URL}/api/verification/bvn_by_phone.php`,
 
   // NIN Validation
   VALIDATION_SUBMIT: `${BASE_URL}/api/verification/validation.php`,
@@ -66,7 +69,7 @@ exports.verifyNIN = async (ninNumber, slipType = "Standard Slip") => {
 
     const d = res.data;
     const ok = d?.status === "success" || d?.success === true;
-    const r = d?.user_data || d?.data || d?.result || {};
+    const r = d?.user_data || d?.data?.details || d?.data || d?.result || {};
 
     if (!ok && d?.success === false) {
       return {
@@ -79,14 +82,15 @@ exports.verifyNIN = async (ninNumber, slipType = "Standard Slip") => {
     return {
       success: true,
       nin: r?.nin || ninNumber,
-      firstName: r?.firstName || r?.firstname || "",
-      surname: r?.surname || "",
-      middleName: r?.middleName || r?.middlename || "",
-      phone: r?.telephoneNo || r?.phone || "",
+      firstName: r?.firstName || r?.firstname || r?.first_name || "",
+      surname: r?.surname || r?.last_name || "",
+      middleName: r?.middleName || r?.middlename || r?.middle_name || "",
+      phone: r?.telephoneNo || r?.phone || r?.phoneNumber || "",
       gender: r?.gender || "",
-      dob: r?.birthDate || r?.dob || "",
-      photo: r?.photo || null,
-      slipUrl: d?.pdf_url || d?.slip_url || null,
+      dob: r?.birthDate || r?.dob || r?.birthdate || "",
+      photo: r?.photo || r?.image || null,
+      address: r?.residence_address || r?.address || "",
+      slipUrl: d?.pdf_url || d?.slip_url || r?.slip_url || r?.pdf_url || null,
       transactionId: d?.transaction_id || null,
       message: d?.message || "NIN verification completed successfully",
       raw: d,
@@ -114,7 +118,7 @@ exports.verifyNINByPhone = async (phone, slipType = "Standard Slip") => {
     const res = await axios.post(url, { api_key: API_KEY, phone: String(phone).trim() }, { timeout: 35000 });
     const d = res.data;
     const ok = d?.success === true || d?.status === "success" || d?.status === true;
-    const r = d?.data || d?.result || d;
+    const r = d?.user_data || d?.data?.details || d?.data || d?.result || d;
 
     return {
       success: ok,
@@ -127,7 +131,7 @@ exports.verifyNINByPhone = async (phone, slipType = "Standard Slip") => {
       dob: r?.birthdate || r?.dob || "",
       photo: r?.photo || r?.image || null,
       address: r?.residence_address || r?.address || "",
-      slipUrl: r?.slip_url || r?.pdf_url || null,
+      slipUrl: r?.slip_url || r?.pdf_url || d?.pdf_url || null,
       message: d?.message || "NIN lookup by phone completed",
       raw: d,
     };
@@ -137,7 +141,7 @@ exports.verifyNINByPhone = async (phone, slipType = "Standard Slip") => {
 };
 
 /* ======================================================
-   3. BVN VERIFICATION
+   3. BVN VERIFICATION (BY BVN NUMBER)
 ====================================================== */
 exports.verifyBVN = async (bvnNumber, slipType = "Standard Slip") => {
   try {
@@ -145,27 +149,135 @@ exports.verifyBVN = async (bvnNumber, slipType = "Standard Slip") => {
       ? ENDPOINTS.BVN_PREMIUM
       : ENDPOINTS.BVN_STANDARD;
 
-    const res = await axios.post(url, { api_key: API_KEY, bvn: String(bvnNumber).trim() }, { timeout: 35000 });
+    console.log(`[ABJIKTECH BVN REQUEST]: Posting to ${url} with BVN: ${bvnNumber}`);
+
+    const res = await axios.post(
+      url,
+      { api_key: API_KEY, bvn: String(bvnNumber).trim() },
+      { timeout: 45000 }
+    );
+
     const d = res.data;
     const ok = d?.success === true || d?.status === "success" || d?.status === true;
-    const r = d?.data || d?.result || d;
+    
+    // Ciro bayanan daga kowane lungu da PHP zai iya mayarwa
+    const r = d?.user_data || d?.data?.details || d?.data?.bvnDetails || d?.data || d?.result || d;
+
+    if (!ok && d?.success === false) {
+      return {
+        success: false,
+        message: d?.message || "BVN verification failed at upstream provider",
+        raw: d,
+      };
+    }
+
+    const firstName = r?.firstname || r?.first_name || r?.firstName || "";
+    const middleName = r?.middlename || r?.middle_name || r?.middleName || "";
+    const surname = r?.surname || r?.last_name || r?.lastName || "";
+    const fullName = r?.fullName || r?.name || `${firstName} ${middleName} ${surname}`.replace(/\s+/g, " ").trim();
 
     return {
       success: ok,
       bvn: r?.bvn || bvnNumber,
-      firstName: r?.firstname || r?.first_name || "",
-      surname: r?.surname || r?.last_name || "",
-      middleName: r?.middlename || r?.middle_name || "",
-      phone: r?.phoneNumber || r?.phone || "",
-      gender: r?.gender || "",
-      dob: r?.dateOfBirth || r?.dob || "",
-      photo: r?.image || r?.photo || null,
-      slipUrl: r?.slip_url || r?.pdf_url || null,
-      message: d?.message || "BVN verification completed",
+      fullName: fullName || "VERIFIED CUSTOMER",
+      firstName,
+      surname,
+      middleName,
+      phone: r?.phoneNumber || r?.phone || r?.phoneNumber1 || r?.phone_number1 || r?.telephoneno || "",
+      gender: (r?.gender || "").toUpperCase(),
+      dob: r?.dateOfBirth || r?.dob || r?.date_of_birth || r?.birthdate || "",
+      address: r?.residentialAddress || r?.residential_address || r?.address || r?.residence_address || "",
+      bank: r?.enrollmentBank || r?.enrollment_bank || r?.bank || "COMMERCIAL BANK",
+      branch: r?.enrollmentBranch || r?.enrollment_branch || r?.branch || "HEAD OFFICE",
+      nin: r?.nin || r?.ninNumber || "",
+      photo: r?.image || r?.photo || r?.passport || r?.base64Image || null,
+      slipUrl: d?.pdf_url || d?.slip_url || r?.slip_url || r?.pdf_url || null,
+      message: d?.message || "BVN verification completed successfully",
       raw: d,
     };
   } catch (err) {
-    return { success: false, message: err.response?.data?.message || err.message };
+    console.error("[ABJIKTECH BVN ERROR]:", err.response?.data || err.message);
+    return {
+      success: false,
+      message: err.response?.data?.message || err.message,
+    };
+  }
+};
+
+/* ======================================================
+   3B. BVN VERIFICATION (BY PHONE NUMBER)
+====================================================== */
+exports.verifyBVNByPhone = async (phone, slipType = "Standard Slip") => {
+  try {
+    const cleanPhone = String(phone).replace(/\D/g, "").trim();
+    console.log(`[ABJIKTECH BVN PHONE REQUEST]: Posting with Phone: ${cleanPhone}`);
+
+    // Binciko BVN ta lambar waya a Abjiktech
+    let res;
+    try {
+      res = await axios.post(
+        ENDPOINTS.BVN_PHONE,
+        { api_key: API_KEY, phone: cleanPhone },
+        { timeout: 45000 }
+      );
+    } catch (e) {
+      // Idan babu bvn_by_phone.php, gwada direct full details da lambar
+      res = await axios.post(
+        ENDPOINTS.BVN_STANDARD,
+        { api_key: API_KEY, bvn: cleanPhone, phone: cleanPhone },
+        { timeout: 45000 }
+      );
+    }
+
+    const d = res.data;
+    const ok = d?.success === true || d?.status === "success" || d?.status === true;
+    const r = d?.user_data || d?.data?.details || d?.data?.bvnDetails || d?.data || d?.result || d;
+
+    if (!ok && d?.success === false) {
+      return {
+        success: false,
+        message: d?.message || "No BVN found linked to this phone number",
+        raw: d,
+      };
+    }
+
+    const discoveredBvn = r?.bvn || r?.bvnNumber || "";
+    
+    // Idan an samu BVN kawai babu cikakkun bayanai, sake kiran full verification
+    if (discoveredBvn && (!r?.image && !r?.photo && !r?.firstname)) {
+      return await exports.verifyBVN(discoveredBvn, slipType);
+    }
+
+    const firstName = r?.firstname || r?.first_name || r?.firstName || "";
+    const middleName = r?.middlename || r?.middle_name || r?.middleName || "";
+    const surname = r?.surname || r?.last_name || r?.lastName || "";
+    const fullName = r?.fullName || r?.name || `${firstName} ${middleName} ${surname}`.replace(/\s+/g, " ").trim();
+
+    return {
+      success: ok,
+      bvn: discoveredBvn,
+      fullName: fullName || "VERIFIED CUSTOMER",
+      firstName,
+      surname,
+      middleName,
+      phone: cleanPhone,
+      gender: (r?.gender || "").toUpperCase(),
+      dob: r?.dateOfBirth || r?.dob || r?.date_of_birth || "",
+      address: r?.residentialAddress || r?.residential_address || r?.address || "",
+      bank: r?.enrollmentBank || r?.enrollment_bank || r?.bank || "COMMERCIAL BANK",
+      branch: r?.enrollmentBranch || r?.branch || "HEAD OFFICE",
+      nin: r?.nin || "",
+      photo: r?.image || r?.photo || r?.passport || null,
+      slipUrl: d?.pdf_url || d?.slip_url || r?.slip_url || r?.pdf_url || null,
+      message: d?.message || "BVN retrieved by phone successfully",
+      raw: d,
+    };
+  } catch (err) {
+    console.error("[ABJIKTECH BVN PHONE ERROR]:", err.response?.data || err.message);
+    return {
+      success: false,
+      message: err.response?.data?.message || err.message,
+    };
   }
 };
 
@@ -179,7 +291,7 @@ exports.submitNinValidation = async ({ nin, errorType }) => {
       {
         api_key: API_KEY,
         nin: String(nin).trim(),
-        error_type: errorType, // no_record, simbank_validation, modification, photo_error
+        error_type: errorType,
       },
       { timeout: 35000 }
     );

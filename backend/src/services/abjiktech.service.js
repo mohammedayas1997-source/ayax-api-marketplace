@@ -1,6 +1,5 @@
 const axios = require("axios");
 
-// Tabbatar da Base URL ko da an saka empty string ko an ƙara /api a Render
 let rawBase = (process.env.ABJIKTECH_BASE_URL || "").trim();
 if (!rawBase || !rawBase.startsWith("http")) {
   rawBase = "https://abjiktech.com.ng";
@@ -141,64 +140,12 @@ exports.verifyNINByPhone = async (phone, slipType = "Standard Slip") => {
 };
 
 /* ======================================================
-   3. BVN VERIFICATION (BY BVN NUMBER)
-====================================================== */
-exports.verifyBVN = async (bvnNumber, slipType = "Standard Slip") => {
-  try {
-    const url = String(slipType).toUpperCase().includes("PREMIUM")
-      ? ENDPOINTS.BVN_PREMIUM
-      : ENDPOINTS.BVN_STANDARD;
-
-    const res = await axios.post(
-      url,
-      { api_key: API_KEY, bvn: String(bvnNumber).trim() },
-      { timeout: 45000 }
-    );
-
-    const d = res.data;
-    const ok = d?.status === "success" || d?.success === true;
-    const r = d?.user_data || d?.data?.details || d?.data || {};
-
-    // Ciro direct PDF link na asali da Abjiktech ya samar
-    const officialPdfUrl =
-      d?.pdf_url ||
-      d?.slip_url ||
-      d?.download_url ||
-      r?.pdf_url ||
-      r?.slip_url ||
-      null;
-
-    return {
-      success: ok,
-      bvn: r?.bvn || bvnNumber,
-      fullName: r?.fullName || r?.name || `${r?.firstname || r?.first_name || ""} ${r?.surname || r?.last_name || ""}`.trim() || "Verified Citizen",
-      firstName: r?.firstname || r?.first_name || "",
-      surname: r?.surname || r?.last_name || "",
-      middleName: r?.middlename || r?.middle_name || "",
-      phone: r?.phone || r?.phoneNumber || r?.telephoneNo || "",
-      dob: r?.dob || r?.dateOfBirth || r?.birthdate || "",
-      address: r?.address || r?.residentialAddress || r?.residence_address || "",
-      bank: r?.bank || r?.enrollmentBank || "COMMERCIAL BANK",
-      branch: r?.branch || r?.enrollmentBranch || "YOLA",
-      photo: r?.photo || r?.image || null,
-      slipUrl: officialPdfUrl,
-      pdfUrl: officialPdfUrl,
-      raw: d,
-    };
-  } catch (err) {
-    console.error("[ABJIKTECH BVN ERROR]:", err.response?.data || err.message);
-    return { success: false, message: err.response?.data?.message || err.message };
-  }
-};
-
-/* ======================================================
-   3. BVN VERIFICATION (STRICT ABJIKTECH DOCUMENTATION)
+   3. BVN VERIFICATION (STRICT ABJIKTECH BASE64 SLIP)
 ====================================================== */
 exports.verifyBVN = async (bvnNumber, slipType = "Standard Slip") => {
   try {
     const isPremium = String(slipType).toUpperCase().includes("PREMIUM");
     const url = isPremium ? ENDPOINTS.BVN_PREMIUM : ENDPOINTS.BVN_STANDARD;
-
     const cleanBvn = String(bvnNumber).replace(/\D/g, "").trim();
 
     console.log(`[ABJIKTECH BVN] Calling ${url} with BVN: ${cleanBvn}`);
@@ -216,49 +163,37 @@ exports.verifyBVN = async (bvnNumber, slipType = "Standard Slip") => {
     );
 
     const d = res.data;
-    console.log("[ABJIKTECH RAW RESPONSE]:", JSON.stringify(d));
 
-    // Abjiktech yakan dawo da status: "success" ko success: true
+    // Ciro pdf_base64 da Abjiktech ya aiko
+    const pdfBase64 = d?.pdf_base64 || d?.data?.pdf_base64 || null;
     const isSuccess =
       d?.status === "success" ||
-      d?.success === true ||
-      d?.code === 200 ||
-      Boolean(d?.pdf_url || d?.slip_url);
+      d?.response_code === "00" ||
+      Boolean(pdfBase64);
 
     if (!isSuccess) {
       return {
         success: false,
-        message: d?.message || d?.error || "BVN verification failed at Abjiktech.",
+        message: d?.message || "BVN verification failed at Abjiktech.",
         raw: d,
       };
     }
 
-    // Ciro direct PDF URL da Abjiktech ya hada
-    const generatedPdfUrl =
-      d?.pdf_url ||
-      d?.slip_url ||
-      d?.download_url ||
-      d?.url ||
-      d?.data?.pdf_url ||
-      d?.data?.slip_url ||
-      null;
-
-    const r = d?.user_data || d?.data?.details || d?.data || {};
+    const r = d?.user_data || d?.data?.user_data || {};
 
     return {
       success: true,
       bvn: cleanBvn,
-      slipUrl: generatedPdfUrl,
-      pdfUrl: generatedPdfUrl,
-      fullName: r?.fullName || r?.name || "Verified Citizen",
-      firstName: r?.firstname || r?.first_name || "",
-      surname: r?.surname || r?.last_name || "",
-      middleName: r?.middlename || r?.middle_name || "",
-      phone: r?.phone || r?.phoneNumber || "",
-      dob: r?.dob || r?.dateOfBirth || "",
-      address: r?.address || r?.residentialAddress || "",
-      photo: r?.photo || r?.image || null,
-      message: d?.message || "BVN slip generated successfully.",
+      pdf_base64: pdfBase64, // Base64 din PDF na asali
+      userData: r,
+      fullName: `${r?.first_name || ""} ${r?.middle_name || ""} ${r?.last_name || ""}`.trim() || "Verified Citizen",
+      firstName: r?.first_name || "",
+      surname: r?.last_name || "",
+      middleName: r?.middle_name || "",
+      phone: r?.phone_number || "",
+      dob: r?.date_of_birth || "",
+      address: r?.address || "",
+      message: d?.message || "BVN slip generated successfully",
       raw: d,
     };
   } catch (err) {

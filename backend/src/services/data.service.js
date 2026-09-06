@@ -1,11 +1,10 @@
 const prisma = require("../config/prisma");
 const transactionService = require("./transaction.service");
 const walletService = require("./wallet.service");
-const providerService = require("./provider.service");
 const apiUsageService = require("./apiUsage.service");
 const calculateProfit = require("../helpers/calculateProfit");
-const clubkonnect = require("./clubkonnect.service");
 const { emitEvent } = require("../config/socket");
+const axios = require("axios");
 
 // Helper na tsaftace lambar waya zuwa 080...
 const cleanLocalPhone = (phone = "") => {
@@ -19,8 +18,136 @@ const cleanLocalPhone = (phone = "") => {
   return digits;
 };
 
+// Helper: Duba balance na kowane Provider don Data
+const getProviderBalances = async () => {
+  const balances = {
+    BILALSADA: 0,
+    VTPASS: 0,
+    SMARTSMS: 0,
+  };
+
+  if (process.env.BILALSADA_API_TOKEN) {
+    try {
+      const res = await axios.get("https://bilalsadasub.com/api/user", {
+        headers: { Authorization: `Token ${process.env.BILALSADA_API_TOKEN}` },
+        timeout: 4000,
+      });
+      balances.BILALSADA = Number(res.data?.user?.wallet_balance || res.data?.wallet || 0);
+    } catch (_) {
+      balances.BILALSADA = 0;
+    }
+  }
+
+  if (process.env.VTPASS_API_KEY && process.env.VTPASS_SECRET_KEY) {
+    try {
+      const res = await axios.get("https://api-service.vtpass.com/api/balance", {
+        headers: {
+          "api-key": process.env.VTPASS_API_KEY,
+          "secret-key": process.env.VTPASS_SECRET_KEY,
+        },
+        timeout: 4000,
+      });
+      balances.VTPASS = Number(res.data?.contents?.balance || 0);
+    } catch (_) {
+      balances.VTPASS = 0;
+    }
+  }
+
+  if (process.env.SMARTSMS_API_TOKEN) {
+    try {
+      const res = await axios.get(
+        `https://smartsmssolutions.com/api/json.php?token=${process.env.SMARTSMS_API_TOKEN}&type=balance`,
+        { timeout: 4000 }
+      );
+      balances.SMARTSMS = Number(res.data?.balance || 0);
+    } catch (_) {
+      balances.SMARTSMS = 0;
+    }
+  }
+
+  return balances;
+};
+
+// Helper: Tura Data ta hanyar API da aka zaba
+const dispatchDataAPI = async ({ provider, network, phone, planId, numericMB, reference }) => {
+  const normNet = network.toUpperCase();
+
+  if (provider === "BILALSADA") {
+    const netMap = { MTN: 1, GLO: 2, "9MOBILE": 3, AIRTEL: 4 };
+    const res = await axios.post(
+      "https://bilalsadasub.com/api/data",
+      {
+        network: netMap[normNet] || 1,
+        phone,
+        plan: Number(planId || numericMB),
+        "request-id": reference,
+      },
+      {
+        headers: { Authorization: `Token ${process.env.BILALSADA_API_TOKEN}` },
+        timeout: 35000,
+      }
+    );
+    if (res.data?.status === "success" || res.data?.status === "process") {
+      return { success: true, provider: "BILALSADA", raw: res.data };
+    }
+    throw new Error(res.data?.message || "Bilalsadasub data dispatch failed");
+  }
+
+  if (provider === "VTPASS") {
+    const serviceMap = {
+      MTN: "mtn-data",
+      AIRTEL: "airtel-data",
+      GLO: "glo-data",
+      "9MOBILE": "etisalat-data",
+    };
+    const res = await axios.post(
+      "https://api-service.vtpass.com/api/pay",
+      {
+        request_id: reference,
+        serviceID: serviceMap[normNet] || "glo-data",
+        billersCode: phone,
+        variation_code: String(planId || numericMB),
+        phone,
+      },
+      {
+        headers: {
+          "api-key": process.env.VTPASS_API_KEY,
+          "secret-key": process.env.VTPASS_SECRET_KEY,
+        },
+        timeout: 35000,
+      }
+    );
+    if (res.data?.code === "000") {
+      return { success: true, provider: "VTPASS", raw: res.data };
+    }
+    throw new Error(res.data?.response_description || "VTpass data dispatch failed");
+  }
+
+  if (provider === "SMARTSMS") {
+    const netMap = { MTN: "1", AIRTEL: "2", GLO: "3", "9MOBILE": "4" };
+    const res = await axios.post(
+      "https://smartsmssolutions.com/api/json.php",
+      {
+        token: process.env.SMARTSMS_API_TOKEN,
+        type: "internet_data",
+        network: netMap[normNet] || "3",
+        phone,
+        product_code: String(planId || numericMB),
+        ref: reference,
+      },
+      { timeout: 35000 }
+    );
+    if (res.data?.code === "1000" || res.data?.status === "success") {
+      return { success: true, provider: "SMARTSMS", raw: res.data };
+    }
+    throw new Error(res.data?.message || "SmartSMS data dispatch failed");
+  }
+
+  throw new Error(`Unsupported API data provider: ${provider}`);
+};
+
 /* ======================================================
-   1. PURCHASE DATA BUNDLE (SAFE DISPATCH & PRE-ROUTE CHECK)
+   1. PURCHASE DATA BUNDLE
 ====================================================== */
 exports.purchaseData = async ({
   user,
@@ -33,10 +160,10 @@ exports.purchaseData = async ({
   reference,
 }) => {
   const targetPhone = cleanLocalPhone(phone || phoneNumber || "");
-  const resolvedNetwork = String(network || "MTN").toUpperCase();
+  const resolvedNetwork = String(network || "MTN").toUpperCase().trim();
   const userTier = String(user?.tier || "REGULAR").toUpperCase();
 
-  // 1. NEMI FARASHI (Daga ServicePricing da ServicePlan)
+  // 1. NEMI FARASHI
   const [pricingPlan, servicePlan] = await Promise.all([
     prisma.servicePricing?.findFirst({
       where: {
@@ -74,7 +201,7 @@ exports.purchaseData = async ({
     throw err;
   }
 
-  // 2. TABBATAR DA WALLET BALANCE (Ba tare da cirewa ba tukuna)
+  // 2. TABBATAR DA WALLET BALANCE
   const wallet = await walletService.getOrCreateWallet(user.id);
   if (Number(wallet.balance) < finalAmount) {
     const err = new Error(`Insufficient wallet balance. Required: ₦${finalAmount}`);
@@ -83,37 +210,33 @@ exports.purchaseData = async ({
     throw err;
   }
 
-  // 3. PRE-FLIGHT CHECK: DUBA LAFIYAR GSM MODEM & SIM KAFIN CIKAKKEN AIKI
-  const activeDevice = await prisma.gsmDevice.findFirst({
-    where: {
-      status: "ONLINE",
-      lastSeen: { gte: new Date(Date.now() - 2 * 60 * 1000) }, // Dole ya kasance ya yi magana a minti 2 da suka wuce
-    },
-    include: { sims: true },
-    orderBy: { lastSeen: "desc" },
-  });
+  // 3. PRE-FLIGHT CHECK: GSM MODEM (MTN DA AIRTEL KADAI)
+  const isGsmEligible = resolvedNetwork === "MTN" || resolvedNetwork === "AIRTEL";
+  let activeDevice = null;
+  let targetSim = null;
 
-  const targetSim = activeDevice?.sims?.find(
-    (s) =>
-      s.status === "ACTIVE" &&
-      (s.carrierName?.toUpperCase().includes(resolvedNetwork) ||
-       s.displayName?.toUpperCase().includes(resolvedNetwork))
-  );
+  if (isGsmEligible) {
+    activeDevice = await prisma.gsmDevice.findFirst({
+      where: {
+        status: "ONLINE",
+        lastSeen: { gte: new Date(Date.now() - 2 * 60 * 1000) },
+      },
+      include: { sims: true },
+      orderBy: { lastSeen: "desc" },
+    });
 
-  const isGatewayReady = Boolean(activeDevice && targetSim);
-  const isFallbackConfigured = Boolean(process.env.CLUBKONNECT_API_KEY || process.env.CLUBKONNECT_USER_ID);
-
-  // Idan Gateway ba ya aiki kuma babu hanyar API na biyu, KADA A CIRE KO SISI
-  if (!isGatewayReady && !isFallbackConfigured) {
-    const err = new Error(`${resolvedNetwork} network route is currently unavailable. No funds were debited from your wallet.`);
-    err.statusCode = 503;
-    err.code = "ROUTE_UNAVAILABLE";
-    throw err;
+    targetSim = activeDevice?.sims?.find(
+      (s) =>
+        s.status === "ACTIVE" &&
+        (s.carrierName?.toUpperCase().includes(resolvedNetwork) ||
+         s.displayName?.toUpperCase().includes(resolvedNetwork))
+    );
   }
 
+  const isGatewayReady = Boolean(isGsmEligible && activeDevice && targetSim);
   const txReference = reference || `AYAX_DATA_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-  // 4. CREATE TRANSACTION RECORD
+  // 4. CREATE TRANSACTION RECORD & DEBIT WALLET
   const transaction = await transactionService.createTransaction({
     userId: user.id,
     type: "DEBIT",
@@ -130,7 +253,6 @@ exports.purchaseData = async ({
     },
   });
 
-  // 5. CIRE KUDI A WALLET (Yanzu ne aka tabbatar da cewa akwai kofa mai aiki)
   await walletService.debitWallet({
     userId: user.id,
     amount: finalAmount,
@@ -139,220 +261,88 @@ exports.purchaseData = async ({
     module: "DATA",
   });
 
-  // Gano Adadin Data (MB, GB da Haruffan Package)
+  // Tace girman bundle
   let raw = String(planCode || "").toUpperCase().trim();
   let numericMB = "1000";
-  let mtnSmeCode = "SMEB"; // Default 1GB
+  let mtnSmeCode = "SMEB";
   let airtelPlanText = "1GB";
 
-  if (raw === "500" || raw.includes("500MB") || raw.includes("500")) {
+  if (raw.includes("500")) {
     numericMB = "500";
     mtnSmeCode = "SMEA";
     airtelPlanText = "500MB";
-  } else if (raw === "1" || raw.includes("1GB") || raw.includes("1000") || raw.includes("1.0GB")) {
-    numericMB = "1000";
-    mtnSmeCode = "SMEB";
-    airtelPlanText = "1GB";
-  } else if (raw === "2" || raw.includes("2GB") || raw.includes("2000") || raw.includes("2.0GB")) {
+  } else if (raw.includes("2GB") || raw.includes("2000")) {
     numericMB = "2000";
     mtnSmeCode = "SMEC";
     airtelPlanText = "2GB";
-  } else if (raw === "3" || raw.includes("3GB") || raw.includes("3000")) {
+  } else if (raw.includes("3GB") || raw.includes("3000")) {
     numericMB = "3000";
     mtnSmeCode = "SMED";
     airtelPlanText = "3GB";
-  } else if (raw === "5" || raw.includes("5GB") || raw.includes("5000")) {
+  } else if (raw.includes("5GB") || raw.includes("5000")) {
     numericMB = "5000";
     mtnSmeCode = "SMEE";
     airtelPlanText = "5GB";
-  } else if (raw === "10" || raw.includes("10GB") || raw.includes("10000")) {
+  } else if (raw.includes("10GB") || raw.includes("10000")) {
     numericMB = "10000";
     mtnSmeCode = "SMEF";
     airtelPlanText = "10GB";
-  } else {
-    const extracted = raw.replace(/[^0-9]/g, "");
-    if (extracted === "1") {
-      numericMB = "1000";
-      mtnSmeCode = "SMEB";
-    } else if (extracted === "2") {
-      numericMB = "2000";
-      mtnSmeCode = "SMEC";
-    } else if (extracted === "3") {
-      numericMB = "3000";
-      mtnSmeCode = "SMED";
-    } else if (extracted === "5") {
-      numericMB = "5000";
-      mtnSmeCode = "SMEE";
-    } else if (extracted === "10") {
-      numericMB = "10000";
-      mtnSmeCode = "SMEF";
-    } else {
-      numericMB = extracted || "1000";
-      mtnSmeCode = "SMEB";
-    }
-    airtelPlanText = `${numericMB}MB`;
   }
 
   try {
-    // 6. TAFARKI NA 1: GSM MODEM / GATEWAY (IDAN YANA A SHIRYE)
+    // 5. ROUTE 1: GSM GATEWAY (MTN DA AIRTEL KADAI)
     if (isGatewayReady) {
       const slotIndex = Number(targetSim.slotIndex ?? 0);
       const pin = process.env.GSM_DATA_PIN || "1997";
 
-      // Duba Yawan Ayyukan Da Ke Layi (Queue Load Checker)
-      const pendingJobsCount = await prisma.gsmCommand.count({
-        where: {
-          deviceId: activeDevice.id,
-          status: { in: ["PENDING", "PROCESSING"] },
-          createdAt: { gte: new Date(Date.now() - 60 * 1000) },
-        },
-      });
+      let smsRecipient = "312";
+      let smsMessage = "";
 
-      const planIdentifier = `${pricingPlan?.serviceCode || ""} ${pricingPlan?.serviceName || ""} ${planCode}`.toUpperCase();
-      let commandPayload = null;
-      let socketPayload = null;
-
-      // ==========================================
-      // A. YANAYIN USSD (IDAN LAYI YANA DA SAUKI < 3)
-      // ==========================================
-      if (pendingJobsCount < 3) {
-        let ussdCode = `*312*${targetPhone}*${numericMB}*${pin}#`;
-        let steps = [targetPhone, numericMB, pin];
-
-        if (resolvedNetwork === "MTN") {
-          if (planIdentifier.includes("CG") || planIdentifier.includes("CORP")) {
-            ussdCode = `*460*6*1*${targetPhone}*${numericMB}*${pin}#`;
-            steps = ["6", "1", targetPhone, numericMB, pin];
-          } else {
-            ussdCode = `*461*1*${targetPhone}*${numericMB}*${pin}#`;
-            steps = ["1", targetPhone, numericMB, pin];
-          }
-        } else if (resolvedNetwork === "AIRTEL") {
-          ussdCode = `*312*${targetPhone}*${numericMB}*${pin}#`;
-          steps = [targetPhone, numericMB, pin];
-        } else if (resolvedNetwork === "GLO") {
-          ussdCode = `*127*${numericMB}*${targetPhone}#`;
-          steps = [numericMB, targetPhone];
-        } else if (resolvedNetwork === "9MOBILE") {
-          ussdCode = `*229*${numericMB}*${targetPhone}#`;
-          steps = [numericMB, targetPhone];
-        }
-
-        commandPayload = {
-          reference: transaction.reference,
-          deviceId: activeDevice.id,
-          type: "USSD",
-          service: "DATA",
-          ussdCode,
-          code: ussdCode,
-          steps,
-          phone: targetPhone,
-          targetPhone,
-          slotIndex,
-          simSlot: slotIndex,
-          amount: finalAmount,
-          network: resolvedNetwork,
-        };
-
-        socketPayload = {
-          commandId: transaction.reference,
-          reference: transaction.reference,
-          type: "USSD",
-          ussdCode,
-          code: ussdCode,
-          steps,
-          slotIndex,
-          simSlot: slotIndex,
-          payload: commandPayload,
-        };
-
-        await prisma.gsmCommand.create({
-          data: {
-            reference: transaction.reference,
-            deviceId: activeDevice.id,
-            type: "USSD",
-            status: "PENDING",
-            payload: commandPayload,
-          },
-        }).catch(() => null);
-
-        console.log(`⚡ [MODE: USSD FIRST] Ref: ${transaction.reference} -> ${ussdCode} on Slot ${slotIndex}`);
-      } 
-      // ==========================================
-      // B. YANAYIN SMS (IDAN CUNKOSO YA YI YAWA >= 3)
-      // ==========================================
-      else {
-        let smsRecipient = "312";
-        let smsMessage = "";
-
-        if (resolvedNetwork === "MTN") {
-          smsRecipient = "312";
-          if (planIdentifier.includes("CG") || planIdentifier.includes("CORP")) {
-            smsMessage = `Transfer ${targetPhone} ${numericMB} ${pin}`;
-          } else {
-            smsMessage = `${mtnSmeCode} ${targetPhone} ${pin}`;
-          }
-        } else if (resolvedNetwork === "AIRTEL") {
-          smsRecipient = "141";
-          smsMessage = `SHARE ${targetPhone} ${airtelPlanText} ${pin}`;
-        } else if (resolvedNetwork === "GLO") {
-          smsRecipient = "127";
-          smsMessage = `Share ${targetPhone}`;
-        } else if (resolvedNetwork === "9MOBILE") {
-          smsRecipient = "229";
-          smsMessage = `SMART ${numericMB} ${targetPhone}`;
-        }
-
-        commandPayload = {
-          reference: transaction.reference,
-          deviceId: activeDevice.id,
-          type: "SEND_SMS",
-          action: "SEND_SMS",
-          service: "DATA",
-          recipient: smsRecipient,
-          sendTo: smsRecipient,
-          destination: smsRecipient,
-          phoneNumber: smsRecipient,
-          phone: smsRecipient,
-          message: smsMessage,
-          smsBody: smsMessage,
-          smsText: smsMessage,
-          targetPhone,
-          slotIndex,
-          simSlot: slotIndex,
-          amount: finalAmount,
-          network: resolvedNetwork,
-        };
-
-        socketPayload = {
-          commandId: transaction.reference,
-          reference: transaction.reference,
-          type: "SEND_SMS",
-          action: "SEND_SMS",
-          recipient: smsRecipient,
-          sendTo: smsRecipient,
-          message: smsMessage,
-          smsBody: smsMessage,
-          slotIndex,
-          simSlot: slotIndex,
-          payload: commandPayload,
-        };
-
-        await prisma.gsmCommand.create({
-          data: {
-            reference: transaction.reference,
-            deviceId: activeDevice.id,
-            type: "SEND_SMS",
-            status: "PENDING",
-            payload: commandPayload,
-          },
-        }).catch(() => null);
-
-        console.log(`📨 [MODE: SMS QUEUE LOAD] Ref: ${transaction.reference} -> ${smsRecipient} "${smsMessage}" on Slot ${slotIndex}`);
+      if (resolvedNetwork === "MTN") {
+        smsRecipient = "312";
+        smsMessage = `${mtnSmeCode} ${targetPhone} ${pin}`;
+      } else if (resolvedNetwork === "AIRTEL") {
+        smsRecipient = "141";
+        smsMessage = `SHARE ${targetPhone} ${airtelPlanText} ${pin}`;
       }
 
+      const commandPayload = {
+        reference: transaction.reference,
+        commandId: transaction.reference,
+        id: transaction.reference,
+        deviceId: activeDevice.id,
+        type: "SEND_SMS",
+        action: "SEND_SMS",
+        service: "DATA",
+        recipient: smsRecipient,
+        sendTo: smsRecipient,
+        destination: smsRecipient,
+        phone: smsRecipient,
+        phoneNumber: smsRecipient,
+        message: smsMessage,
+        smsBody: smsMessage,
+        smsText: smsMessage,
+        targetPhone,
+        slotIndex,
+        simSlot: slotIndex,
+        amount: finalAmount,
+        network: resolvedNetwork,
+      };
+
+      await prisma.gsmCommand.create({
+        data: {
+          reference: transaction.reference,
+          deviceId: activeDevice.id,
+          type: "SEND_SMS",
+          status: "PENDING",
+          payload: commandPayload,
+        },
+      }).catch(() => null);
+
       try {
-        emitEvent("gateway-command", socketPayload, activeDevice.id);
+        emitEvent("gateway-command", commandPayload, activeDevice.id);
+        emitEvent("command", commandPayload, activeDevice.id);
+        console.log(`📱 [DATA SMS DISPATCH] Ref: ${transaction.reference} -> SIM Slot ${slotIndex} (${smsRecipient}: ${smsMessage})`);
       } catch (socketErr) {
         console.warn("Gateway socket warning:", socketErr.message);
       }
@@ -381,52 +371,76 @@ exports.purchaseData = async ({
       };
     }
 
-    // 7. TAFARKI NA 2: AUTOMATIC FALLBACK ZUWA CLUBKONNECT
-    console.log(`[DATA: CLUBKONNECT] Modem offline or SIM not found. Forwarding ${transaction.reference} to Clubkonnect API...`);
+    // 6. ROUTE 2: SMART CASCADING API (GLO, 9MOBILE, KO IDAN SIM NA MTN/AIRTEL YA KASANCE OFFLINE)
+    const balances = await getProviderBalances();
+    const providerErrors = [];
 
-    const ckResult = await clubkonnect.vendData({
-      network: resolvedNetwork,
-      phone: targetPhone,
-      planCode: planCode || numericMB,
-      reference: transaction.reference,
-    });
+    const candidates = [
+      { name: "BILALSADA", balance: balances.BILALSADA },
+      { name: "VTPASS", balance: balances.VTPASS },
+      { name: "SMARTSMS", balance: balances.SMARTSMS },
+    ]
+      .filter((p) => p.balance >= finalAmount)
+      .map((p) => p.name);
 
-    if (ckResult.success) {
-      await transactionService.updateTransactionStatus({
-        reference: transaction.reference,
-        status: "SUCCESSFUL",
-        description: `${resolvedNetwork} Data (${planCode}) to ${targetPhone} via Clubkonnect`,
-      });
-
-      await apiUsageService.createUsageLog({
-        userId: user.id,
-        endpoint: "/api/v1/data/buy",
-        method: "POST",
-        amount: finalAmount,
-        status: "SUCCESSFUL",
-      });
-
-      const costPrice = pricingPlan?.costPrice || servicePlan?.costPrice || finalAmount * 0.97;
-      const profit = calculateProfit({ costPrice, sellingPrice: finalAmount });
-
-      return {
-        success: true,
-        reference: transaction.reference,
-        route: "CLUBKONNECT",
-        network: resolvedNetwork,
-        phone: targetPhone,
-        planCode: numericMB,
-        amount: finalAmount,
-        status: "SUCCESSFUL",
-        profit,
-        providerResult: ckResult.rawResponse,
-      };
-    } else {
-      throw new Error(JSON.stringify(ckResult.rawResponse || "Clubkonnect vending failed."));
+    if (candidates.length === 0) {
+      if (process.env.BILALSADA_API_TOKEN) candidates.push("BILALSADA");
+      if (process.env.VTPASS_API_KEY) candidates.push("VTPASS");
+      if (process.env.SMARTSMS_API_TOKEN) candidates.push("SMARTSMS");
     }
+
+    for (const provider of candidates) {
+      try {
+        console.log(`🌐 [DATA ROUTING]: Trying ${provider} for ${resolvedNetwork} Data to ${targetPhone}...`);
+        const res = await dispatchDataAPI({
+          provider,
+          network: resolvedNetwork,
+          phone: targetPhone,
+          planId: servicePlan?.planCode || planCode || numericMB,
+          numericMB,
+          reference: transaction.reference,
+        });
+
+        if (res.success) {
+          await transactionService.updateTransactionStatus({
+            reference: transaction.reference,
+            status: "SUCCESSFUL",
+            description: `${resolvedNetwork} Data (${planCode}) to ${targetPhone} via ${provider}`,
+          });
+
+          await apiUsageService.createUsageLog({
+            userId: user.id,
+            endpoint: "/api/v1/data/buy",
+            method: "POST",
+            amount: finalAmount,
+            status: "SUCCESSFUL",
+          });
+
+          const costPrice = pricingPlan?.costPrice || servicePlan?.costPrice || finalAmount * 0.97;
+          const profit = calculateProfit({ costPrice, sellingPrice: finalAmount });
+
+          return {
+            success: true,
+            reference: transaction.reference,
+            route: provider,
+            network: resolvedNetwork,
+            phone: targetPhone,
+            planCode: numericMB,
+            amount: finalAmount,
+            status: "SUCCESSFUL",
+            profit,
+            providerResult: res.raw,
+          };
+        }
+      } catch (err) {
+        console.warn(`⚠️ [DATA API FAIL]: ${provider} - ${err.message}. Cascading to next...`);
+        providerErrors.push(`${provider}: ${err.message}`);
+      }
+    }
+
+    throw new Error(`Data delivery failed across all APIs: ${providerErrors.join(" | ")}`);
   } catch (err) {
-    // 8. AUTO-REFUND NAN TAKE IDAN AN SAMU MATSALA BAYAN DEBIT
-    console.error("Data purchase failure, processing refund:", err.message);
+    console.error("Data purchase error, executing refund:", err.message);
 
     await walletService.creditWallet({
       userId: user.id,
@@ -439,7 +453,7 @@ exports.purchaseData = async ({
     await transactionService.updateTransactionStatus({
       reference: transaction.reference,
       status: "FAILED",
-      description: err.message || "Provider vending error",
+      description: err.message || "Provider delivery error",
     });
 
     await apiUsageService.createUsageLog({
@@ -450,7 +464,7 @@ exports.purchaseData = async ({
       status: "FAILED",
     });
 
-    const error = new Error(err.message || "Data provider failure.");
+    const error = new Error(err.message || "Data provider delivery failed.");
     error.statusCode = err.statusCode || 502;
     error.code = err.code || "PROVIDER_DELIVERY_FAILED";
     throw error;
@@ -474,7 +488,7 @@ exports.getDataTransactions = async (userId) => {
 };
 
 /* ======================================================
-   3. GET AVAILABLE PLANS (CATALOG)
+   3. GET AVAILABLE PLANS
 ====================================================== */
 exports.getDataPlans = async (network) => {
   const whereClause = {

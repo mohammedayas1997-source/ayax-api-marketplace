@@ -1,6 +1,6 @@
 const prisma = require("../config/prisma");
 const { emitEvent } = require("../config/socket");
-const clubkonnect = require("../services/clubkonnect.service");
+const axios = require("axios");
 
 // Tsoffin discounts a matsayin madogara (Fallback) idan ba a saita a Database ba
 const DEFAULT_DISCOUNTS = {
@@ -21,8 +21,136 @@ const cleanLocalPhone = (phone = "") => {
   return digits;
 };
 
+// Helper: Duba balance na kowane provider don Airtime
+const getProviderBalances = async () => {
+  const balances = {
+    BILALSADA: 0,
+    VTPASS: 0,
+    SMARTSMS: 0,
+  };
+
+  if (process.env.BILALSADA_API_TOKEN) {
+    try {
+      const res = await axios.get("https://bilalsadasub.com/api/user", {
+        headers: { Authorization: `Token ${process.env.BILALSADA_API_TOKEN}` },
+        timeout: 4000,
+      });
+      balances.BILALSADA = Number(res.data?.user?.wallet_balance || res.data?.wallet || 0);
+    } catch (_) {
+      balances.BILALSADA = 0;
+    }
+  }
+
+  if (process.env.VTPASS_API_KEY && process.env.VTPASS_SECRET_KEY) {
+    try {
+      const res = await axios.get("https://api-service.vtpass.com/api/balance", {
+        headers: {
+          "api-key": process.env.VTPASS_API_KEY,
+          "secret-key": process.env.VTPASS_SECRET_KEY,
+        },
+        timeout: 4000,
+      });
+      balances.VTPASS = Number(res.data?.contents?.balance || 0);
+    } catch (_) {
+      balances.VTPASS = 0;
+    }
+  }
+
+  if (process.env.SMARTSMS_API_TOKEN) {
+    try {
+      const res = await axios.get(
+        `https://smartsmssolutions.com/api/json.php?token=${process.env.SMARTSMS_API_TOKEN}&type=balance`,
+        { timeout: 4000 }
+      );
+      balances.SMARTSMS = Number(res.data?.balance || 0);
+    } catch (_) {
+      balances.SMARTSMS = 0;
+    }
+  }
+
+  return balances;
+};
+
+// Helper: Tura Airtime ta hanyar API da aka zaba
+const dispatchAirtimeAPI = async ({ provider, network, phone, amount, reference }) => {
+  const normNet = network.toUpperCase();
+
+  if (provider === "BILALSADA") {
+    const netMap = { MTN: 1, GLO: 2, "9MOBILE": 3, AIRTEL: 4 };
+    const res = await axios.post(
+      "https://bilalsadasub.com/api/topup",
+      {
+        network: netMap[normNet] || 1,
+        phone,
+        amount: Number(amount),
+        plan_type: "VTU",
+        "request-id": reference,
+      },
+      {
+        headers: { Authorization: `Token ${process.env.BILALSADA_API_TOKEN}` },
+        timeout: 30000,
+      }
+    );
+    if (res.data?.status === "success" || res.data?.status === "process") {
+      return { success: true, provider: "BILALSADA", raw: res.data };
+    }
+    throw new Error(res.data?.message || "Bilalsadasub airtime failed");
+  }
+
+  if (provider === "VTPASS") {
+    const serviceMap = {
+      MTN: "mtn",
+      AIRTEL: "airtel",
+      GLO: "glo",
+      "9MOBILE": "etisalat",
+    };
+    const res = await axios.post(
+      "https://api-service.vtpass.com/api/pay",
+      {
+        request_id: reference,
+        serviceID: serviceMap[normNet] || "mtn",
+        amount: Number(amount),
+        phone,
+      },
+      {
+        headers: {
+          "api-key": process.env.VTPASS_API_KEY,
+          "secret-key": process.env.VTPASS_SECRET_KEY,
+        },
+        timeout: 30000,
+      }
+    );
+    if (res.data?.code === "000") {
+      return { success: true, provider: "VTPASS", raw: res.data };
+    }
+    throw new Error(res.data?.response_description || "VTpass airtime failed");
+  }
+
+  if (provider === "SMARTSMS") {
+    const netMap = { MTN: "1", AIRTEL: "2", GLO: "3", "9MOBILE": "4" };
+    const res = await axios.post(
+      "https://smartsmssolutions.com/api/json.php",
+      {
+        token: process.env.SMARTSMS_API_TOKEN,
+        type: "airtime",
+        network: netMap[normNet] || "1",
+        phone,
+        amount: Number(amount),
+        ref: reference,
+      },
+      { timeout: 30000 }
+    );
+    if (res.data?.code === "1000" || res.data?.status === "success" || res.data?.status === "successful") {
+      return { success: true, provider: "SMARTSMS", raw: res.data };
+    }
+    throw new Error(res.data?.message || res.data?.error || "SmartSMS airtime failed");
+  }
+
+  throw new Error(`Unsupported provider: ${provider}`);
+};
+
 /* ======================================================
-   1. PURCHASE AIRTIME VIA MARKETPLACE API (MTN MOMO READY)
+   1. PURCHASE AIRTIME VIA MARKETPLACE API
 ====================================================== */
 exports.purchaseAirtime = async (req, res) => {
   try {
@@ -105,37 +233,9 @@ exports.purchaseAirtime = async (req, res) => {
       });
     }
 
-    // 5. PRE-FLIGHT CHECK: DUBA LAFIYAR GSM MODEM KAFIN CIRE KUDI
-    const activeDevice = await prisma.gsmDevice.findFirst({
-      where: { 
-        status: "ONLINE",
-        lastSeen: { gte: new Date(Date.now() - 2 * 60 * 1000) }
-      },
-      include: { sims: true },
-      orderBy: { lastSeen: "desc" },
-    });
-
-    const targetSim = activeDevice?.sims?.find(
-      (s) =>
-        s.status === "ACTIVE" &&
-        (s.carrierName?.toUpperCase().includes(normalizedNetwork) ||
-         s.displayName?.toUpperCase().includes(normalizedNetwork))
-    ) || activeDevice?.sims?.[0];
-
-    const isGatewayReady = Boolean(activeDevice && targetSim);
-    const isFallbackConfigured = Boolean(process.env.CLUBKONNECT_API_KEY || process.env.CLUBKONNECT_USER_ID);
-
-    if (!isGatewayReady && !isFallbackConfigured) {
-      return res.status(503).json({
-        status: "error",
-        code: "ROUTE_UNAVAILABLE",
-        message: `${normalizedNetwork} airtime route is currently offline. No funds were debited.`,
-      });
-    }
-
     const txReference = reference || `AYAX_AIR_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
-    // 6. CIRE KUDI A WALLET BAYAN TABBATAR DA KOFA
+    // 5. Cire Kudi a Wallet da adana PENDING Transaction
     const { updatedWallet, transaction } = await prisma.$transaction(async (tx) => {
       const newWallet = await tx.wallet.update({
         where: { userId: user.id },
@@ -159,8 +259,86 @@ exports.purchaseAirtime = async (req, res) => {
       return { updatedWallet: newWallet, transaction: newTx };
     });
 
-    // 7. ROUTE 1: GSM GATEWAY (MTN MOMO ONLY FOR MTN)
-    if (isGatewayReady) {
+    // 6. SMART CASCADING VENDING (BILALSADA -> VTPASS -> SMARTSMS)
+    const balances = await getProviderBalances();
+    const providerErrors = [];
+
+    const candidates = [
+      { name: "BILALSADA", balance: balances.BILALSADA },
+      { name: "VTPASS", balance: balances.VTPASS },
+      { name: "SMARTSMS", balance: balances.SMARTSMS },
+    ]
+      .filter((p) => p.balance >= numericAmount)
+      .map((p) => p.name);
+
+    if (candidates.length === 0) {
+      if (process.env.BILALSADA_API_TOKEN) candidates.push("BILALSADA");
+      if (process.env.VTPASS_API_KEY) candidates.push("VTPASS");
+      if (process.env.SMARTSMS_API_TOKEN) candidates.push("SMARTSMS");
+    }
+
+    for (const provider of candidates) {
+      try {
+        console.log(`📡 [AIRTIME ROUTING]: Trying ${provider} for ₦${numericAmount} to ${targetPhone}...`);
+        const resData = await dispatchAirtimeAPI({
+          provider,
+          network: normalizedNetwork,
+          phone: targetPhone,
+          amount: numericAmount,
+          reference: txReference,
+        });
+
+        if (resData.success) {
+          await prisma.transaction.update({
+            where: { id: transaction.id },
+            data: {
+              status: "SUCCESSFUL",
+              description: `Airtime NGN ${numericAmount} to ${targetPhone} delivered via ${provider}`,
+            },
+          });
+
+          return res.status(200).json({
+            status: "success",
+            code: "TRANSACTION_SUCCESSFUL",
+            route: provider,
+            message: `NGN ${numericAmount} airtime successfully recharged to ${targetPhone}.`,
+            data: {
+              reference: txReference,
+              network: normalizedNetwork,
+              phone: targetPhone,
+              faceValue: numericAmount,
+              amountCharged: amountToCharge,
+              discount: discountAmount,
+              tier: userTier,
+              walletBalance: updatedWallet.balance,
+              providerResult: resData.raw,
+            },
+          });
+        }
+      } catch (err) {
+        console.warn(`⚠️ [AIRTIME FAIL]: ${provider} failed: ${err.message}. Cascading to next...`);
+        providerErrors.push(`${provider}: ${err.message}`);
+      }
+    }
+
+    // 7. ROUTE 2: GSM GATEWAY FALLBACK (Idan dukkan APIs basu yi aiki ba)
+    const activeDevice = await prisma.gsmDevice.findFirst({
+      where: { 
+        status: "ONLINE",
+        lastSeen: { gte: new Date(Date.now() - 2 * 60 * 1000) }
+      },
+      include: { sims: true },
+      orderBy: { lastSeen: "desc" },
+    });
+
+    const targetSim = activeDevice?.sims?.find(
+      (s) =>
+        s.status === "ACTIVE" &&
+        (s.carrierName?.toUpperCase().includes(normalizedNetwork) ||
+         s.displayName?.toUpperCase().includes(normalizedNetwork))
+    ) || activeDevice?.sims?.[0];
+
+    if (activeDevice && targetSim) {
       const slotIndex = Number(targetSim.slotIndex ?? 0);
       const pin = process.env.GSM_AIRTIME_PIN || "1997";
       const momoPin = process.env.MOMO_PIN || "8724";
@@ -171,7 +349,6 @@ exports.purchaseAirtime = async (req, res) => {
       let directCode = "";
 
       if (normalizedNetwork === "MTN") {
-        // Matakan MoMo: Menu 2 (Airtime/Data) -> 1 (Airtime) -> 3 (Others) -> Phone -> Amount -> PIN
         steps = ["2", "1", "3", targetPhone, String(numericAmount), momoPin];
         ussdCode = "*671#";
         pauseDialString = `*671#,2,1,3,${targetPhone},${numericAmount},${momoPin}#`;
@@ -193,7 +370,6 @@ exports.purchaseAirtime = async (req, res) => {
         directCode = ussdCode;
       }
 
-      // Cika dukkan filaye don Accessibility Service ya gane kuma ya cika popup
       const commandPayload = {
         reference: txReference,
         commandId: txReference,
@@ -202,26 +378,19 @@ exports.purchaseAirtime = async (req, res) => {
         type: "USSD",
         action: "USSD",
         service: "AIRTIME",
-
-        // Lambobin USSD a sassa daban-daban
         code: ussdCode,
         ussd: ussdCode,
         ussdCode: ussdCode,
         ussd_code: ussdCode,
         text: ussdCode,
         rootCode: ussdCode,
-
-        // Cikakken layin da wayar za ta danna ta atomatik tare da tazarar dakatawa (Pause)
         dialString: pauseDialString,
         fullCode: directCode,
-
-        // Matakan shigar da amsa a dialogue/popup
         steps: steps,
         sessionSteps: steps.join(","),
         stepsString: steps.join(","),
         inputSteps: steps,
         responses: steps,
-
         phone: targetPhone,
         targetPhone: targetPhone,
         phoneNumber: targetPhone,
@@ -245,7 +414,7 @@ exports.purchaseAirtime = async (req, res) => {
       try {
         emitEvent("gateway-command", commandPayload, activeDevice.id);
         emitEvent("command", commandPayload, activeDevice.id);
-        console.log(`⚡ [AIRTIME USSD DISPATCH] Ref: ${txReference} -> Root: ${ussdCode} Steps: ${JSON.stringify(steps)}`);
+        console.log(`⚡ [AIRTIME GSM GATEWAY FALLBACK] Ref: ${txReference} -> Root: ${ussdCode}`);
       } catch (socketErr) {
         console.warn("Gateway socket broadcast warning:", socketErr.message);
       }
@@ -253,7 +422,7 @@ exports.purchaseAirtime = async (req, res) => {
       return res.status(200).json({
         status: "success",
         code: "TRANSACTION_QUEUED",
-        route: normalizedNetwork === "MTN" ? "GSM_GATEWAY_MOMO" : "GSM_GATEWAY",
+        route: "GSM_GATEWAY",
         message: `Airtime transfer queued on local modem for ${targetPhone}.`,
         data: {
           reference: txReference,
@@ -268,65 +437,29 @@ exports.purchaseAirtime = async (req, res) => {
       });
     }
 
-    // 8. ROUTE 2: FALLBACK ZUWA CLUBKONNECT
-    console.log(`[AIRTIME: CLUBKONNECT] Modem offline. Forwarding ${txReference} to Clubkonnect API...`);
+    // 8. AUTO-REFUND NAN TAKE IDAN DUKKAN HANYOYI SUN FAƊI
+    console.error("Airtime vending failed across all APIs and local Gateway. Refunding user...");
 
-    try {
-      const ckResult = await clubkonnect.vendAirtime({
-        network: normalizedNetwork,
-        phone: targetPhone,
-        amount: numericAmount,
-        reference: txReference,
-      });
+    await prisma.$transaction([
+      prisma.wallet.update({
+        where: { userId: user.id },
+        data: { balance: { increment: amountToCharge } },
+      }),
+      prisma.transaction.update({
+        where: { id: transaction.id },
+        data: { 
+          status: "FAILED",
+          description: `FAILED: Airtime NGN ${numericAmount} to ${targetPhone} (Refunded NGN ${amountToCharge})` 
+        },
+      }),
+    ]);
 
-      if (ckResult.success) {
-        await prisma.transaction.update({
-          where: { id: transaction.id },
-          data: { status: "SUCCESSFUL" },
-        });
+    return res.status(502).json({
+      status: "error",
+      code: "PROVIDER_FAILURE",
+      message: `Airtime vending failed across all available providers. Wallet balance has been refunded. Errors: ${providerErrors.join(" | ")}`,
+    });
 
-        return res.status(200).json({
-          status: "success",
-          code: "TRANSACTION_SUCCESSFUL",
-          route: "CLUBKONNECT",
-          message: `NGN ${numericAmount} airtime successfully recharged to ${targetPhone}.`,
-          data: {
-            reference: txReference,
-            network: normalizedNetwork,
-            phone: targetPhone,
-            faceValue: numericAmount,
-            amountCharged: amountToCharge,
-            discount: discountAmount,
-            tier: userTier,
-            walletBalance: updatedWallet.balance,
-          },
-        });
-      } else {
-        throw new Error(JSON.stringify(ckResult.rawResponse || "Clubkonnect failed to process airtime"));
-      }
-    } catch (upstreamErr) {
-      console.error("Clubkonnect Airtime Error, initiating refund:", upstreamErr.message);
-
-      await prisma.$transaction([
-        prisma.wallet.update({
-          where: { userId: user.id },
-          data: { balance: { increment: amountToCharge } },
-        }),
-        prisma.transaction.update({
-          where: { id: transaction.id },
-          data: { 
-            status: "FAILED",
-            description: `FAILED: Airtime recharge of NGN ${numericAmount} to ${targetPhone} (Refunded NGN ${amountToCharge})` 
-          },
-        }),
-      ]);
-
-      return res.status(502).json({
-        status: "error",
-        code: "PROVIDER_FAILURE",
-        message: "Airtime vending failed across all available providers. Your wallet balance has been refunded.",
-      });
-    }
   } catch (error) {
     console.error("Airtime purchase error:", error);
     return res.status(500).json({

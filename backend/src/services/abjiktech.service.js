@@ -192,78 +192,80 @@ exports.verifyBVN = async (bvnNumber, slipType = "Standard Slip") => {
 };
 
 /* ======================================================
-   3B. BVN VERIFICATION (BY PHONE NUMBER)
+   3. BVN VERIFICATION (STRICT ABJIKTECH DOCUMENTATION)
 ====================================================== */
-exports.verifyBVNByPhone = async (phone, slipType = "Standard Slip") => {
+exports.verifyBVN = async (bvnNumber, slipType = "Standard Slip") => {
   try {
-    const cleanPhone = String(phone).replace(/\D/g, "").trim();
-    console.log(`[ABJIKTECH BVN PHONE REQUEST]: Posting with Phone: ${cleanPhone}`);
+    const isPremium = String(slipType).toUpperCase().includes("PREMIUM");
+    const url = isPremium ? ENDPOINTS.BVN_PREMIUM : ENDPOINTS.BVN_STANDARD;
 
-    // Binciko BVN ta lambar waya a Abjiktech
-    let res;
-    try {
-      res = await axios.post(
-        ENDPOINTS.BVN_PHONE,
-        { api_key: API_KEY, phone: cleanPhone },
-        { timeout: 45000 }
-      );
-    } catch (e) {
-      // Idan babu bvn_by_phone.php, gwada direct full details da lambar
-      res = await axios.post(
-        ENDPOINTS.BVN_STANDARD,
-        { api_key: API_KEY, bvn: cleanPhone, phone: cleanPhone },
-        { timeout: 45000 }
-      );
-    }
+    const cleanBvn = String(bvnNumber).replace(/\D/g, "").trim();
+
+    console.log(`[ABJIKTECH BVN] Calling ${url} with BVN: ${cleanBvn}`);
+
+    const res = await axios.post(
+      url,
+      {
+        api_key: API_KEY,
+        bvn: cleanBvn,
+      },
+      {
+        headers: { "Content-Type": "application/json" },
+        timeout: 60000,
+      }
+    );
 
     const d = res.data;
-    const ok = d?.success === true || d?.status === "success" || d?.status === true;
-    const r = d?.user_data || d?.data?.details || d?.data?.bvnDetails || d?.data || d?.result || d;
+    console.log("[ABJIKTECH RAW RESPONSE]:", JSON.stringify(d));
 
-    if (!ok && d?.success === false) {
+    // Abjiktech yakan dawo da status: "success" ko success: true
+    const isSuccess =
+      d?.status === "success" ||
+      d?.success === true ||
+      d?.code === 200 ||
+      Boolean(d?.pdf_url || d?.slip_url);
+
+    if (!isSuccess) {
       return {
         success: false,
-        message: d?.message || "No BVN found linked to this phone number",
+        message: d?.message || d?.error || "BVN verification failed at Abjiktech.",
         raw: d,
       };
     }
 
-    const discoveredBvn = r?.bvn || r?.bvnNumber || "";
-    
-    // Idan an samu BVN kawai babu cikakkun bayanai, sake kiran full verification
-    if (discoveredBvn && (!r?.image && !r?.photo && !r?.firstname)) {
-      return await exports.verifyBVN(discoveredBvn, slipType);
-    }
+    // Ciro direct PDF URL da Abjiktech ya hada
+    const generatedPdfUrl =
+      d?.pdf_url ||
+      d?.slip_url ||
+      d?.download_url ||
+      d?.url ||
+      d?.data?.pdf_url ||
+      d?.data?.slip_url ||
+      null;
 
-    const firstName = r?.firstname || r?.first_name || r?.firstName || "";
-    const middleName = r?.middlename || r?.middle_name || r?.middleName || "";
-    const surname = r?.surname || r?.last_name || r?.lastName || "";
-    const fullName = r?.fullName || r?.name || `${firstName} ${middleName} ${surname}`.replace(/\s+/g, " ").trim();
+    const r = d?.user_data || d?.data?.details || d?.data || {};
 
     return {
-      success: ok,
-      bvn: discoveredBvn,
-      fullName: fullName || "VERIFIED CUSTOMER",
-      firstName,
-      surname,
-      middleName,
-      phone: cleanPhone,
-      gender: (r?.gender || "").toUpperCase(),
-      dob: r?.dateOfBirth || r?.dob || r?.date_of_birth || "",
-      address: r?.residentialAddress || r?.residential_address || r?.address || "",
-      bank: r?.enrollmentBank || r?.enrollment_bank || r?.bank || "COMMERCIAL BANK",
-      branch: r?.enrollmentBranch || r?.branch || "HEAD OFFICE",
-      nin: r?.nin || "",
-      photo: r?.image || r?.photo || r?.passport || null,
-      slipUrl: d?.pdf_url || d?.slip_url || r?.slip_url || r?.pdf_url || null,
-      message: d?.message || "BVN retrieved by phone successfully",
+      success: true,
+      bvn: cleanBvn,
+      slipUrl: generatedPdfUrl,
+      pdfUrl: generatedPdfUrl,
+      fullName: r?.fullName || r?.name || "Verified Citizen",
+      firstName: r?.firstname || r?.first_name || "",
+      surname: r?.surname || r?.last_name || "",
+      middleName: r?.middlename || r?.middle_name || "",
+      phone: r?.phone || r?.phoneNumber || "",
+      dob: r?.dob || r?.dateOfBirth || "",
+      address: r?.address || r?.residentialAddress || "",
+      photo: r?.photo || r?.image || null,
+      message: d?.message || "BVN slip generated successfully.",
       raw: d,
     };
   } catch (err) {
-    console.error("[ABJIKTECH BVN PHONE ERROR]:", err.response?.data || err.message);
+    console.error("[ABJIKTECH BVN ERROR]:", err.response?.data || err.message);
     return {
       success: false,
-      message: err.response?.data?.message || err.message,
+      message: err.response?.data?.message || err.message || "Network error connecting to Abjiktech.",
     };
   }
 };

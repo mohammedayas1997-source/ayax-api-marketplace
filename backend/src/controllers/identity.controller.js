@@ -530,9 +530,9 @@ exports.verifyBvnByPhone = async (req, res) => {
 
   try {
     const user = req.user || req.apiKeyUser;
-    const { phone, phoneNumber, reference, slipType = "Standard Slip" } = req.body;
+    const { phone, phoneNumber, searchValue, reference, slipType = "Standard Slip" } = req.body;
 
-    let cleanPhone = String(phone || phoneNumber || "").replace(/\D/g, "").trim();
+    let cleanPhone = String(phone || phoneNumber || searchValue || "").replace(/\D/g, "").trim();
     if (cleanPhone.startsWith("234") && cleanPhone.length >= 13) {
       cleanPhone = "0" + cleanPhone.slice(3);
     } else if (cleanPhone.length === 10 && !cleanPhone.startsWith("0")) {
@@ -586,7 +586,7 @@ exports.verifyBvnByPhone = async (req, res) => {
     chargedTransaction = transaction;
     chargedUserId = userId;
 
-    // Kira Abjiktech ko lookup endpoint na BVN ta waya
+    // 1. Kira Abjiktech don binciko BVN ta lambar waya
     let result = null;
     if (typeof abjiktech.verifyBVNByPhone === "function") {
       result = await abjiktech.verifyBVNByPhone(cleanPhone, slipType);
@@ -610,46 +610,142 @@ exports.verifyBvnByPhone = async (req, res) => {
       });
     }
 
+    // 2. Tace dukkan bayanai komai zurfin shigar su a JSON
     const rawData =
+      result.user_data ||
       result.data?.details?.data ||
       result.data?.details ||
       result.data?.bvnDetails ||
       result.data ||
       result;
 
-    const resolvedBvn = String(rawData.bvn || rawData.bvnNumber || rawData.bvn_number || "").trim();
-    const firstName = String(rawData.firstName || rawData.firstname || rawData.first_name || "").trim();
-    const middleName = String(rawData.middleName || rawData.middlename || rawData.middle_name || "").trim();
-    const lastName = String(rawData.lastName || rawData.lastname || rawData.last_name || rawData.surname || "").trim();
-    const computedName = rawData.fullName || rawData.name || `${firstName} ${middleName} ${lastName}`.replace(/\s+/g, " ").trim();
+    const resolvedBvn = String(
+      rawData.bvn ||
+      rawData.bvnNumber ||
+      rawData.bvn_number ||
+      result.bvn ||
+      ""
+    ).trim();
+
+    const firstName = String(
+      rawData.firstName ||
+      rawData.firstname ||
+      rawData.first_name ||
+      result.firstName ||
+      ""
+    ).trim();
+
+    const middleName = String(
+      rawData.middleName ||
+      rawData.middlename ||
+      rawData.middle_name ||
+      result.middleName ||
+      ""
+    ).trim();
+
+    const lastName = String(
+      rawData.lastName ||
+      rawData.lastname ||
+      rawData.last_name ||
+      rawData.surname ||
+      result.surname ||
+      ""
+    ).trim();
+
+    const computedName =
+      rawData.fullName ||
+      rawData.name ||
+      result.fullName ||
+      `${firstName} ${middleName} ${lastName}`.replace(/\s+/g, " ").trim() ||
+      "VERIFIED CITIZEN";
+
+    const dob =
+      rawData.dateOfBirth ||
+      rawData.date_of_birth ||
+      rawData.dob ||
+      rawData.birthdate ||
+      result.dob ||
+      "N/A";
+
+    const residentialAddress =
+      rawData.residentialAddress ||
+      rawData.residential_address ||
+      rawData.address ||
+      rawData.residence_address ||
+      result.address ||
+      "N/A";
+
+    const bank =
+      rawData.enrollmentBank ||
+      rawData.enrollment_bank ||
+      rawData.bank ||
+      result.bank ||
+      "COMMERCIAL BANK";
+
+    const branch =
+      rawData.enrollmentBranch ||
+      rawData.enrollment_branch ||
+      rawData.branch ||
+      result.branch ||
+      "HEAD OFFICE";
+
+    const photo =
+      rawData.photo ||
+      rawData.image ||
+      rawData.passport ||
+      rawData.base64Image ||
+      result.photo ||
+      null;
+
+    // Ainihin link din takardar PDF ta Abjiktech
+    const slipDocumentUrl =
+      result.slipUrl ||
+      result.pdfUrl ||
+      rawData.slipUrl ||
+      rawData.pdfUrl ||
+      rawData.pdf_url ||
+      rawData.slip_url ||
+      result.raw?.pdf_url ||
+      result.raw?.slip_url ||
+      null;
 
     const formattedPayload = {
-      ...rawData,
       bvn: resolvedBvn,
       bvnNumber: resolvedBvn,
       fullName: computedName,
       firstName: firstName || computedName.split(" ")[0],
       middleName: middleName,
-      lastName: lastName,
-      surname: lastName,
+      lastName: lastName || computedName.split(" ").slice(-1)[0],
+      surname: lastName || computedName.split(" ").slice(-1)[0],
       phoneNumber: cleanPhone,
       phone: cleanPhone,
-      dateOfBirth: rawData.dateOfBirth || rawData.dob || "N/A",
-      dob: rawData.dateOfBirth || rawData.dob || "N/A",
-      gender: (rawData.gender || "N/A").toUpperCase(),
-      residentialAddress: rawData.residentialAddress || rawData.address || "N/A",
-      address: rawData.residentialAddress || rawData.address || "N/A",
-      photo: rawData.photo || rawData.image || rawData.passport || null,
-      slipUrl: rawData.slipUrl || rawData.pdfUrl || result.slipUrl || null,
+      dateOfBirth: dob,
+      dob: dob,
+      gender: String(rawData.gender || result.gender || "N/A").toUpperCase(),
+      residentialAddress: residentialAddress,
+      address: residentialAddress,
+      enrollmentBank: bank,
+      bank: bank,
+      enrollmentBranch: branch,
+      photo: photo,
+      image: photo,
+      slipUrl: slipDocumentUrl,
+      pdfUrl: slipDocumentUrl,
     };
 
+    // 3. Sabunta Transaction a Database
     await prisma.transaction.update({
       where: { id: transaction.id },
-      data: { status: "SUCCESSFUL" },
+      data: {
+        status: "SUCCESSFUL",
+        description: `BVN Phone Search Successful: [${cleanPhone}] -> BVN: [${resolvedBvn}]`,
+      },
     });
 
+    // 4. Mayar da Amsa (tare da slipUrl da pdfUrl a root da cikin data)
     return res.status(200).json({
       status: "success",
+      success: true,
       code: "VERIFICATION_SUCCESSFUL",
       message: "BVN retrieved via phone lookup successfully.",
       data: {
@@ -659,9 +755,13 @@ exports.verifyBvnByPhone = async (req, res) => {
         slipType,
         details: formattedPayload,
         ...formattedPayload,
+        slipUrl: slipDocumentUrl,
+        pdfUrl: slipDocumentUrl,
         amountCharged: cost,
         walletBalance: updatedWallet.balance,
       },
+      slipUrl: slipDocumentUrl,
+      pdfUrl: slipDocumentUrl,
     });
   } catch (error) {
     if (chargedTransaction && chargedUserId) {

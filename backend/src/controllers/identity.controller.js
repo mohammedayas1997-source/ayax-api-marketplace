@@ -366,7 +366,7 @@ exports.verifyNinByPhone = async (req, res) => {
 };
 
 /* ======================================================
-   3. BVN VERIFICATION
+   3. BVN VERIFICATION (BY 11-DIGIT BVN)
    POST /api/v1/identity/bvn/verify
 ====================================================== */
 exports.verifyBvn = async (req, res) => {
@@ -376,9 +376,9 @@ exports.verifyBvn = async (req, res) => {
 
   try {
     const user = req.user || req.apiKeyUser;
-    const { bvn, slipType = "Standard Slip", reference } = req.body;
+    const { bvn, bvnNumber, slipType = "Standard Slip", reference } = req.body;
 
-    const cleanBvn = String(bvn || "").trim();
+    const cleanBvn = String(bvn || bvnNumber || "").replace(/\D/g, "").trim();
     if (!cleanBvn || cleanBvn.length !== 11) {
       return res.status(400).json({
         status: "error",
@@ -412,7 +412,7 @@ exports.verifyBvn = async (req, res) => {
       });
     } catch (_) {}
 
-    const cost = Number(pricing?.sellingPrice || 70);
+    const cost = Number(pricing?.sellingPrice || 100);
     chargedCost = cost;
     const txRef = reference || `AYAX_BVN_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
 
@@ -420,13 +420,14 @@ exports.verifyBvn = async (req, res) => {
       user,
       cost,
       service: "BVN VERIFICATION",
-      description: `BVN Verification for [${cleanBvn}] (${slipType})`,
+      description: `BVN Full Verification for [${cleanBvn}] (${slipType})`,
       reference: txRef,
     });
 
     chargedTransaction = transaction;
     chargedUserId = userId;
 
+    // Umartar Abjiktech ya fito da full details da hoton mutum
     const result = await abjiktech.verifyBVN(cleanBvn, slipType);
 
     if (!result || !result.success) {
@@ -445,6 +446,41 @@ exports.verifyBvn = async (req, res) => {
       });
     }
 
+    // Tace dukkan filaye daga uwar garke
+    const rawData =
+      result.data?.details?.data ||
+      result.data?.details ||
+      result.data?.bvnDetails ||
+      result.data ||
+      result;
+
+    const firstName = String(rawData.firstName || rawData.firstname || rawData.first_name || "").trim();
+    const middleName = String(rawData.middleName || rawData.middlename || rawData.middle_name || "").trim();
+    const lastName = String(rawData.lastName || rawData.lastname || rawData.last_name || rawData.surname || "").trim();
+    const computedName = rawData.fullName || rawData.name || `${firstName} ${middleName} ${lastName}`.replace(/\s+/g, " ").trim();
+
+    const formattedPayload = {
+      ...rawData,
+      bvn: cleanBvn,
+      bvnNumber: cleanBvn,
+      fullName: computedName,
+      firstName: firstName || computedName.split(" ")[0],
+      middleName: middleName,
+      lastName: lastName || computedName.split(" ").slice(-1)[0],
+      surname: lastName || computedName.split(" ").slice(-1)[0],
+      dateOfBirth: rawData.dateOfBirth || rawData.date_of_birth || rawData.dob || rawData.birthdate || "N/A",
+      dob: rawData.dateOfBirth || rawData.date_of_birth || rawData.dob || "N/A",
+      phoneNumber: rawData.phoneNumber || rawData.phoneNumber1 || rawData.phone || rawData.telephoneno || "N/A",
+      phone: rawData.phoneNumber || rawData.phoneNumber1 || rawData.phone || "N/A",
+      gender: (rawData.gender || "N/A").toUpperCase(),
+      residentialAddress: rawData.residentialAddress || rawData.residential_address || rawData.address || "N/A",
+      address: rawData.residentialAddress || rawData.residential_address || rawData.address || "N/A",
+      enrollmentBank: rawData.enrollmentBank || rawData.enrollment_bank || rawData.bank || "COMMERCIAL BANK",
+      enrollmentBranch: rawData.enrollmentBranch || rawData.enrollment_branch || rawData.branch || "HEAD OFFICE",
+      photo: rawData.photo || rawData.image || rawData.base64Image || rawData.passport || null,
+      slipUrl: rawData.slipUrl || rawData.pdfUrl || result.slipUrl || result.pdfUrl || null,
+    };
+
     await prisma.transaction.update({
       where: { id: transaction.id },
       data: { status: "SUCCESSFUL" },
@@ -458,7 +494,8 @@ exports.verifyBvn = async (req, res) => {
         reference: txRef,
         bvn: cleanBvn,
         slipType,
-        details: result.data || result,
+        details: formattedPayload,
+        ...formattedPayload,
         amountCharged: cost,
         walletBalance: updatedWallet.balance,
       },
@@ -478,6 +515,169 @@ exports.verifyBvn = async (req, res) => {
       status: "error",
       code: error.code || "INTERNAL_ERROR",
       message: error.message || "An error occurred during BVN verification.",
+    });
+  }
+};
+
+/* ======================================================
+   3B. BVN VERIFICATION (BY PHONE NUMBER)
+   POST /api/v1/identity/bvn/verify-phone
+====================================================== */
+exports.verifyBvnByPhone = async (req, res) => {
+  let chargedTransaction = null;
+  let chargedUserId = null;
+  let chargedCost = 0;
+
+  try {
+    const user = req.user || req.apiKeyUser;
+    const { phone, phoneNumber, reference, slipType = "Standard Slip" } = req.body;
+
+    let cleanPhone = String(phone || phoneNumber || "").replace(/\D/g, "").trim();
+    if (cleanPhone.startsWith("234") && cleanPhone.length >= 13) {
+      cleanPhone = "0" + cleanPhone.slice(3);
+    } else if (cleanPhone.length === 10 && !cleanPhone.startsWith("0")) {
+      cleanPhone = "0" + cleanPhone;
+    }
+
+    if (!cleanPhone || cleanPhone.length !== 11) {
+      return res.status(400).json({
+        status: "error",
+        code: "VALIDATION_ERROR",
+        message: "A valid 11-digit mobile phone number is required.",
+      });
+    }
+
+    if (!user) {
+      return res.status(401).json({
+        status: "error",
+        code: "UNAUTHORIZED",
+        message: "Authentication is required.",
+      });
+    }
+
+    const userTier = String(user.tier || "REGULAR").toUpperCase();
+    let pricing = null;
+    try {
+      pricing = await prisma.servicePricing.findFirst({
+        where: {
+          category: "IDENTITY",
+          enabled: true,
+          tier: userTier,
+          OR: [
+            { serviceCode: "BVN_PHONE_VERIFY" },
+            { serviceCode: "BVN_VERIFY" },
+          ],
+        },
+      });
+    } catch (_) {}
+
+    const cost = Number(pricing?.sellingPrice || 150);
+    chargedCost = cost;
+    const txRef = reference || `AYAX_BVN_PHN_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+    const { updatedWallet, transaction, userId } = await chargeWallet({
+      user,
+      cost,
+      service: "BVN PHONE VERIFICATION",
+      description: `BVN Phone Search for [${cleanPhone}]`,
+      reference: txRef,
+    });
+
+    chargedTransaction = transaction;
+    chargedUserId = userId;
+
+    // Kira Abjiktech ko lookup endpoint na BVN ta waya
+    let result = null;
+    if (typeof abjiktech.verifyBVNByPhone === "function") {
+      result = await abjiktech.verifyBVNByPhone(cleanPhone, slipType);
+    } else {
+      result = await abjiktech.verifyBVN(cleanPhone, slipType);
+    }
+
+    if (!result || !result.success) {
+      const failureReason = result?.message || "No BVN record linked to this mobile number.";
+      await refundTransaction({
+        userId: chargedUserId,
+        cost: chargedCost,
+        transactionId: chargedTransaction.id,
+        reason: failureReason,
+      });
+
+      return res.status(502).json({
+        status: "error",
+        code: "GATEWAY_ERROR",
+        message: failureReason,
+      });
+    }
+
+    const rawData =
+      result.data?.details?.data ||
+      result.data?.details ||
+      result.data?.bvnDetails ||
+      result.data ||
+      result;
+
+    const resolvedBvn = String(rawData.bvn || rawData.bvnNumber || rawData.bvn_number || "").trim();
+    const firstName = String(rawData.firstName || rawData.firstname || rawData.first_name || "").trim();
+    const middleName = String(rawData.middleName || rawData.middlename || rawData.middle_name || "").trim();
+    const lastName = String(rawData.lastName || rawData.lastname || rawData.last_name || rawData.surname || "").trim();
+    const computedName = rawData.fullName || rawData.name || `${firstName} ${middleName} ${lastName}`.replace(/\s+/g, " ").trim();
+
+    const formattedPayload = {
+      ...rawData,
+      bvn: resolvedBvn,
+      bvnNumber: resolvedBvn,
+      fullName: computedName,
+      firstName: firstName || computedName.split(" ")[0],
+      middleName: middleName,
+      lastName: lastName,
+      surname: lastName,
+      phoneNumber: cleanPhone,
+      phone: cleanPhone,
+      dateOfBirth: rawData.dateOfBirth || rawData.dob || "N/A",
+      dob: rawData.dateOfBirth || rawData.dob || "N/A",
+      gender: (rawData.gender || "N/A").toUpperCase(),
+      residentialAddress: rawData.residentialAddress || rawData.address || "N/A",
+      address: rawData.residentialAddress || rawData.address || "N/A",
+      photo: rawData.photo || rawData.image || rawData.passport || null,
+      slipUrl: rawData.slipUrl || rawData.pdfUrl || result.slipUrl || null,
+    };
+
+    await prisma.transaction.update({
+      where: { id: transaction.id },
+      data: { status: "SUCCESSFUL" },
+    });
+
+    return res.status(200).json({
+      status: "success",
+      code: "VERIFICATION_SUCCESSFUL",
+      message: "BVN retrieved via phone lookup successfully.",
+      data: {
+        reference: txRef,
+        bvn: resolvedBvn,
+        phone: cleanPhone,
+        slipType,
+        details: formattedPayload,
+        ...formattedPayload,
+        amountCharged: cost,
+        walletBalance: updatedWallet.balance,
+      },
+    });
+  } catch (error) {
+    if (chargedTransaction && chargedUserId) {
+      await refundTransaction({
+        userId: chargedUserId,
+        cost: chargedCost,
+        transactionId: chargedTransaction.id,
+        reason: error.message,
+      });
+    }
+
+    console.error("BVN Phone Verification error:", error.message);
+    return res.status(error.statusCode || 500).json({
+      status: "error",
+      code: error.code || "INTERNAL_ERROR",
+      message: error.message || "An error occurred during BVN phone lookup.",
     });
   }
 };

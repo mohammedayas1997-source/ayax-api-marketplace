@@ -47,9 +47,16 @@ router.post(
   flexibleAuth,
   runValidation(
     z.object({
-      nin: z.string().trim().regex(/^[0-9]{11}$/, "11-digit NIN is required"),
+      nin: z.string().trim().optional(),
+      ninNumber: z.string().trim().optional(),
+      searchValue: z.string().trim().optional(),
       slipType: z.string().optional(),
+      format: z.string().optional(),
+      generatePdf: z.boolean().optional(),
       reference: z.string().optional(),
+    }).refine((data) => (data.nin || data.ninNumber || data.searchValue)?.replace(/\D/g, "").length === 11, {
+      message: "A valid 11-digit NIN is required",
+      path: ["nin"],
     })
   ),
   identityController.verifyNin
@@ -61,26 +68,56 @@ router.post(
   flexibleAuth,
   runValidation(
     z.object({
-      phone: z.string().trim().min(11, "Phone number is required"),
+      phone: z.string().trim().optional(),
+      phoneNumber: z.string().trim().optional(),
       slipType: z.string().optional(),
       reference: z.string().optional(),
+    }).refine((data) => (data.phone || data.phoneNumber)?.replace(/\D/g, "").length >= 10, {
+      message: "Valid phone number is required",
+      path: ["phone"],
     })
   ),
   identityController.verifyNinByPhone
 );
 
-// 3. BVN Verification
+// 3. BVN Verification (by 11-digit BVN)
 router.post(
   "/bvn/verify",
   flexibleAuth,
   runValidation(
     z.object({
-      bvn: z.string().trim().regex(/^[0-9]{11}$/, "11-digit BVN is required"),
+      bvn: z.string().trim().optional(),
+      bvnNumber: z.string().trim().optional(),
+      searchValue: z.string().trim().optional(),
       slipType: z.string().optional(),
+      format: z.string().optional(),
+      generatePdf: z.boolean().optional(),
       reference: z.string().optional(),
+    }).refine((data) => (data.bvn || data.bvnNumber || data.searchValue)?.replace(/\D/g, "").length === 11, {
+      message: "11-digit BVN is required",
+      path: ["bvn"],
     })
   ),
   identityController.verifyBvn
+);
+
+// 3b. BVN Verification (by Phone Number) - SABUWAR KAFA
+router.post(
+  "/bvn/verify-phone",
+  flexibleAuth,
+  runValidation(
+    z.object({
+      phone: z.string().trim().optional(),
+      phoneNumber: z.string().trim().optional(),
+      searchValue: z.string().trim().optional(),
+      slipType: z.string().optional(),
+      reference: z.string().optional(),
+    }).refine((data) => (data.phone || data.phoneNumber || data.searchValue)?.replace(/\D/g, "").length >= 10, {
+      message: "A valid linked mobile phone number is required",
+      path: ["phone"],
+    })
+  ),
+  identityController.verifyBvnByPhone
 );
 
 // 4. NIN Validation (Submit)

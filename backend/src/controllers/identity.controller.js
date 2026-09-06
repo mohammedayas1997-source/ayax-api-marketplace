@@ -423,10 +423,31 @@ exports.verifyBvn = async (req, res) => {
     chargedTransaction = transaction;
     chargedUserId = userId;
 
-    // Kira aikin Abjiktech
+    // 1. Kira aikin Abjiktech
     const result = await abjiktech.verifyBVN(cleanBvn, slipType);
 
-    if (!result || !result.success) {
+    // 2. Ciro dukkan nau'in link na PDF da Abjiktech ya fitar
+    let finalSlipUrl =
+      result?.slipUrl ||
+      result?.pdfUrl ||
+      result?.downloadUrl ||
+      result?.raw?.pdf_url ||
+      result?.raw?.slip_url ||
+      result?.raw?.download_url ||
+      result?.data?.pdf_url ||
+      result?.data?.slip_url ||
+      null;
+
+    if (finalSlipUrl && !String(finalSlipUrl).startsWith("http")) {
+      finalSlipUrl = `https://abjiktech.com.ng/${String(finalSlipUrl).replace(/^\/+/, "")}`;
+    }
+
+    const isSuccess =
+      result?.success === true ||
+      result?.status === "success" ||
+      Boolean(finalSlipUrl);
+
+    if (!isSuccess || !finalSlipUrl) {
       const failureReason = result?.message || "BVN verification failed at upstream provider.";
       await refundTransaction({
         userId: chargedUserId,
@@ -442,16 +463,15 @@ exports.verifyBvn = async (req, res) => {
       });
     }
 
-    const finalSlipUrl = result.slipUrl || result.pdfUrl;
-
     await prisma.transaction.update({
       where: { id: transaction.id },
       data: {
         status: "SUCCESSFUL",
-        description: `BVN Slip Generated for [${cleanBvn}] - URL: ${finalSlipUrl || "N/A"}`,
+        description: `BVN Slip Generated for [${cleanBvn}] - URL: ${finalSlipUrl}`,
       },
     });
 
+    // 3. Tura slipUrl da pdfUrl a kowace kusurwa ta JSON don Data Express ya gani
     return res.status(200).json({
       status: "success",
       success: true,
@@ -459,15 +479,19 @@ exports.verifyBvn = async (req, res) => {
       message: "BVN verified and slip generated successfully.",
       slipUrl: finalSlipUrl,
       pdfUrl: finalSlipUrl,
+      downloadUrl: finalSlipUrl,
+      url: finalSlipUrl,
       data: {
         reference: txRef,
         bvn: cleanBvn,
         slipType,
         slipUrl: finalSlipUrl,
         pdfUrl: finalSlipUrl,
-        ...result,
+        downloadUrl: finalSlipUrl,
+        url: finalSlipUrl,
         amountCharged: cost,
         walletBalance: updatedWallet.balance,
+        details: result,
       },
     });
   } catch (error) {

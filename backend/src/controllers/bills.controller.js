@@ -11,7 +11,6 @@ exports.getCablePackages = async (req, res) => {
     const { cableTv, provider } = req.query;
     const targetCable = String(cableTv || provider || "").toLowerCase();
 
-    // Idan akwai getCablePlans a billsService, yi amfani da shi; ko kuma duba ServicePlan kai tsaye
     let packages = [];
     if (typeof billsService.getCablePlans === "function") {
       packages = await billsService.getCablePlans(targetCable);
@@ -61,9 +60,16 @@ exports.verifyCable = async (req, res) => {
       smartCardNo: normalizedCardNo,
     });
 
+    const customerName =
+      result.customerName ||
+      result.Customer_Name ||
+      result.name ||
+      result.raw?.customer_name ||
+      "Verified Customer";
+
     return res.status(200).json({
       success: true,
-      customerName: result.customerName || result.name || "Verified Customer",
+      customerName,
       data: result,
     });
   } catch (error) {
@@ -113,6 +119,21 @@ exports.purchaseCable = async (req, res) => {
         code: "VALIDATION_ERROR",
         message: "Valid cable provider, smartcard number, package code, and amount are required.",
       });
+    }
+
+    // Idempotency: Tabbatar ba a sake maimaita reference ba
+    if (reference) {
+      const existingTx = await prisma.transaction.findUnique({
+        where: { reference: String(reference).trim() },
+      });
+      if (existingTx) {
+        return res.status(409).json({
+          success: false,
+          code: "DUPLICATE_REFERENCE",
+          message: "A transaction with this reference has already been processed.",
+          transaction: existingTx,
+        });
+      }
     }
 
     const result = await billsService.purchaseCable({
@@ -206,10 +227,17 @@ exports.verifyMeter = async (req, res) => {
       meterType: normalizedMeterType,
     });
 
+    const customerName =
+      result.customerName ||
+      result.Customer_Name ||
+      result.name ||
+      result.raw?.customer_name ||
+      "Verified Meter Customer";
+
     return res.status(200).json({
       success: true,
-      customerName: result.customerName || result.name || "Verified Meter Customer",
-      address: result.address || "",
+      customerName,
+      address: result.address || result.Customer_Address || "",
       data: result,
     });
   } catch (error) {
@@ -259,6 +287,21 @@ exports.purchaseElectricity = async (req, res) => {
       });
     }
 
+    // Idempotency: Tabbatar ba a sake maimaita reference ba
+    if (reference) {
+      const existingTx = await prisma.transaction.findUnique({
+        where: { reference: String(reference).trim() },
+      });
+      if (existingTx) {
+        return res.status(409).json({
+          success: false,
+          code: "DUPLICATE_REFERENCE",
+          message: "A transaction with this reference has already been processed.",
+          transaction: existingTx,
+        });
+      }
+    }
+
     const result = await billsService.purchaseElectricity({
       user,
       apiKey: req.apiKey,
@@ -273,7 +316,7 @@ exports.purchaseElectricity = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Electricity purchase successful.",
-      token: result.token || null,
+      token: result.token || result.purchased_code || null,
       units: result.units || null,
       data: result,
     });

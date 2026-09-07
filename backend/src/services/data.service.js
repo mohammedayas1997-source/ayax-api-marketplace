@@ -21,11 +21,41 @@ const cleanLocalPhone = (phone = "") => {
 // Helper: Duba balance na kowane Provider don Data
 const getProviderBalances = async () => {
   const balances = {
-    BILALSADA: 0,
-    VTPASS: 0,
     SMARTSMS: 0,
+    CLUBCONNECT: 0,
+    BILALSADA: 0,
+    GLOBECONNECT: 0,
+    AJAH: 0,
+    VTPASS: 0,
   };
 
+  // 1. SmartSMS
+  if (process.env.SMARTSMS_API_TOKEN) {
+    try {
+      const res = await axios.get(
+        `https://smartsmssolutions.com/api/json.php?token=${process.env.SMARTSMS_API_TOKEN}&type=balance`,
+        { timeout: 4000 }
+      );
+      balances.SMARTSMS = Number(res.data?.balance || 0);
+    } catch (_) {
+      balances.SMARTSMS = 0;
+    }
+  }
+
+  // 2. ClubConnect
+  if (process.env.CLUBCONNECT_USER_ID && process.env.CLUBCONNECT_API_KEY) {
+    try {
+      const res = await axios.get(
+        `https://www.clubconnect.com.ng/api/walletbalance?UserID=${process.env.CLUBCONNECT_USER_ID}&APIKey=${process.env.CLUBCONNECT_API_KEY}`,
+        { timeout: 4000 }
+      );
+      balances.CLUBCONNECT = Number(res.data?.balance || res.data?.WalletBalance || 0);
+    } catch (_) {
+      balances.CLUBCONNECT = 0;
+    }
+  }
+
+  // 3. BilalSada
   if (process.env.BILALSADA_API_TOKEN) {
     try {
       const res = await axios.get("https://bilalsadasub.com/api/user", {
@@ -38,6 +68,33 @@ const getProviderBalances = async () => {
     }
   }
 
+  // 4. GlobeConnect
+  if (process.env.GLOBECONNECT_API_KEY) {
+    try {
+      const res = await axios.get("https://api.globeconnect.ng/api/user/balance", {
+        headers: { Authorization: `Bearer ${process.env.GLOBECONNECT_API_KEY}` },
+        timeout: 4000,
+      });
+      balances.GLOBECONNECT = Number(res.data?.balance || res.data?.data?.balance || 0);
+    } catch (_) {
+      balances.GLOBECONNECT = 0;
+    }
+  }
+
+  // 5. Ajah
+  if (process.env.AJAH_API_KEY) {
+    try {
+      const res = await axios.get("https://ajah.com.ng/api/user", {
+        headers: { Authorization: `Token ${process.env.AJAH_API_KEY}` },
+        timeout: 4000,
+      });
+      balances.AJAH = Number(res.data?.user?.wallet_balance || res.data?.balance || 0);
+    } catch (_) {
+      balances.AJAH = 0;
+    }
+  }
+
+  // 6. VTPass
   if (process.env.VTPASS_API_KEY && process.env.VTPASS_SECRET_KEY) {
     try {
       const res = await axios.get("https://api-service.vtpass.com/api/balance", {
@@ -53,18 +110,6 @@ const getProviderBalances = async () => {
     }
   }
 
-  if (process.env.SMARTSMS_API_TOKEN) {
-    try {
-      const res = await axios.get(
-        `https://smartsmssolutions.com/api/json.php?token=${process.env.SMARTSMS_API_TOKEN}&type=balance`,
-        { timeout: 4000 }
-      );
-      balances.SMARTSMS = Number(res.data?.balance || 0);
-    } catch (_) {
-      balances.SMARTSMS = 0;
-    }
-  }
-
   return balances;
 };
 
@@ -72,6 +117,50 @@ const getProviderBalances = async () => {
 const dispatchDataAPI = async ({ provider, network, phone, planId, numericMB, reference }) => {
   const normNet = network.toUpperCase();
 
+  // 1. SMARTSMS SOLUTIONS
+  if (provider === "SMARTSMS") {
+    const netMap = { MTN: "1", AIRTEL: "2", GLO: "3", "9MOBILE": "4" };
+    const res = await axios.post(
+      "https://smartsmssolutions.com/api/json.php",
+      {
+        token: process.env.SMARTSMS_API_TOKEN,
+        type: "internet_data",
+        network: netMap[normNet] || "1",
+        phone,
+        product_code: String(planId || numericMB),
+        ref: reference,
+      },
+      { timeout: 35000 }
+    );
+    if (res.data?.code === "1000" || res.data?.status === "success") {
+      return { success: true, provider: "SMARTSMS", raw: res.data };
+    }
+    throw new Error(res.data?.message || "SmartSMS data dispatch failed");
+  }
+
+  // 2. CLUBCONNECT
+  if (provider === "CLUBCONNECT") {
+    const clubNetMap = {
+      MTN: "01",
+      GLO: "02",
+      "9MOBILE": "03",
+      AIRTEL: "04",
+    };
+    const userId = process.env.CLUBCONNECT_USER_ID;
+    const apiKey = process.env.CLUBCONNECT_API_KEY;
+
+    const url = `https://www.clubconnect.com.ng/api/data?UserID=${userId}&APIKey=${apiKey}&MobileNetwork=${clubNetMap[normNet] || "01"}&DataPlan=${planId || numericMB}&MobileNumber=${phone}&RequestID=${reference}`;
+
+    const res = await axios.get(url, { timeout: 35000 });
+    const statusText = String(res.data?.status || res.data?.statuscode || "").toLowerCase();
+
+    if (statusText.includes("success") || statusText === "100" || statusText === "200") {
+      return { success: true, provider: "CLUBCONNECT", raw: res.data };
+    }
+    throw new Error(res.data?.msg || res.data?.status || "ClubConnect data dispatch failed");
+  }
+
+  // 3. BILALSADA SUB
   if (provider === "BILALSADA") {
     const netMap = { MTN: 1, GLO: 2, "9MOBILE": 3, AIRTEL: 4 };
     const res = await axios.post(
@@ -93,6 +182,55 @@ const dispatchDataAPI = async ({ provider, network, phone, planId, numericMB, re
     throw new Error(res.data?.message || "Bilalsadasub data dispatch failed");
   }
 
+  // 4. GLOBECONNECT
+  if (provider === "GLOBECONNECT") {
+    const res = await axios.post(
+      "https://api.globeconnect.ng/api/data",
+      {
+        network: normNet,
+        plan_id: planId || numericMB,
+        phone,
+        reference,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.GLOBECONNECT_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 35000,
+      }
+    );
+    if (res.data?.status === "success" || res.data?.status === true) {
+      return { success: true, provider: "GLOBECONNECT", raw: res.data };
+    }
+    throw new Error(res.data?.message || "GlobeConnect data dispatch failed");
+  }
+
+  // 5. AJAH API
+  if (provider === "AJAH") {
+    const res = await axios.post(
+      "https://ajah.com.ng/api/data",
+      {
+        network_id: normNet.toLowerCase(),
+        plan_id: planId || numericMB,
+        phone_number: phone,
+        ident: reference,
+      },
+      {
+        headers: {
+          Authorization: `Token ${process.env.AJAH_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 35000,
+      }
+    );
+    if (res.data?.status === "success" || res.data?.status === "successful") {
+      return { success: true, provider: "AJAH", raw: res.data };
+    }
+    throw new Error(res.data?.message || "Ajah data dispatch failed");
+  }
+
+  // 6. VTPASS
   if (provider === "VTPASS") {
     const serviceMap = {
       MTN: "mtn-data",
@@ -121,26 +259,6 @@ const dispatchDataAPI = async ({ provider, network, phone, planId, numericMB, re
       return { success: true, provider: "VTPASS", raw: res.data };
     }
     throw new Error(res.data?.response_description || "VTpass data dispatch failed");
-  }
-
-  if (provider === "SMARTSMS") {
-    const netMap = { MTN: "1", AIRTEL: "2", GLO: "3", "9MOBILE": "4" };
-    const res = await axios.post(
-      "https://smartsmssolutions.com/api/json.php",
-      {
-        token: process.env.SMARTSMS_API_TOKEN,
-        type: "internet_data",
-        network: netMap[normNet] || "3",
-        phone,
-        product_code: String(planId || numericMB),
-        ref: reference,
-      },
-      { timeout: 35000 }
-    );
-    if (res.data?.code === "1000" || res.data?.status === "success") {
-      return { success: true, provider: "SMARTSMS", raw: res.data };
-    }
-    throw new Error(res.data?.message || "SmartSMS data dispatch failed");
   }
 
   throw new Error(`Unsupported API data provider: ${provider}`);
@@ -290,7 +408,7 @@ exports.purchaseData = async ({
   }
 
   try {
-    // 5. ROUTE 1: GSM GATEWAY (MTN DA AIRTEL KADAI)
+    // 5. ROUTE 1: GSM GATEWAY (FIRST PRIORITY DON MTN DA AIRTEL)
     if (isGatewayReady) {
       const slotIndex = Number(targetSim.slotIndex ?? 0);
       const pin = process.env.GSM_DATA_PIN || "1997";
@@ -371,22 +489,28 @@ exports.purchaseData = async ({
       };
     }
 
-    // 6. ROUTE 2: SMART CASCADING API (GLO, 9MOBILE, KO IDAN SIM NA MTN/AIRTEL YA KASANCE OFFLINE)
+    // 6. ROUTE 2: SMART CASCADING API (IDAN GSM YA KASANCE OFFLINE KO GA GLO/9MOBILE)
     const balances = await getProviderBalances();
     const providerErrors = [];
 
-    const candidates = [
-      { name: "BILALSADA", balance: balances.BILALSADA },
-      { name: "VTPASS", balance: balances.VTPASS },
-      { name: "SMARTSMS", balance: balances.SMARTSMS },
-    ]
-      .filter((p) => p.balance >= finalAmount)
+    // Jerin dukkan providers a tsare
+    const allProviders = [
+      { name: "SMARTSMS", balance: balances.SMARTSMS, hasEnv: Boolean(process.env.SMARTSMS_API_TOKEN) },
+      { name: "CLUBCONNECT", balance: balances.CLUBCONNECT, hasEnv: Boolean(process.env.CLUBCONNECT_API_KEY) },
+      { name: "BILALSADA", balance: balances.BILALSADA, hasEnv: Boolean(process.env.BILALSADA_API_TOKEN) },
+      { name: "GLOBECONNECT", balance: balances.GLOBECONNECT, hasEnv: Boolean(process.env.GLOBECONNECT_API_KEY) },
+      { name: "AJAH", balance: balances.AJAH, hasEnv: Boolean(process.env.AJAH_API_KEY) },
+      { name: "VTPASS", balance: balances.VTPASS, hasEnv: Boolean(process.env.VTPASS_API_KEY) },
+    ];
+
+    // Zabi waɗanda ke da isasshen kuɗi
+    let candidates = allProviders
+      .filter((p) => p.hasEnv && p.balance >= finalAmount)
       .map((p) => p.name);
 
+    // Idan ba a samu mai isasshen balance a API check ba, a gwada dukkan waɗanda ke da keys a jere
     if (candidates.length === 0) {
-      if (process.env.BILALSADA_API_TOKEN) candidates.push("BILALSADA");
-      if (process.env.VTPASS_API_KEY) candidates.push("VTPASS");
-      if (process.env.SMARTSMS_API_TOKEN) candidates.push("SMARTSMS");
+      candidates = allProviders.filter((p) => p.hasEnv).map((p) => p.name);
     }
 
     for (const provider of candidates) {
@@ -433,12 +557,12 @@ exports.purchaseData = async ({
           };
         }
       } catch (err) {
-        console.warn(`⚠️ [DATA API FAIL]: ${provider} - ${err.message}. Cascading to next...`);
+        console.warn(`⚠️ [DATA API FAIL]: ${provider} - ${err.message}. Cascading to next provider...`);
         providerErrors.push(`${provider}: ${err.message}`);
       }
     }
 
-    throw new Error(`Data delivery failed across all APIs: ${providerErrors.join(" | ")}`);
+    throw new Error(`Dukkan hanyoyin sadarwa da APIs sun gaza kammala wannan cinikin: ${providerErrors.join(" | ")}`);
   } catch (err) {
     console.error("Data purchase error, executing refund:", err.message);
 

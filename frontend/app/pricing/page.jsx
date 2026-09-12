@@ -17,206 +17,6 @@ import {
 } from "lucide-react";
 import api from "@/lib/api";
 
-const FALLBACK_PRICING_DATA = [
-  // NIN VALIDATION (RESOLUTION SERVICES)
-  {
-    id: "fb-nv-1",
-    category: "NIN VALIDATION",
-    name: "NIN Validation - Bank Mismatch / BVN Linking Issue",
-    planType: "NIMC CLEARANCE",
-    validity: "Automated / Instant",
-    apiPrice: "₦1,200",
-    userPrice: "₦1,500",
-    status: "Active",
-  },
-  {
-    id: "fb-nv-2",
-    category: "NIN VALIDATION",
-    name: "NIN Validation - Immigration / Passport Clearance (IPE)",
-    planType: "NIS PORTAL SYNC",
-    validity: "Automated / Instant",
-    apiPrice: "₦1,800",
-    userPrice: "₦2,200",
-    status: "Active",
-  },
-  {
-    id: "fb-nv-3",
-    category: "NIN VALIDATION",
-    name: "NIN Validation - No Record Found / Unactivated NIN",
-    planType: "CENTRAL ACTIVATION",
-    validity: "24 - 48 Hours",
-    apiPrice: "₦2,000",
-    userPrice: "₦2,500",
-    status: "Active",
-  },
-  {
-    id: "fb-nv-4",
-    category: "NIN VALIDATION",
-    name: "NIN Validation - Photo / Biometric Capture Error",
-    planType: "BIOMETRIC FIX",
-    validity: "Automated",
-    apiPrice: "₦1,500",
-    userPrice: "₦1,800",
-    status: "Active",
-  },
-  {
-    id: "fb-nv-5",
-    category: "NIN VALIDATION",
-    name: "NIN Validation - Virtual NIN (VNIN) Bypass",
-    planType: "ENTERPRISE BYPASS",
-    validity: "Instant API",
-    apiPrice: "₦250",
-    userPrice: "₦350",
-    status: "Active",
-  },
-  {
-    id: "fb-nv-6",
-    category: "NIN VALIDATION",
-    name: "NIN Validation - SIM Link / Telco Barring Validation",
-    planType: "TELCO UNBLOCK",
-    validity: "Instant",
-    apiPrice: "₦800",
-    userPrice: "₦1,000",
-    status: "Active",
-  },
-
-  // IDENTITY VERIFICATION & PRINT SLIPS
-  {
-    id: "fb-id-1",
-    category: "VERIFICATION",
-    name: "NIN Verification (Standard Slip)",
-    planType: "PDF SLIP GENERATION",
-    validity: "Instant",
-    apiPrice: "₦60",
-    userPrice: "₦100",
-    status: "Active",
-  },
-  {
-    id: "fb-id-2",
-    category: "VERIFICATION",
-    name: "NIN Verification (Premium Plastic Slip Look)",
-    planType: "HIGH-RES PVC SLIP",
-    validity: "Instant",
-    apiPrice: "₦120",
-    userPrice: "₦200",
-    status: "Active",
-  },
-  {
-    id: "fb-id-3",
-    category: "VERIFICATION",
-    name: "BVN Verification (Standard Slip)",
-    planType: "NIBSS VERIFICATION",
-    validity: "Instant",
-    apiPrice: "₦35",
-    userPrice: "₦70",
-    status: "Active",
-  },
-
-  // DATA BUNDLES (MTN)
-  {
-    id: "fb-dt-1",
-    category: "DATA (MTN)",
-    name: "MTN 1GB (SME)",
-    planType: "SME",
-    validity: "30 Days",
-    apiPrice: "₦265",
-    userPrice: "₦290",
-    status: "Active",
-  },
-  {
-    id: "fb-dt-2",
-    category: "DATA (MTN)",
-    name: "MTN 2GB (SME)",
-    planType: "SME",
-    validity: "30 Days",
-    apiPrice: "₦530",
-    userPrice: "₦580",
-    status: "Active",
-  },
-  {
-    id: "fb-dt-3",
-    category: "DATA (MTN)",
-    name: "MTN 5GB (SME)",
-    planType: "SME",
-    validity: "30 Days",
-    apiPrice: "₦1,325",
-    userPrice: "₦1,450",
-    status: "Active",
-  },
-  {
-    id: "fb-dt-4",
-    category: "DATA (MTN)",
-    name: "MTN 10GB (SME)",
-    planType: "SME",
-    validity: "30 Days",
-    apiPrice: "₦2,650",
-    userPrice: "₦2,900",
-    status: "Active",
-  },
-  {
-    id: "fb-dt-5",
-    category: "DATA (MTN)",
-    name: "MTN 20GB (Corporate)",
-    planType: "CORPORATE GIFTING",
-    validity: "30 Days",
-    apiPrice: "₦5,300",
-    userPrice: "₦5,800",
-    status: "Active",
-  },
-  {
-    id: "fb-dt-6",
-    category: "DATA (MTN)",
-    name: "MTN 50GB (Corporate)",
-    planType: "CORPORATE GIFTING",
-    validity: "30 Days",
-    apiPrice: "₦13,250",
-    userPrice: "₦14,500",
-    status: "Active",
-  },
-  {
-    id: "fb-dt-7",
-    category: "DATA (MTN)",
-    name: "MTN 100GB (Corporate)",
-    planType: "CORPORATE GIFTING",
-    validity: "30 Days",
-    apiPrice: "₦26,500",
-    userPrice: "₦29,000",
-    status: "Active",
-  },
-
-  // DATA BUNDLES (AIRTEL, GLO, 9MOBILE)
-  {
-    id: "fb-dt-8",
-    category: "DATA (AIRTEL)",
-    name: "Airtel 1GB (CG)",
-    planType: "CORPORATE GIFTING",
-    validity: "30 Days",
-    apiPrice: "₦270",
-    userPrice: "₦300",
-    status: "Active",
-  },
-  {
-    id: "fb-dt-9",
-    category: "DATA (GLO)",
-    name: "Glo 1GB (Corporate)",
-    planType: "CORPORATE GIFTING",
-    validity: "30 Days",
-    apiPrice: "₦250",
-    userPrice: "₦280",
-    status: "Active",
-  },
-  {
-    id: "fb-dt-10",
-    category: "DATA (9MOBILE)",
-    name: "9mobile 1GB (SME)",
-    planType: "SME",
-    validity: "30 Days",
-    apiPrice: "₦200",
-    userPrice: "₦230",
-    status: "Active",
-  },
-];
-
 const formatMoney = (amount) =>
   `₦${Number(amount || 0).toLocaleString("en-NG", {
     minimumFractionDigits: 0,
@@ -235,65 +35,74 @@ export default function PricingPage() {
         setLoading(true);
         const res = await api.get("/service-pricing").catch(() => null);
 
+        // Karbar ainihin abin da database ke dauke da shi
         const serverItems =
           res?.data?.pricing ||
           res?.data?.data?.pricing ||
           res?.data?.data ||
-          [];
+          (Array.isArray(res?.data) ? res?.data : null);
 
-        if (Array.isArray(serverItems) && serverItems.length > 0) {
-          const formatted = serverItems.map((item) => {
-            const rawCategory = String(item.category || "OTHER").toUpperCase();
-            const sName = String(item.serviceName || "").toUpperCase();
+        if (Array.isArray(serverItems)) {
+          // Idan Admin ya goge kaya, serverItems zai zama empty array ko abubuwan da suka rage kawai
+          const formatted = serverItems
+            .filter((item) => item && item.enabled !== false && item.isDeleted !== true)
+            .map((item) => {
+              const rawCategory = String(item.category || "OTHER").toUpperCase();
+              const sName = String(item.serviceName || item.name || "").toUpperCase();
 
-            // Raba Category cikin tsari
-            let displayCategory = rawCategory;
-            if (rawCategory === "DATA") {
-              if (sName.includes("MTN")) displayCategory = "DATA (MTN)";
-              else if (sName.includes("AIRTEL")) displayCategory = "DATA (AIRTEL)";
-              else if (sName.includes("GLO")) displayCategory = "DATA (GLO)";
-              else if (sName.includes("9MOBILE")) displayCategory = "DATA (9MOBILE)";
-            } else if (rawCategory === "IDENTITY") {
-              if (sName.includes("VALIDATION")) {
-                displayCategory = "NIN VALIDATION";
-              } else {
-                displayCategory = "VERIFICATION";
+              // Raba Category cikin tsari
+              let displayCategory = rawCategory;
+              if (rawCategory === "DATA") {
+                if (sName.includes("MTN")) displayCategory = "DATA (MTN)";
+                else if (sName.includes("AIRTEL")) displayCategory = "DATA (AIRTEL)";
+                else if (sName.includes("GLO")) displayCategory = "DATA (GLO)";
+                else if (sName.includes("9MOBILE")) displayCategory = "DATA (9MOBILE)";
+              } else if (rawCategory === "IDENTITY") {
+                if (sName.includes("VALIDATION")) {
+                  displayCategory = "NIN VALIDATION";
+                } else {
+                  displayCategory = "VERIFICATION";
+                }
               }
-            }
 
-            const meta = item.metadata || {};
-            const validity = meta.validity || (sName.includes("VALIDATION") ? "Automated" : "Instant");
-            const planType =
-              meta.dataType ||
-              meta.slipType ||
-              meta.validationIssue ||
-              item.tier ||
-              "STANDARD";
+              const meta = item.metadata || {};
+              const validity =
+                meta.validity ||
+                item.validity ||
+                (sName.includes("VALIDATION") ? "Automated" : "Instant");
+              const planType =
+                meta.dataType ||
+                meta.slipType ||
+                meta.validationIssue ||
+                item.planType ||
+                item.tier ||
+                "STANDARD";
 
-            const selling = Number(item.sellingPrice || 0);
-            const cost = Number(item.costPrice || 0);
-            const apiDisplay = cost > 0 ? formatMoney(cost) : formatMoney(selling * 0.95);
-            const userDisplay = formatMoney(selling);
+              const selling = Number(item.sellingPrice || item.price || item.userPrice || 0);
+              const cost = Number(item.costPrice || item.apiPrice || 0);
+              const apiDisplay = cost > 0 ? formatMoney(cost) : formatMoney(selling * 0.95);
+              const userDisplay = formatMoney(selling);
 
-            return {
-              id: item.id,
-              category: displayCategory,
-              name: item.serviceName,
-              planType,
-              validity,
-              apiPrice: apiDisplay,
-              userPrice: userDisplay,
-              status: item.enabled ? "Active" : "Disabled",
-            };
-          });
+              return {
+                id: item.id || item._id,
+                category: displayCategory,
+                name: item.serviceName || item.name,
+                planType,
+                validity,
+                apiPrice: apiDisplay,
+                userPrice: userDisplay,
+                status: item.enabled !== false ? "Active" : "Disabled",
+              };
+            });
 
           setPricingList(formatted);
         } else {
-          setPricingList(FALLBACK_PRICING_DATA);
+          // Idan har ba a taba saita wani abu a database ba ko babu connection
+          setPricingList([]);
         }
       } catch (err) {
-        console.error("Pricing load fallback:", err);
-        setPricingList(FALLBACK_PRICING_DATA);
+        console.error("Pricing load error:", err);
+        setPricingList([]);
       } finally {
         setLoading(false);
       }

@@ -24,6 +24,7 @@ const cleanLocalPhone = (phone = "") => {
 // Helper: Duba balance na kowane provider a lokacin da bukata ta taso
 const getProviderBalances = async () => {
   const balances = {
+    ALIHSAN: 0,
     SMARTSMS: 0,
     CLUBCONNECT: 0,
     BILALSADA: 0,
@@ -32,7 +33,31 @@ const getProviderBalances = async () => {
     VTPASS: 0,
   };
 
-  // 1. SmartSMS Balance
+  // 1. Al-Ihsan Datasub Balance
+  const alihsanToken =
+    process.env.ALIHSAN_AUTH_TOKEN ||
+    process.env.ALIHSAN_API_KEY ||
+    "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x";
+
+  if (alihsanToken) {
+    try {
+      const baseUrl = process.env.ALIHSAN_BASE_URL || "https://alihsandatasub.com.ng/api/v1";
+      const res = await axios.get(`${baseUrl}/user.php`, {
+        headers: { Authorization: alihsanToken },
+        timeout: 4000,
+      });
+      balances.ALIHSAN = Number(
+        res.data?.user?.wallet_balance ||
+        res.data?.wallet_balance ||
+        res.data?.balance ||
+        0
+      );
+    } catch (_) {
+      balances.ALIHSAN = 0;
+    }
+  }
+
+  // 2. SmartSMS Balance
   if (process.env.SMARTSMS_API_TOKEN) {
     try {
       const res = await axios.get(
@@ -45,7 +70,7 @@ const getProviderBalances = async () => {
     }
   }
 
-  // 2. ClubConnect Balance
+  // 3. ClubConnect Balance
   if (process.env.CLUBCONNECT_USER_ID && process.env.CLUBCONNECT_API_KEY) {
     try {
       const res = await axios.get(
@@ -58,7 +83,7 @@ const getProviderBalances = async () => {
     }
   }
 
-  // 3. Bilalsadasub Balance
+  // 4. Bilalsadasub Balance
   if (process.env.BILALSADA_API_TOKEN) {
     try {
       const res = await axios.get("https://bilalsadasub.com/api/user", {
@@ -71,7 +96,7 @@ const getProviderBalances = async () => {
     }
   }
 
-  // 4. GlobeConnect Balance
+  // 5. GlobeConnect Balance
   if (process.env.GLOBECONNECT_API_KEY) {
     try {
       const res = await axios.get("https://api.globeconnect.ng/api/user/balance", {
@@ -84,7 +109,7 @@ const getProviderBalances = async () => {
     }
   }
 
-  // 5. Ajah Balance
+  // 6. Ajah Balance
   if (process.env.AJAH_API_KEY) {
     try {
       const res = await axios.get("https://ajah.com.ng/api/user", {
@@ -97,7 +122,7 @@ const getProviderBalances = async () => {
     }
   }
 
-  // 6. VTpass Balance
+  // 7. VTpass Balance
   if (process.env.VTPASS_API_KEY && process.env.VTPASS_SECRET_KEY) {
     try {
       const res = await axios.get("https://api-service.vtpass.com/api/balance", {
@@ -120,7 +145,43 @@ const getProviderBalances = async () => {
 const dispatchAirtimeAPI = async ({ provider, network, phone, amount, reference }) => {
   const normNet = network.toUpperCase();
 
-  // 1. SMARTSMS SOLUTIONS
+  // 1. AL-IHSAN DATASUB
+  if (provider === "ALIHSAN") {
+    const netMap = { MTN: 1, GLO: 2, "9MOBILE": 3, AIRTEL: 4 };
+    const alihsanToken =
+      process.env.ALIHSAN_AUTH_TOKEN ||
+      process.env.ALIHSAN_API_KEY ||
+      "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x";
+
+    const baseUrl = process.env.ALIHSAN_BASE_URL || "https://alihsandatasub.com.ng/api/v1";
+
+    const res = await axios.post(
+      `${baseUrl}/airtime.php`,
+      {
+        network: netMap[normNet] || 1,
+        amount: Number(amount),
+        mobile_number: phone,
+        airtime_type: "VTU",
+        Ported_number: true,
+      },
+      {
+        headers: {
+          Authorization: alihsanToken,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        timeout: 30000,
+      }
+    );
+
+    const statusText = String(res.data?.status || "").toLowerCase();
+    if (statusText === "success" || statusText === "successful" || statusText === "true") {
+      return { success: true, provider: "ALIHSAN", raw: res.data };
+    }
+    throw new Error(res.data?.message || res.data?.error || "Al-Ihsan airtime failed");
+  }
+
+  // 2. SMARTSMS SOLUTIONS
   if (provider === "SMARTSMS") {
     const netMap = { MTN: "1", AIRTEL: "2", GLO: "3", "9MOBILE": "4" };
     const res = await axios.post(
@@ -141,7 +202,7 @@ const dispatchAirtimeAPI = async ({ provider, network, phone, amount, reference 
     throw new Error(res.data?.message || res.data?.error || "SmartSMS airtime failed");
   }
 
-  // 2. CLUBCONNECT
+  // 3. CLUBCONNECT
   if (provider === "CLUBCONNECT") {
     const clubNetMap = {
       MTN: "01",
@@ -163,7 +224,7 @@ const dispatchAirtimeAPI = async ({ provider, network, phone, amount, reference 
     throw new Error(res.data?.msg || res.data?.status || "ClubConnect airtime failed");
   }
 
-  // 3. BILALSADA SUB
+  // 4. BILALSADA SUB
   if (provider === "BILALSADA") {
     const netMap = { MTN: 1, GLO: 2, "9MOBILE": 3, AIRTEL: 4 };
     const res = await axios.post(
@@ -186,7 +247,7 @@ const dispatchAirtimeAPI = async ({ provider, network, phone, amount, reference 
     throw new Error(res.data?.message || "Bilalsadasub airtime failed");
   }
 
-  // 4. GLOBECONNECT
+  // 5. GLOBECONNECT
   if (provider === "GLOBECONNECT") {
     const res = await axios.post(
       "https://api.globeconnect.ng/api/airtime",
@@ -210,7 +271,7 @@ const dispatchAirtimeAPI = async ({ provider, network, phone, amount, reference 
     throw new Error(res.data?.message || "GlobeConnect airtime failed");
   }
 
-  // 5. AJAH API
+  // 6. AJAH API
   if (provider === "AJAH") {
     const res = await axios.post(
       "https://ajah.com.ng/api/topup",
@@ -234,7 +295,7 @@ const dispatchAirtimeAPI = async ({ provider, network, phone, amount, reference 
     throw new Error(res.data?.message || "Ajah airtime failed");
   }
 
-  // 6. VTPASS
+  // 7. VTPASS
   if (provider === "VTPASS") {
     const serviceMap = {
       MTN: "mtn",
@@ -448,11 +509,18 @@ exports.purchaseAirtime = async ({ user, network, phone, amount, reference }) =>
     }
   }
 
-  // 6. TAFARKI NA BIYU: SMART CASCADING API (IDAN GSM GATEWAY OFFLINE NE KO YA SAMU CIKAS)
+  // 6. TAFARKI NA BIYU: SMART CASCADING API
   const balances = await getProviderBalances();
   const providerErrors = [];
 
+  const hasAlIhsan = Boolean(
+    process.env.ALIHSAN_AUTH_TOKEN ||
+    process.env.ALIHSAN_API_KEY ||
+    "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x"
+  );
+
   const allProviders = [
+    { name: "ALIHSAN", balance: balances.ALIHSAN, hasEnv: hasAlIhsan },
     { name: "SMARTSMS", balance: balances.SMARTSMS, hasEnv: Boolean(process.env.SMARTSMS_API_TOKEN) },
     { name: "CLUBCONNECT", balance: balances.CLUBCONNECT, hasEnv: Boolean(process.env.CLUBCONNECT_API_KEY) },
     { name: "BILALSADA", balance: balances.BILALSADA, hasEnv: Boolean(process.env.BILALSADA_API_TOKEN) },

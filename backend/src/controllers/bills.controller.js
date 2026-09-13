@@ -1,6 +1,18 @@
 const billsService = require("../services/bills.service");
 const prisma = require("../config/prisma");
 
+// Nemi Al-Ihsan service idan yana nan a folder
+let alIhsanService = null;
+try {
+  alIhsanService = require("../services/alIhsanService");
+} catch (_) {
+  try {
+    alIhsanService = require("./alIhsanService");
+  } catch (e) {
+    alIhsanService = null;
+  }
+}
+
 /* ======================================================
    CABLE TV CONTROLLERS
 ====================================================== */
@@ -55,14 +67,40 @@ exports.verifyCable = async (req, res) => {
       });
     }
 
-    const result = await billsService.validateCableIUC({
-      cableTv: normalizedProvider,
-      smartCardNo: normalizedCardNo,
-    });
+    let result = null;
+
+    // A. Gwada billsService da farko
+    if (typeof billsService.validateCableIUC === "function") {
+      try {
+        result = await billsService.validateCableIUC({
+          cableTv: normalizedProvider,
+          smartCardNo: normalizedCardNo,
+        });
+      } catch (err) {
+        console.warn("billsService validateCableIUC failed, trying Al-Ihsan:", err.message);
+      }
+    }
+
+    // B. Gwada Al-Ihsan Service idan na farko bai yi ba
+    if (!result && alIhsanService && typeof alIhsanService.validateCableIUC === "function") {
+      const alIhsanRes = await alIhsanService.validateCableIUC({
+        cableCompany: normalizedProvider.toUpperCase(),
+        iucNumber: normalizedCardNo,
+      });
+
+      if (alIhsanRes.success) {
+        result = alIhsanRes.data;
+      }
+    }
+
+    if (!result) {
+      throw new Error("Unable to verify SmartCard with available gateways.");
+    }
 
     const customerName =
       result.customerName ||
       result.Customer_Name ||
+      result.customer_name ||
       result.name ||
       result.raw?.customer_name ||
       "Verified Customer";
@@ -121,31 +159,75 @@ exports.purchaseCable = async (req, res) => {
       });
     }
 
-    // Idempotency: Tabbatar ba a sake maimaita reference ba
-    if (reference) {
-      const existingTx = await prisma.transaction.findUnique({
-        where: { reference: String(reference).trim() },
+    // Idempotency
+    const txRef = reference ? String(reference).trim() : `AYAX_CABLE_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+    const existingTx = await prisma.transaction.findUnique({
+      where: { reference: txRef },
+    });
+    if (existingTx) {
+      return res.status(409).json({
+        success: false,
+        code: "DUPLICATE_REFERENCE",
+        message: "A transaction with this reference has already been processed.",
+        transaction: existingTx,
       });
-      if (existingTx) {
-        return res.status(409).json({
-          success: false,
-          code: "DUPLICATE_REFERENCE",
-          message: "A transaction with this reference has already been processed.",
-          transaction: existingTx,
+    }
+
+    let result = null;
+
+    // A. Gwada billsService
+    if (typeof billsService.purchaseCable === "function") {
+      try {
+        result = await billsService.purchaseCable({
+          user,
+          apiKey: req.apiKey,
+          cableTv: normalizedProvider,
+          packageCode: normalizedPackage,
+          smartCardNo: normalizedCardNo,
+          phone: String(phone || phoneNumber || user.phone || ""),
+          amount: finalAmount,
+          reference: txRef,
         });
+      } catch (err) {
+        console.warn("billsService purchaseCable failed, falling back to Al-Ihsan:", err.message);
       }
     }
 
-    const result = await billsService.purchaseCable({
-      user,
-      apiKey: req.apiKey,
-      cableTv: normalizedProvider,
-      packageCode: normalizedPackage,
-      smartCardNo: normalizedCardNo,
-      phone: String(phone || phoneNumber || user.phone || ""),
-      amount: finalAmount,
-      reference,
-    });
+    // B. Fallback zuwa Al-Ihsan kai-tsaye idan na farko bai yi ba
+    if (!result && alIhsanService && typeof alIhsanService.purchaseCableSubscription === "function") {
+      const alIhsanRes = await alIhsanService.purchaseCableSubscription({
+        cableCompany: normalizedProvider.toUpperCase(),
+        cablePlan: normalizedPackage,
+        iucNumber: normalizedCardNo,
+      });
+
+      if (alIhsanRes.success) {
+        result = {
+          provider: "ALIHSAN",
+          raw: alIhsanRes.data,
+          status: "SUCCESSFUL",
+        };
+
+        await prisma.transaction.create({
+          data: {
+            userId: user.id,
+            type: "DEBIT",
+            service: `${normalizedProvider.toUpperCase()} CABLE`,
+            amount: finalAmount,
+            status: "SUCCESSFUL",
+            reference: txRef,
+            description: `Cable subscription to ${normalizedCardNo} via ALIHSAN`,
+          },
+        });
+      } else {
+        throw new Error(alIhsanRes.message || "Al-Ihsan cable subscription failed.");
+      }
+    }
+
+    if (!result) {
+      throw new Error("Cable TV purchase failed across available gateways.");
+    }
 
     return res.status(200).json({
       success: true,
@@ -221,15 +303,42 @@ exports.verifyMeter = async (req, res) => {
       });
     }
 
-    const result = await billsService.validateMeterNumber({
-      disco: normalizedDisco,
-      meterNo: normalizedMeterNo,
-      meterType: normalizedMeterType,
-    });
+    let result = null;
+
+    // A. Gwada billsService
+    if (typeof billsService.validateMeterNumber === "function") {
+      try {
+        result = await billsService.validateMeterNumber({
+          disco: normalizedDisco,
+          meterNo: normalizedMeterNo,
+          meterType: normalizedMeterType,
+        });
+      } catch (err) {
+        console.warn("billsService validateMeterNumber failed, trying Al-Ihsan:", err.message);
+      }
+    }
+
+    // B. Gwada Al-Ihsan
+    if (!result && alIhsanService && typeof alIhsanService.validateElectricityMeter === "function") {
+      const alIhsanRes = await alIhsanService.validateElectricityMeter({
+        discoName: normalizedDisco.toUpperCase(),
+        meterNumber: normalizedMeterNo,
+        meterType: normalizedMeterType.toUpperCase(),
+      });
+
+      if (alIhsanRes.success) {
+        result = alIhsanRes.data;
+      }
+    }
+
+    if (!result) {
+      throw new Error("Unable to verify meter number with available gateways.");
+    }
 
     const customerName =
       result.customerName ||
       result.Customer_Name ||
+      result.customer_name ||
       result.name ||
       result.raw?.customer_name ||
       "Verified Meter Customer";
@@ -287,31 +396,79 @@ exports.purchaseElectricity = async (req, res) => {
       });
     }
 
-    // Idempotency: Tabbatar ba a sake maimaita reference ba
-    if (reference) {
-      const existingTx = await prisma.transaction.findUnique({
-        where: { reference: String(reference).trim() },
+    // Idempotency
+    const txRef = reference ? String(reference).trim() : `AYAX_ELEC_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+    const existingTx = await prisma.transaction.findUnique({
+      where: { reference: txRef },
+    });
+    if (existingTx) {
+      return res.status(409).json({
+        success: false,
+        code: "DUPLICATE_REFERENCE",
+        message: "A transaction with this reference has already been processed.",
+        transaction: existingTx,
       });
-      if (existingTx) {
-        return res.status(409).json({
-          success: false,
-          code: "DUPLICATE_REFERENCE",
-          message: "A transaction with this reference has already been processed.",
-          transaction: existingTx,
+    }
+
+    let result = null;
+
+    // A. Gwada billsService da farko
+    if (typeof billsService.purchaseElectricity === "function") {
+      try {
+        result = await billsService.purchaseElectricity({
+          user,
+          apiKey: req.apiKey,
+          disco: normalizedDisco,
+          meterNo: normalizedMeterNo,
+          meterType: normalizedMeterType,
+          amount: finalAmount,
+          phone: String(phone || phoneNumber || user.phone || ""),
+          reference: txRef,
         });
+      } catch (err) {
+        console.warn("billsService purchaseElectricity failed, falling back to Al-Ihsan:", err.message);
       }
     }
 
-    const result = await billsService.purchaseElectricity({
-      user,
-      apiKey: req.apiKey,
-      disco: normalizedDisco,
-      meterNo: normalizedMeterNo,
-      meterType: normalizedMeterType,
-      amount: finalAmount,
-      phone: String(phone || phoneNumber || user.phone || ""),
-      reference,
-    });
+    // B. Fallback zuwa Al-Ihsan kai-tsaye
+    if (!result && alIhsanService && typeof alIhsanService.payElectricityBill === "function") {
+      const alIhsanRes = await alIhsanService.payElectricityBill({
+        discoName: normalizedDisco.toUpperCase(),
+        meterNumber: normalizedMeterNo,
+        amount: finalAmount,
+        customerPhone: String(phone || phoneNumber || user.phone || "08011111111"),
+        meterType: normalizedMeterType.toUpperCase(),
+      });
+
+      if (alIhsanRes.success) {
+        const raw = alIhsanRes.data;
+        result = {
+          provider: "ALIHSAN",
+          token: raw?.token || raw?.meter_token || raw?.purchased_code || null,
+          units: raw?.units || null,
+          raw,
+        };
+
+        await prisma.transaction.create({
+          data: {
+            userId: user.id,
+            type: "DEBIT",
+            service: `${normalizedDisco.toUpperCase()} ELECTRICITY`,
+            amount: finalAmount,
+            status: "SUCCESSFUL",
+            reference: txRef,
+            description: `Electricity purchase for meter ${normalizedMeterNo} via ALIHSAN`,
+          },
+        });
+      } else {
+        throw new Error(alIhsanRes.message || "Al-Ihsan power payment failed.");
+      }
+    }
+
+    if (!result) {
+      throw new Error("Electricity purchase failed across available gateways.");
+    }
 
     return res.status(200).json({
       success: true,

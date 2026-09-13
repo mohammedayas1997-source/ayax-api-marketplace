@@ -3,6 +3,7 @@ const axios = require("axios");
 // 1. DUBA WALLET BALANCE NA KOWANE PROVIDER
 const getProviderBalances = async () => {
   const balances = {
+    ALIHSAN: 0,
     SMARTSMS: 0,
     CLUBCONNECT: 0,
     BILALSADA: 0,
@@ -10,6 +11,30 @@ const getProviderBalances = async () => {
     AJAH: 0,
     VTPASS: 0,
   };
+
+  // Al-Ihsan Datasub
+  const alihsanToken =
+    process.env.ALIHSAN_AUTH_TOKEN ||
+    process.env.ALIHSAN_API_KEY ||
+    "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x";
+
+  if (alihsanToken) {
+    try {
+      const baseUrl = process.env.ALIHSAN_BASE_URL || "https://alihsandatasub.com.ng/api/v1";
+      const res = await axios.get(`${baseUrl}/user.php`, {
+        headers: { Authorization: alihsanToken },
+        timeout: 4000,
+      });
+      balances.ALIHSAN = Number(
+        res.data?.user?.wallet_balance ||
+        res.data?.wallet_balance ||
+        res.data?.balance ||
+        0
+      );
+    } catch (_) {
+      balances.ALIHSAN = 0;
+    }
+  }
 
   // SmartSMS
   if (process.env.SMARTSMS_API_TOKEN) {
@@ -102,7 +127,14 @@ exports.routeElectricity = async ({ disco, meterNo, meterType, amount, phone, re
   const normDisco = disco.toLowerCase().trim();
   const cleanPhone = phone || "08011111111";
 
+  const hasAlIhsan = Boolean(
+    process.env.ALIHSAN_AUTH_TOKEN ||
+    process.env.ALIHSAN_API_KEY ||
+    "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x"
+  );
+
   const allProviders = [
+    { name: "ALIHSAN", balance: balances.ALIHSAN, hasEnv: hasAlIhsan },
     { name: "SMARTSMS", balance: balances.SMARTSMS, hasEnv: Boolean(process.env.SMARTSMS_API_TOKEN) },
     { name: "CLUBCONNECT", balance: balances.CLUBCONNECT, hasEnv: Boolean(process.env.CLUBCONNECT_API_KEY) },
     { name: "BILALSADA", balance: balances.BILALSADA, hasEnv: Boolean(process.env.BILALSADA_API_TOKEN) },
@@ -122,6 +154,47 @@ exports.routeElectricity = async ({ disco, meterNo, meterType, amount, phone, re
   for (const provider of candidates) {
     try {
       console.log(`⚡ [POWER DISPATCH]: Trying ${provider} for Meter ${meterNo}...`);
+
+      // 0. AL-IHSAN DATASUB
+      if (provider === "ALIHSAN") {
+        const alihsanToken =
+          process.env.ALIHSAN_AUTH_TOKEN ||
+          process.env.ALIHSAN_API_KEY ||
+          "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x";
+
+        const baseUrl = process.env.ALIHSAN_BASE_URL || "https://alihsandatasub.com.ng/api/v1";
+
+        const res = await axios.post(
+          `${baseUrl}/electricity.php`,
+          {
+            disco_name: normDisco.toUpperCase(),
+            meter_number: meterNo,
+            meter_type: meterType.toUpperCase(),
+            amount: Number(amount),
+            customer_phone: cleanPhone,
+            reference: reference,
+          },
+          {
+            headers: {
+              Authorization: alihsanToken,
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            timeout: 35000,
+          }
+        );
+
+        const st = String(res.data?.status || "").toLowerCase();
+        if (st === "success" || st === "successful" || res.data?.token) {
+          return {
+            provider: "ALIHSAN",
+            token: res.data?.token || res.data?.meter_token || res.data?.purchased_code,
+            units: res.data?.units || "",
+            raw: res.data,
+          };
+        }
+        throw new Error(res.data?.message || res.data?.error || "Al-Ihsan power dispatch failed");
+      }
 
       // A. SMARTSMS
       if (provider === "SMARTSMS") {
@@ -325,7 +398,14 @@ exports.routeCable = async ({ cableTv, packageCode, smartCardNo, phone, referenc
   const normCable = cableTv.toLowerCase().trim();
   const cleanPhone = phone || "08011111111";
 
+  const hasAlIhsan = Boolean(
+    process.env.ALIHSAN_AUTH_TOKEN ||
+    process.env.ALIHSAN_API_KEY ||
+    "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x"
+  );
+
   const allProviders = [
+    { name: "ALIHSAN", balance: balances.ALIHSAN, hasEnv: hasAlIhsan },
     { name: "SMARTSMS", balance: balances.SMARTSMS, hasEnv: Boolean(process.env.SMARTSMS_API_TOKEN) },
     { name: "CLUBCONNECT", balance: balances.CLUBCONNECT, hasEnv: Boolean(process.env.CLUBCONNECT_API_KEY) },
     { name: "BILALSADA", balance: balances.BILALSADA, hasEnv: Boolean(process.env.BILALSADA_API_TOKEN) },
@@ -345,6 +425,41 @@ exports.routeCable = async ({ cableTv, packageCode, smartCardNo, phone, referenc
   for (const provider of candidates) {
     try {
       console.log(`📺 [CABLE DISPATCH]: Trying ${provider} for ${smartCardNo}...`);
+
+      // 0. AL-IHSAN DATASUB
+      if (provider === "ALIHSAN") {
+        const alihsanToken =
+          process.env.ALIHSAN_AUTH_TOKEN ||
+          process.env.ALIHSAN_API_KEY ||
+          "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x";
+
+        const baseUrl = process.env.ALIHSAN_BASE_URL || "https://alihsandatasub.com.ng/api/v1";
+
+        const res = await axios.post(
+          `${baseUrl}/cablesub.php`,
+          {
+            cablename: normCable.toUpperCase(),
+            cableplan: packageCode,
+            smart_card_number: smartCardNo,
+            customer_phone: cleanPhone,
+            reference: reference,
+          },
+          {
+            headers: {
+              Authorization: alihsanToken,
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            timeout: 35000,
+          }
+        );
+
+        const st = String(res.data?.status || "").toLowerCase();
+        if (st === "success" || st === "successful") {
+          return { provider: "ALIHSAN", raw: res.data };
+        }
+        throw new Error(res.data?.message || res.data?.error || "Al-Ihsan Cable Failed");
+      }
 
       // A. SMARTSMS
       if (provider === "SMARTSMS") {

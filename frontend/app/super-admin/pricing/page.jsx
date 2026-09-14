@@ -38,15 +38,23 @@ const PRESET_SERVICES = [
   { label: "Cable TV Subscription", category: "CABLE", code: "CABLE_TV" },
 ];
 
-const DATA_TYPES = ["SME", "GIFTING", "CORPORATE GIFTING", "DIRECT"];
+const DATA_TYPES = [
+  "SME",
+  "GIFTING",
+  "CORPORATE GIFTING",
+  "DIRECT",
+  "OTHER",
+];
 
 const DATA_SIZES = [
   "500MB",
+  "750MB",
   "1GB",
   "1.5GB",
   "2GB",
   "3GB",
   "5GB",
+  "7GB",
   "10GB",
   "15GB",
   "20GB",
@@ -54,6 +62,7 @@ const DATA_SIZES = [
   "50GB",
   "75GB",
   "100GB",
+  "OTHER",
 ];
 
 const VALIDITY_OPTIONS = [
@@ -85,7 +94,9 @@ const TIERS = ["REGULAR", "STANDARD", "PREMIUM"];
 const EMPTY_FORM = {
   selectedService: "MTN Data",
   dataType: "SME",
+  customDataType: "",
   dataSize: "1GB",
+  customDataSize: "",
   validity: "30 Days",
   serviceCode: "MTN_DATA_SME_1GB_30DAYS",
   serviceName: "MTN Data SME 1GB (30 Days)",
@@ -211,15 +222,25 @@ export default function SuperPricingPage() {
     let sName = updated.selectedService;
     let sCode = normalizeCode(updated.selectedService);
 
+    const effectiveType =
+      updated.dataType === "OTHER"
+        ? updated.customDataType.trim() || "CUSTOM"
+        : updated.dataType;
+
+    const effectiveSize =
+      updated.dataSize === "OTHER"
+        ? updated.customDataSize.trim() || "CUSTOM"
+        : updated.dataSize;
+
     if (isData) {
-      sName = `${updated.selectedService} ${updated.dataType} ${updated.dataSize} (${updated.validity})`;
+      sName = `${updated.selectedService} ${effectiveType} ${effectiveSize} (${updated.validity})`;
       sCode = normalizeCode(
-        `${updated.selectedService}_${updated.dataType}_${updated.dataSize}_${updated.validity}`
+        `${updated.selectedService}_${effectiveType}_${effectiveSize}_${updated.validity}`
       );
     }
 
     const autoFeatures = isData
-      ? `Instant Delivery\nValidity: ${updated.validity}\nType: ${updated.dataType}\nAPI Automated`
+      ? `Instant Delivery\nValidity: ${updated.validity}\nType: ${effectiveType}\nAPI Automated`
       : `High Speed Verification\nAutomated Response\n24/7 Uptime`;
 
     return {
@@ -242,7 +263,13 @@ export default function SuperPricingPage() {
   };
 
   const updateForm = (field, value) => {
-    setForm((current) => ({ ...current, [field]: value }));
+    setForm((current) => {
+      const updated = { ...current, [field]: value };
+      if (field === "customDataType" || field === "customDataSize") {
+        return syncServiceDetails(updated);
+      }
+      return updated;
+    });
   };
 
   const filteredPricing = useMemo(() => {
@@ -293,7 +320,9 @@ export default function SuperPricingPage() {
     setForm({
       selectedService: item.serviceName,
       dataType: "SME",
+      customDataType: "",
       dataSize: "1GB",
+      customDataSize: "",
       validity: "30 Days",
       serviceCode: item.serviceCode,
       serviceName: item.serviceName,
@@ -816,6 +845,36 @@ export default function SuperPricingPage() {
                         onChange={(value) => handleSelectionChange("dataSize", value)}
                         options={DATA_SIZES}
                       />
+
+                      {/* OPTIONAL CUSTOM DATA PLAN TYPE INPUT */}
+                      {form.dataType === "OTHER" && (
+                        <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-3 sm:col-span-1">
+                          <FormInput
+                            label="Custom Plan Type (e.g. DC, Gifting, Coupon)"
+                            value={form.customDataType}
+                            onChange={(value) => updateForm("customDataType", value)}
+                            placeholder="e.g. DC, Direct Coupon, Special"
+                            required
+                          />
+                        </div>
+                      )}
+
+                      {/* OPTIONAL CUSTOM DATA SIZE INPUT */}
+                      {form.dataSize === "OTHER" && (
+                        <div
+                          className={`rounded-2xl border border-cyan-500/30 bg-cyan-500/5 p-3 ${
+                            form.dataType === "OTHER" ? "sm:col-span-1" : "sm:col-span-2"
+                          }`}
+                        >
+                          <FormInput
+                            label="Custom Data Size / Volume (e.g. 250MB, 2.5GB, 12GB)"
+                            value={form.customDataSize}
+                            onChange={(value) => updateForm("customDataSize", value)}
+                            placeholder="e.g. 2.5GB, 750MB, 12GB"
+                            required
+                          />
+                        </div>
+                      )}
 
                       <div className="sm:col-span-2">
                         <FormSelect

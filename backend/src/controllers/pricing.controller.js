@@ -1,5 +1,7 @@
 const prisma = require("../config/prisma");
 const { emitEvent } = require("../config/socket");
+const { PrismaClient } = require("@prisma/client");
+const prisma = new PrismaClient();
 
 const ALLOWED_TIERS = ["REGULAR", "STANDARD", "PREMIUM"];
 
@@ -680,5 +682,62 @@ exports.deletePricing = async (req, res) => {
     });
   } catch (error) {
     return sendControllerError(res, error, "Unable to delete pricing.");
+  }
+};
+exports.getUserPricingList = async (req, res) => {
+  try {
+    const userId = req.user?.id || req.user?._id;
+
+    // 1. Dauko ainihin farashin kowa da kowa daga ServicePricing
+    let plans = await prisma.servicePricing.findMany({
+      where: { enabled: true },
+      orderBy: { sellingPrice: "asc" }
+    });
+
+    // 2. Duba ko wannan mutumin yana da Activated Private Tier
+    let privateProfile = null;
+    if (userId) {
+      privateProfile = await prisma.privateTierWhitelist.findFirst({
+        where: {
+          userId: userId,
+          isActive: true,
+          status: "APPROVED"
+        }
+      });
+    }
+
+    // 3. Idan yana da Private Tier, canza masa farashin a asirce
+    const tailoredPlans = plans.map((plan) => {
+      let finalPrice = plan.sellingPrice;
+      let isCustomRate = false;
+
+      if (privateProfile) {
+        if (plan.category?.toLowerCase() === "data" || plan.serviceCode?.includes("DATA")) {
+          // Idan akwai fixed custom price na MTN misali
+          if (privateProfile.customMtnPrice && plan.serviceCode?.includes("MTN")) {
+            finalPrice = privateProfile.customMtnPrice;
+            isCustomRate = true;
+          } else if (privateProfile.discountPerGb) {
+            // Cire ragin da aka saita masa
+            finalPrice = Math.max(plan.sellingPrice - privateProfile.discountPerGb, 0);
+            isCustomRate = true;
+          }
+        }
+      }
+
+      return {
+        ...plan,
+        sellingPrice: finalPrice, // Wannan farashin ne zai nuna a frontend dinsa
+        isCustomRate: isCustomRate // Don sanar da frontend dinsa cewa nasa ne na musamman
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      isVipMember: Boolean(privateProfile),
+      data: tailoredPlans
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
   }
 };

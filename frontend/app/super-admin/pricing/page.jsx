@@ -19,6 +19,9 @@ import {
   AlertCircle,
   TrendingUp,
   Layers,
+  KeyRound,
+  UserCheck,
+  Zap,
 } from "lucide-react";
 
 import SuperSidebar from "../components/SuperSidebar";
@@ -89,7 +92,7 @@ const CATEGORIES = [
   "OTHER",
 ];
 
-const TIERS = ["REGULAR", "STANDARD", "PREMIUM"];
+const TIERS = ["REGULAR", "STANDARD", "PREMIUM", "SECRET_VIP"];
 
 const EMPTY_FORM = {
   selectedService: "MTN Data",
@@ -102,11 +105,13 @@ const EMPTY_FORM = {
   serviceName: "MTN Data SME 1GB (30 Days)",
   category: "DATA",
   applyToAllTiers: true,
+  includeSecretVip: true,
   singleTier: "REGULAR",
   costPrice: "",
   regularPrice: "",
   standardPrice: "",
   premiumPrice: "",
+  secretVipPrice: "",
   singleSellingPrice: "",
   currency: "NGN",
   enabled: true,
@@ -146,7 +151,9 @@ const normalizePricing = (item = {}) => ({
 });
 
 export default function SuperPricingPage() {
+  const [activeTab, setActiveTab] = useState("pricing"); // 'pricing' ko 'whitelist'
   const [pricing, setPricing] = useState([]);
+  const [vipRequests, setVipRequests] = useState([]);
   const [form, setForm] = useState(EMPTY_FORM);
   const [selectedPricing, setSelectedPricing] = useState(null);
 
@@ -156,6 +163,13 @@ export default function SuperPricingPage() {
   const [statusFilter, setStatusFilter] = useState("ALL");
 
   const [modalOpen, setModalOpen] = useState(false);
+  const [vipModalOpen, setVipModalOpen] = useState(false);
+  const [selectedVipUser, setSelectedVipUser] = useState(null);
+  const [vipForm, setVipForm] = useState({
+    customMtnPrice: "",
+    discountPerGb: "30",
+  });
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -176,22 +190,32 @@ export default function SuperPricingPage() {
     return normalized;
   }, []);
 
+  const fetchVipRequests = useCallback(async () => {
+    try {
+      const res = await api.get("/private-tier/admin/requests");
+      const list = res.data?.data || [];
+      setVipRequests(Array.isArray(list) ? list : []);
+    } catch (err) {
+      console.warn("Could not fetch VIP requests:", err?.message);
+    }
+  }, []);
+
   const loadPricing = useCallback(
     async ({ silent = false } = {}) => {
       try {
         if (silent) setRefreshing(true);
         else setLoading(true);
         setMessage("");
-        await fetchPricing();
+        await Promise.all([fetchPricing(), fetchVipRequests()]);
       } catch (error) {
         setMessageType("error");
-        setMessage(getErrorMessage(error, "Unable to load service pricing."));
+        setMessage(getErrorMessage(error, "Unable to load service telemetry."));
       } finally {
         setLoading(false);
         setRefreshing(false);
       }
     },
-    [fetchPricing]
+    [fetchPricing, fetchVipRequests]
   );
 
   useEffect(() => {
@@ -202,7 +226,10 @@ export default function SuperPricingPage() {
     if (token) socket.auth = { token };
     if (!socket.connected) socket.connect();
 
-    const handlePricingUpdate = () => fetchPricing().catch(console.error);
+    const handlePricingUpdate = () => {
+      fetchPricing().catch(console.error);
+      fetchVipRequests().catch(console.error);
+    };
 
     socket.on("pricing-created", handlePricingUpdate);
     socket.on("pricing-updated", handlePricingUpdate);
@@ -215,7 +242,7 @@ export default function SuperPricingPage() {
       socket.off("pricing-status-updated", handlePricingUpdate);
       socket.off("pricing-deleted", handlePricingUpdate);
     };
-  }, [loadPricing, fetchPricing]);
+  }, [loadPricing, fetchPricing, fetchVipRequests]);
 
   const syncServiceDetails = (updated) => {
     const isData = updated.category === "DATA";
@@ -305,8 +332,9 @@ export default function SuperPricingPage() {
       active: pricing.filter((item) => item.enabled).length,
       disabled: pricing.filter((item) => !item.enabled).length,
       profit: totalProfit,
+      pendingVip: vipRequests.filter((r) => !r.isActive).length,
     };
-  }, [pricing]);
+  }, [pricing, vipRequests]);
 
   const openCreateModal = () => {
     setSelectedPricing(null);
@@ -328,11 +356,13 @@ export default function SuperPricingPage() {
       serviceName: item.serviceName,
       category: item.category,
       applyToAllTiers: false,
+      includeSecretVip: false,
       singleTier: item.tier,
       costPrice: String(item.costPrice),
       regularPrice: "",
       standardPrice: "",
       premiumPrice: "",
+      secretVipPrice: "",
       singleSellingPrice: String(item.sellingPrice),
       currency: item.currency,
       enabled: item.enabled,
@@ -378,9 +408,7 @@ export default function SuperPricingPage() {
       setMessage("");
 
       if (selectedPricing || !form.applyToAllTiers) {
-        const sellingPrice = Number(
-          selectedPricing ? form.singleSellingPrice : form.singleSellingPrice
-        );
+        const sellingPrice = Number(form.singleSellingPrice);
 
         if (!Number.isFinite(sellingPrice) || sellingPrice < 0) {
           throw new Error("Enter a valid selling price.");
@@ -393,7 +421,7 @@ export default function SuperPricingPage() {
           serviceCode,
           serviceName,
           category: form.category,
-          tier: selectedPricing ? form.singleTier : form.singleTier,
+          tier: form.singleTier,
           costPrice,
           sellingPrice,
           currency: form.currency,
@@ -416,18 +444,28 @@ export default function SuperPricingPage() {
           !Number.isFinite(stdPrice) ||
           !Number.isFinite(prmPrice)
         ) {
-          throw new Error("Please provide selling prices for all 3 tiers.");
+          throw new Error("Please provide selling prices for Regular, Standard & Premium tiers.");
         }
 
         if (regPrice < costPrice || stdPrice < costPrice || prmPrice < costPrice) {
-          throw new Error("Selling price cannot be lower than cost price on any tier.");
+          throw new Error("Selling price cannot be lower than cost price on standard tiers.");
         }
 
         const tierPayloads = [
           { tier: "REGULAR", sellingPrice: regPrice },
           { tier: "STANDARD", sellingPrice: stdPrice },
           { tier: "PREMIUM", sellingPrice: prmPrice },
-        ].map((t) => ({
+        ];
+
+        // Idan an saita Hidden VIP Rate
+        if (form.includeSecretVip && form.secretVipPrice) {
+          const vipPrice = Number(form.secretVipPrice);
+          if (Number.isFinite(vipPrice) && vipPrice >= costPrice) {
+            tierPayloads.push({ tier: "SECRET_VIP", sellingPrice: vipPrice });
+          }
+        }
+
+        const payloads = tierPayloads.map((t) => ({
           serviceCode,
           serviceName,
           category: form.category,
@@ -439,9 +477,7 @@ export default function SuperPricingPage() {
           features,
         }));
 
-        await Promise.all(
-          tierPayloads.map((payload) => api.post("/pricing", payload))
-        );
+        await Promise.all(payloads.map((p) => api.post("/pricing", p)));
       }
 
       setMessageType("success");
@@ -492,6 +528,36 @@ export default function SuperPricingPage() {
       setMessage(getErrorMessage(error, "Unable to delete pricing."));
     } finally {
       setWorkingId("");
+    }
+  };
+
+  // VIP WHITELIST ACTIVATION HANDLER
+  const handleActivateVipSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedVipUser) return;
+
+    try {
+      setSubmitting(true);
+      const payload = {
+        targetUserId: selectedVipUser.userId,
+        customMtnPrice: vipForm.customMtnPrice ? Number(vipForm.customMtnPrice) : null,
+        discountPerGb: vipForm.discountPerGb ? Number(vipForm.discountPerGb) : 30,
+        action: "APPROVE",
+      };
+
+      const res = await api.post("/private-tier/admin/activate", payload);
+      if (res.data?.success) {
+        setMessageType("success");
+        setMessage(`Activated ${selectedVipUser.userEmail} on Private Secret Tier!`);
+        setVipModalOpen(false);
+        setSelectedVipUser(null);
+        await fetchVipRequests();
+      }
+    } catch (err) {
+      setMessageType("error");
+      setMessage(getErrorMessage(err, "VIP activation failed."));
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -549,7 +615,7 @@ export default function SuperPricingPage() {
         <SuperSidebar />
 
         <section className="min-w-0 flex-1 p-4 sm:p-6 lg:p-10">
-          <SuperTopbar title="Service Pricing Manager" />
+          <SuperTopbar title="Service Pricing & VIP Engine" />
 
           {message && (
             <div
@@ -572,10 +638,15 @@ export default function SuperPricingPage() {
             </div>
           )}
 
+          {/* TELEMETRY CARDS */}
           <section className="mb-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
             <Stat title="Total Pricing" value={stats.total} icon={<Tags />} />
             <Stat title="Active" value={stats.active} icon={<Power />} />
-            <Stat title="Disabled" value={stats.disabled} icon={<AlertTriangle />} />
+            <Stat
+              title="Pending VIP Requests"
+              value={stats.pendingVip}
+              icon={<KeyRound className="text-amber-400" />}
+            />
             <Stat
               title="Combined Margin"
               value={formatNaira(stats.profit)}
@@ -583,213 +654,333 @@ export default function SuperPricingPage() {
             />
           </section>
 
-          <section className="mb-8 rounded-3xl border border-slate-800 bg-slate-900 p-5">
-            <div className="grid gap-4 xl:grid-cols-[1fr_180px_180px_180px_auto_auto]">
-              <div className="flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950 px-4">
-                <Search size={18} className="text-slate-500" />
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search service, code, category or tier..."
-                  className="w-full bg-transparent py-4 outline-none"
-                />
-              </div>
-
-              <FilterSelect
-                value={categoryFilter}
-                onChange={setCategoryFilter}
-                options={["ALL", ...CATEGORIES]}
-              />
-
-              <FilterSelect
-                value={tierFilter}
-                onChange={setTierFilter}
-                options={["ALL", ...TIERS]}
-              />
-
-              <FilterSelect
-                value={statusFilter}
-                onChange={setStatusFilter}
-                options={["ALL", "ACTIVE", "DISABLED"]}
-              />
-
-              <button
-                type="button"
-                onClick={() => loadPricing({ silent: true })}
-                disabled={refreshing}
-                className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-5 py-3 font-semibold hover:bg-slate-700 disabled:opacity-50"
-              >
-                <RefreshCcw
-                  size={18}
-                  className={refreshing ? "animate-spin" : ""}
-                />
-                Refresh
-              </button>
-
-              <button
-                type="button"
-                onClick={openCreateModal}
-                className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 font-semibold hover:bg-blue-700"
-              >
-                <PlusCircle size={18} />
-                Add Pricing
-              </button>
-            </div>
-          </section>
-
-          <div className="mb-6 flex justify-end">
+          {/* DUAL MODE SELECTOR: STANDARD PRICING VS PRIVATE VIP WHITELIST */}
+          <div className="mb-6 flex gap-3 border-b border-slate-800 pb-4">
             <button
-              type="button"
-              onClick={exportCsv}
-              className="flex items-center gap-2 rounded-xl bg-slate-800 px-5 py-3 font-semibold hover:bg-slate-700"
+              onClick={() => setActiveTab("pricing")}
+              className={`flex items-center gap-2 rounded-xl px-5 py-3 font-semibold transition ${
+                activeTab === "pricing"
+                  ? "bg-blue-600 text-white"
+                  : "bg-slate-900 text-slate-400 hover:bg-slate-800"
+              }`}
             >
-              <Download size={18} />
-              Export CSV
+              <Tags size={18} />
+              Public Service Pricing ({pricing.length})
+            </button>
+
+            <button
+              onClick={() => setActiveTab("whitelist")}
+              className={`flex items-center gap-2 rounded-xl px-5 py-3 font-semibold transition ${
+                activeTab === "whitelist"
+                  ? "bg-amber-600 text-white"
+                  : "bg-slate-900 text-slate-400 hover:bg-slate-800"
+              }`}
+            >
+              <ShieldCheck size={18} />
+              Private VIP Whitelist Approvals ({vipRequests.length})
+              {stats.pendingVip > 0 && (
+                <span className="rounded-full bg-red-500 px-2 py-0.5 text-xs text-white">
+                  {stats.pendingVip}
+                </span>
+              )}
             </button>
           </div>
 
-          {loading ? (
-            <div className="rounded-3xl border border-slate-800 bg-slate-900 p-8 text-slate-400">
-              <div className="flex items-center gap-3">
-                <LoaderCircle size={22} className="animate-spin" />
-                Loading pricing...
-              </div>
-            </div>
-          ) : filteredPricing.length === 0 ? (
-            <div className="rounded-3xl border border-dashed border-slate-700 bg-slate-900 p-10 text-center">
-              <Tags size={44} className="mx-auto text-slate-600" />
-              <h2 className="mt-5 text-xl font-bold">No pricing record found</h2>
-              <p className="mt-2 text-slate-400">
-                Create Regular, Standard or Premium pricing for a service.
-              </p>
-              <button
-                type="button"
-                onClick={openCreateModal}
-                className="mx-auto mt-6 flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 font-semibold hover:bg-blue-700"
-              >
-                <PlusCircle size={18} />
-                Add First Pricing
-              </button>
-            </div>
-          ) : (
-            <section className="grid gap-5 xl:grid-cols-2">
-              {filteredPricing.map((item) => {
-                const profit = item.sellingPrice - item.costPrice;
-                const profitPercent =
-                  item.costPrice > 0 ? (profit / item.costPrice) * 100 : 0;
-                const working = workingId === item.id;
+          {/* TAB 1: STANDARD SERVICE PRICING */}
+          {activeTab === "pricing" && (
+            <>
+              <section className="mb-8 rounded-3xl border border-slate-800 bg-slate-900 p-5">
+                <div className="grid gap-4 xl:grid-cols-[1fr_180px_180px_180px_auto_auto]">
+                  <div className="flex items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950 px-4">
+                    <Search size={18} className="text-slate-500" />
+                    <input
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      placeholder="Search service, code, category or tier..."
+                      className="w-full bg-transparent py-4 outline-none"
+                    />
+                  </div>
 
-                return (
-                  <article
-                    key={item.id}
-                    className="rounded-3xl border border-slate-800 bg-slate-900 p-6"
+                  <FilterSelect
+                    value={categoryFilter}
+                    onChange={setCategoryFilter}
+                    options={["ALL", ...CATEGORIES]}
+                  />
+
+                  <FilterSelect
+                    value={tierFilter}
+                    onChange={setTierFilter}
+                    options={["ALL", ...TIERS]}
+                  />
+
+                  <FilterSelect
+                    value={statusFilter}
+                    onChange={setStatusFilter}
+                    options={["ALL", "ACTIVE", "DISABLED"]}
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => loadPricing({ silent: true })}
+                    disabled={refreshing}
+                    className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 px-5 py-3 font-semibold hover:bg-slate-700 disabled:opacity-50"
                   >
-                    <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <div className="flex flex-wrap items-center gap-3">
-                          <h2 className="text-xl font-bold">
-                            {item.serviceName}
-                          </h2>
-                          <TierBadge tier={item.tier} />
-                          <span
-                            className={`rounded-full px-3 py-1 text-xs ${
+                    <RefreshCcw
+                      size={18}
+                      className={refreshing ? "animate-spin" : ""}
+                    />
+                    Refresh
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={openCreateModal}
+                    className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 font-semibold hover:bg-blue-700"
+                  >
+                    <PlusCircle size={18} />
+                    Add Pricing
+                  </button>
+                </div>
+              </section>
+
+              <div className="mb-6 flex justify-end">
+                <button
+                  type="button"
+                  onClick={exportCsv}
+                  className="flex items-center gap-2 rounded-xl bg-slate-800 px-5 py-3 font-semibold hover:bg-slate-700"
+                >
+                  <Download size={18} />
+                  Export CSV
+                </button>
+              </div>
+
+              {loading ? (
+                <div className="rounded-3xl border border-slate-800 bg-slate-900 p-8 text-slate-400">
+                  <div className="flex items-center gap-3">
+                    <LoaderCircle size={22} className="animate-spin" />
+                    Loading pricing telemetry...
+                  </div>
+                </div>
+              ) : filteredPricing.length === 0 ? (
+                <div className="rounded-3xl border border-dashed border-slate-700 bg-slate-900 p-10 text-center">
+                  <Tags size={44} className="mx-auto text-slate-600" />
+                  <h2 className="mt-5 text-xl font-bold">No pricing record found</h2>
+                  <p className="mt-2 text-slate-400">
+                    Create Regular, Standard, Premium or Secret VIP pricing for a service.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={openCreateModal}
+                    className="mx-auto mt-6 flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 font-semibold hover:bg-blue-700"
+                  >
+                    <PlusCircle size={18} />
+                    Add First Pricing
+                  </button>
+                </div>
+              ) : (
+                <section className="grid gap-5 xl:grid-cols-2">
+                  {filteredPricing.map((item) => {
+                    const profit = item.sellingPrice - item.costPrice;
+                    const profitPercent =
+                      item.costPrice > 0 ? (profit / item.costPrice) * 100 : 0;
+                    const working = workingId === item.id;
+
+                    return (
+                      <article
+                        key={item.id}
+                        className="rounded-3xl border border-slate-800 bg-slate-900 p-6"
+                      >
+                        <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-3">
+                              <h2 className="text-xl font-bold">
+                                {item.serviceName}
+                              </h2>
+                              <TierBadge tier={item.tier} />
+                              <span
+                                className={`rounded-full px-3 py-1 text-xs ${
+                                  item.enabled
+                                    ? "bg-green-500/10 text-green-400"
+                                    : "bg-red-500/10 text-red-400"
+                                }`}
+                              >
+                                {item.enabled ? "ACTIVE" : "DISABLED"}
+                              </span>
+                            </div>
+                            <p className="mt-2 text-sm text-slate-500">
+                              {item.serviceCode} • {item.category}
+                            </p>
+                          </div>
+                          <ShieldCheck className="text-blue-400" />
+                        </div>
+
+                        <div className="mt-6 grid gap-4 sm:grid-cols-3">
+                          <PriceInfo
+                            label="Cost Price"
+                            value={formatNaira(item.costPrice)}
+                          />
+                          <PriceInfo
+                            label="Selling Price"
+                            value={formatNaira(item.sellingPrice)}
+                          />
+                          <PriceInfo
+                            label="Profit"
+                            value={`${formatNaira(profit)} (${profitPercent.toFixed(
+                              1
+                            )}%)`}
+                          />
+                        </div>
+
+                        {Array.isArray(item.features) && item.features.length > 0 && (
+                          <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950 p-4">
+                            <p className="text-xs uppercase tracking-wide text-slate-500">
+                              Features
+                            </p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {item.features.map((feature) => (
+                                <span
+                                  key={feature}
+                                  className="rounded-full bg-blue-500/10 px-3 py-1 text-xs text-blue-300"
+                                >
+                                  {feature}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="mt-6 grid gap-3 sm:grid-cols-3">
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(item)}
+                            disabled={working}
+                            className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 py-3 font-semibold hover:bg-slate-700 disabled:opacity-50"
+                          >
+                            <Pencil size={17} />
+                            Edit
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => toggleStatus(item)}
+                            disabled={working}
+                            className={`flex items-center justify-center gap-2 rounded-xl py-3 font-semibold disabled:opacity-50 ${
                               item.enabled
-                                ? "bg-green-500/10 text-green-400"
-                                : "bg-red-500/10 text-red-400"
+                                ? "bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20"
+                                : "bg-green-500/10 text-green-400 hover:bg-green-500/20"
                             }`}
                           >
-                            {item.enabled ? "ACTIVE" : "DISABLED"}
-                          </span>
+                            {working ? (
+                              <LoaderCircle size={17} className="animate-spin" />
+                            ) : (
+                              <Power size={17} />
+                            )}
+                            {item.enabled ? "Disable" : "Enable"}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => deletePricing(item)}
+                            disabled={working}
+                            className="flex items-center justify-center gap-2 rounded-xl bg-red-500/10 py-3 font-semibold text-red-400 hover:bg-red-500/20 disabled:opacity-50"
+                          >
+                            <Trash2 size={17} />
+                            Delete
+                          </button>
                         </div>
-                        <p className="mt-2 text-sm text-slate-500">
-                          {item.serviceCode} • {item.category}
-                        </p>
-                      </div>
-                      <ShieldCheck className="text-blue-400" />
-                    </div>
+                      </article>
+                    );
+                  })}
+                </section>
+              )}
+            </>
+          )}
 
-                    <div className="mt-6 grid gap-4 sm:grid-cols-3">
-                      <PriceInfo
-                        label="Cost Price"
-                        value={formatNaira(item.costPrice)}
-                      />
-                      <PriceInfo
-                        label="Selling Price"
-                        value={formatNaira(item.sellingPrice)}
-                      />
-                      <PriceInfo
-                        label="Profit"
-                        value={`${formatNaira(profit)} (${profitPercent.toFixed(
-                          1
-                        )}%)`}
-                      />
-                    </div>
+          {/* TAB 2: PRIVATE VIP WHITELIST APPROVALS */}
+          {activeTab === "whitelist" && (
+            <section className="rounded-3xl border border-slate-800 bg-slate-900 p-6">
+              <div className="mb-6 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl font-bold">API Customers VIP Requests</h3>
+                  <p className="text-sm text-slate-400">
+                    Authorize accounts for dedicated secret wholesale rates on backend dispatch.
+                  </p>
+                </div>
+                <button
+                  onClick={fetchVipRequests}
+                  className="flex items-center gap-2 rounded-xl bg-slate-800 px-4 py-2.5 font-semibold text-slate-300 hover:bg-slate-700"
+                >
+                  <RefreshCcw size={16} /> Refresh Requests
+                </button>
+              </div>
 
-                    {Array.isArray(item.features) && item.features.length > 0 && (
-                      <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950 p-4">
-                        <p className="text-xs uppercase tracking-wide text-slate-500">
-                          Features
-                        </p>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {item.features.map((feature) => (
+              {vipRequests.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-800 p-12 text-center text-slate-500">
+                  <UserCheck size={40} className="mx-auto mb-3 opacity-40" />
+                  No customer has submitted API credentials for VIP activation yet.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-xs uppercase tracking-wider text-slate-500">
+                        <th className="pb-3">Customer Email</th>
+                        <th className="pb-3">API Key Verified</th>
+                        <th className="pb-3">Discount / Custom Rate</th>
+                        <th className="pb-3">Status</th>
+                        <th className="pb-3 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                      {vipRequests.map((req) => (
+                        <tr key={req.id}>
+                          <td className="py-4 font-semibold text-white">
+                            {req.userEmail}
+                          </td>
+                          <td className="py-4 font-mono text-xs text-sky-400">
+                            {req.apiKey ? `${req.apiKey.slice(0, 10)}...${req.apiKey.slice(-6)}` : "None"}
+                          </td>
+                          <td className="py-4 text-slate-300">
+                            {req.customMtnPrice ? `₦${req.customMtnPrice} Fixed` : `₦${req.discountPerGb} Off / GB`}
+                          </td>
+                          <td className="py-4">
                             <span
-                              key={feature}
-                              className="rounded-full bg-blue-500/10 px-3 py-1 text-xs text-blue-300"
+                              className={`rounded-full px-3 py-1 text-xs font-bold ${
+                                req.isActive
+                                  ? "bg-green-500/10 text-green-400"
+                                  : "bg-amber-500/10 text-amber-400"
+                              }`}
                             >
-                              {feature}
+                              {req.isActive ? "ACTIVE VIP" : req.status}
                             </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="mt-6 grid gap-3 sm:grid-cols-3">
-                      <button
-                        type="button"
-                        onClick={() => openEditModal(item)}
-                        disabled={working}
-                        className="flex items-center justify-center gap-2 rounded-xl bg-slate-800 py-3 font-semibold hover:bg-slate-700 disabled:opacity-50"
-                      >
-                        <Pencil size={17} />
-                        Edit
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => toggleStatus(item)}
-                        disabled={working}
-                        className={`flex items-center justify-center gap-2 rounded-xl py-3 font-semibold disabled:opacity-50 ${
-                          item.enabled
-                            ? "bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20"
-                            : "bg-green-500/10 text-green-400 hover:bg-green-500/20"
-                        }`}
-                      >
-                        {working ? (
-                          <LoaderCircle size={17} className="animate-spin" />
-                        ) : (
-                          <Power size={17} />
-                        )}
-                        {item.enabled ? "Disable" : "Enable"}
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => deletePricing(item)}
-                        disabled={working}
-                        className="flex items-center justify-center gap-2 rounded-xl bg-red-500/10 py-3 font-semibold text-red-400 hover:bg-red-500/20 disabled:opacity-50"
-                      >
-                        <Trash2 size={17} />
-                        Delete
-                      </button>
-                    </div>
-                  </article>
-                );
-              })}
+                          </td>
+                          <td className="py-4 text-right">
+                            <button
+                              onClick={() => {
+                                setSelectedVipUser(req);
+                                setVipForm({
+                                  customMtnPrice: req.customMtnPrice ? String(req.customMtnPrice) : "",
+                                  discountPerGb: req.discountPerGb ? String(req.discountPerGb) : "30",
+                                });
+                                setVipModalOpen(true);
+                              }}
+                              className="rounded-xl bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700"
+                            >
+                              {req.isActive ? "Edit Price" : "Configure & Activate"}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </section>
           )}
         </section>
       </div>
 
+      {/* MODAL 1: ADD/EDIT PRICING (TARE DA HIDDEN SECRET_VIP TIER) */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/75 p-4 backdrop-blur-sm">
           <div className="flex min-h-full items-center justify-center py-8">
@@ -846,7 +1037,6 @@ export default function SuperPricingPage() {
                         options={DATA_SIZES}
                       />
 
-                      {/* OPTIONAL CUSTOM DATA PLAN TYPE INPUT */}
                       {form.dataType === "OTHER" && (
                         <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-3 sm:col-span-1">
                           <FormInput
@@ -859,7 +1049,6 @@ export default function SuperPricingPage() {
                         </div>
                       )}
 
-                      {/* OPTIONAL CUSTOM DATA SIZE INPUT */}
                       {form.dataSize === "OTHER" && (
                         <div
                           className={`rounded-2xl border border-cyan-500/30 bg-cyan-500/5 p-3 ${
@@ -888,9 +1077,9 @@ export default function SuperPricingPage() {
                   )}
                 </div>
 
-                {/* SECTION 2: SINGLE TIER OR BATCH MULTI-TIER PRICING */}
+                {/* SECTION 2: BATCH MULTI-TIER WITH SECRET_VIP OPTION */}
                 {!selectedPricing && (
-                  <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4">
+                  <div className="space-y-3 rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4">
                     <label className="flex cursor-pointer items-center gap-3">
                       <input
                         type="checkbox"
@@ -903,6 +1092,21 @@ export default function SuperPricingPage() {
                         Configure & Create All Tiers (Regular, Standard, Premium) at Once
                       </span>
                     </label>
+
+                    {form.applyToAllTiers && (
+                      <label className="flex cursor-pointer items-center gap-3 pl-7">
+                        <input
+                          type="checkbox"
+                          checked={form.includeSecretVip}
+                          onChange={(e) => updateForm("includeSecretVip", e.target.checked)}
+                          className="h-4 w-4 rounded border-slate-700 bg-slate-900 text-amber-500 focus:ring-0"
+                        />
+                        <span className="flex items-center gap-2 text-sm font-medium text-amber-300">
+                          <Zap size={16} />
+                          Include Hidden Private Tier (Secret VIP Whitelist Rate)
+                        </span>
+                      </label>
+                    )}
                   </div>
                 )}
 
@@ -918,7 +1122,7 @@ export default function SuperPricingPage() {
                     required
                   />
 
-                  {/* BATCH PRICING (ALL TIERS) */}
+                  {/* MULTI TIER PRICING INPUTS */}
                   {!selectedPricing && form.applyToAllTiers ? (
                     <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-950 p-4 sm:col-span-2">
                       <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
@@ -956,6 +1160,20 @@ export default function SuperPricingPage() {
                           required
                         />
                       </div>
+
+                      {form.includeSecretVip && (
+                        <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+                          <FormInput
+                            label="Secret VIP / Whitelist Price (₦) [Hidden From Regular Users]"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={form.secretVipPrice}
+                            onChange={(val) => updateForm("secretVipPrice", val)}
+                            placeholder="e.g. 215 (Lowest Backend Price)"
+                          />
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <>
@@ -1043,13 +1261,82 @@ export default function SuperPricingPage() {
                       {selectedPricing
                         ? "Save Changes"
                         : form.applyToAllTiers
-                        ? "Create All 3 Tiers (Regular, Standard, Premium)"
+                        ? `Create Tiers (${form.includeSecretVip ? "Regular, Standard, Premium + VIP" : "Regular, Standard, Premium"})`
                         : "Create Pricing"}
                     </>
                   )}
                 </button>
               </form>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: ACTIVATE CUSTOMER VIP WHITELIST */}
+      {vipModalOpen && selectedVipUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="text-lg font-bold text-white">Configure Private Tier</h3>
+              <button
+                onClick={() => setVipModalOpen(false)}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="mb-4 text-xs text-slate-400">
+              Activating account: <span className="font-semibold text-white">{selectedVipUser.userEmail}</span>
+            </p>
+
+            <form onSubmit={handleActivateVipSubmit} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-300">
+                  Fixed MTN 1GB Rate (₦) (Optional override)
+                </label>
+                <input
+                  type="number"
+                  placeholder="e.g. 215"
+                  value={vipForm.customMtnPrice}
+                  onChange={(e) => setVipForm({ ...vipForm, customMtnPrice: e.target.value })}
+                  className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-300">
+                  Universal Discount Per GB (₦)
+                </label>
+                <input
+                  type="number"
+                  value={vipForm.discountPerGb}
+                  onChange={(e) => setVipForm({ ...vipForm, discountPerGb: e.target.value })}
+                  className="mt-1 w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-sm outline-none focus:border-amber-500"
+                  required
+                />
+                <span className="mt-1 block text-[11px] text-slate-500">
+                  Deduct this margin automatically on every package purchased.
+                </span>
+              </div>
+
+              <div className="mt-6 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setVipModalOpen(false)}
+                  className="flex-1 rounded-xl bg-slate-800 py-3 font-semibold text-slate-300 hover:bg-slate-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="flex-1 rounded-xl bg-amber-600 py-3 font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+                >
+                  {submitting ? "Activating..." : "Authorize & Activate"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -1081,6 +1368,7 @@ function TierBadge({ tier }) {
     REGULAR: "bg-slate-500/10 text-slate-300",
     STANDARD: "bg-blue-500/10 text-blue-400",
     PREMIUM: "bg-purple-500/10 text-purple-400",
+    SECRET_VIP: "bg-amber-500/10 text-amber-400 border border-amber-500/30",
   };
 
   return (

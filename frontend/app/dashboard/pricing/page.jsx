@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import api from "@/lib/api";
+import PricingTable from '../components/PricingTable';
 
 const formatNaira = (val) =>
   `₦${Number(val || 0).toLocaleString("en-NG", {
@@ -120,6 +121,8 @@ export default function PricingPage() {
               className="w-full rounded-2xl border border-slate-800 bg-slate-900 pl-11 pr-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-blue-500 transition-all"
             />
           </div>
+        
+        <PricingTable />
 
           <div className="flex flex-wrap items-center gap-3">
             <select

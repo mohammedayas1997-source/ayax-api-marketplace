@@ -42,8 +42,28 @@ model User {
   walletLedgers       WalletLedger[]
   walletWithdrawals   WalletWithdrawal[]
   webhooks            Webhook[]
+  privateTier     PrivateTierWhitelist?
 
   @@index([lockedUntil])
+}
+model PrivateTierWhitelist {
+  id              String    @id @default(cuid())
+  userId          String    @unique
+  userEmail       String    @unique
+  apiKey          String    @unique
+  isActive        Boolean   @default(false)
+  status          String    @default("PENDING") // PENDING, APPROVED, SUSPENDED
+  discountPerGb   Float     @default(30.0)      // Ragin da kake so a ba shi a kowane GB (misali N30)
+  customMtnPrice  Float?                        // Ko kuma fixed price (misali N220)
+  note            String?                       // Bayanin sirri tsakaninku dashi
+  requestedAt     DateTime  @default(now())
+  activatedAt     DateTime?
+  approvedBy      String?
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([apiKey, isActive])
+  @@index([userId])
 }
 
 model PasswordResetToken {
@@ -840,6 +860,7 @@ enum PackageTier {
   REGULAR
   STANDARD
   PREMIUM
+  SECRET_VIP
 }
 
 enum UserRole {

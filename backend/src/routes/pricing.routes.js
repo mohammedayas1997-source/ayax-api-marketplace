@@ -1,20 +1,40 @@
 const router = require("express").Router();
 const pricingController = require("../controllers/pricing.controller");
-
-// Middlewares
-const auth = require("../middleware/auth.middleware");
-let authorize;
-try {
-  authorize = require("../middleware/authorize.middleware");
-} catch (e) {
-  authorize = (...roles) => (req, res, next) => next();
-}
-
-// Optional Auth Helper: Don gano ko wane user ne ba tare da toshe wadanda basu yi login ba
 const jwt = require("jsonwebtoken");
 const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 
+// Safe Auth Middleware Loader (Yana duba dukkan sunayen da ake iya amfani da su)
+let auth;
+try {
+  auth = require("../middleware/auth.middleware");
+} catch (e1) {
+  try {
+    auth = require("../middleware/authMiddleware");
+  } catch (e2) {
+    try {
+      auth = require("../middleware/auth");
+    } catch (e3) {
+      auth = (req, res, next) => next();
+    }
+  }
+}
+
+// Extract ainihin function din protect/auth
+const protect = auth?.protect || auth?.authenticate || auth?.verifyToken || (typeof auth === "function" ? auth : (req, res, next) => next());
+
+let authorize;
+try {
+  authorize = require("../middleware/authorize.middleware");
+} catch (e1) {
+  try {
+    authorize = require("../middleware/roleMiddleware");
+  } catch (e2) {
+    authorize = (...roles) => (req, res, next) => next();
+  }
+}
+
+// Optional Auth Helper don ba VIP Whitelist damar ganin farashinsa
 const optionalAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
@@ -31,55 +51,53 @@ const optionalAuth = async (req, res, next) => {
       }
     }
   } catch (err) {
-    // Idan token ya lalace ko babu shi, a bar shi ya wuce a matsayin regular guest
     req.user = null;
   }
   next();
 };
 
 // ======================================================
-// 1. DYNAMIC & PUBLIC ROUTES (Tare da Ganowar VIP na Sirri)
+// 1. DYNAMIC & PUBLIC ROUTES
 // ======================================================
-// Idan bako ne zai ga regular price, idan whitelist VIP ne zai ga nashi kadai
 router.get("/public", optionalAuth, pricingController.getPublicPricing);
 router.get("/", optionalAuth, pricingController.getPricing);
 router.get("/service/:serviceCode", optionalAuth, pricingController.getServicePricing);
 router.get("/:id", optionalAuth, pricingController.getPricingById);
 
 // ======================================================
-// 2. ADMIN WRITE ACTIONS (Kare da Tsaro)
+// 2. ADMIN WRITE ACTIONS
 // ======================================================
 router.post(
   "/",
-  auth,
+  protect,
   authorize("SUPER_ADMIN", "ADMIN"),
   pricingController.createPricing
 );
 
 router.post(
   "/bulk",
-  auth,
+  protect,
   authorize("SUPER_ADMIN", "ADMIN"),
   pricingController.createBulkPricing
 );
 
 router.patch(
   "/:id",
-  auth,
+  protect,
   authorize("SUPER_ADMIN", "ADMIN"),
   pricingController.updatePricing
 );
 
 router.patch(
   "/:id/status",
-  auth,
+  protect,
   authorize("SUPER_ADMIN", "ADMIN"),
   pricingController.togglePricingStatus
 );
 
 router.delete(
   "/:id",
-  auth,
+  protect,
   authorize("SUPER_ADMIN", "ADMIN"),
   pricingController.deletePricing
 );

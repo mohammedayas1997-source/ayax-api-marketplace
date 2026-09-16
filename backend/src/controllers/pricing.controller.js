@@ -110,60 +110,57 @@ exports.getPublicPricing = async (req, res) => {
    GET ALL PRICING (ADMIN / DASHBOARD)
    GET /api/v1/pricing
 ====================================================== */
+// A cikin controllers/pricing.controller.js
 exports.getPricing = async (req, res) => {
   try {
-    const { serviceCode, category, tier, enabled, search } = req.query;
+    const userId = req.user?.id || req.user?._id;
 
-    const where = {};
+    // 1. Dauko standard plans
+    let plans = await prisma.servicePricing.findMany({
+      where: { enabled: true, tier: "REGULAR" },
+      orderBy: { sellingPrice: "asc" },
+    });
 
-    if (serviceCode) {
-      where.serviceCode = normalizeCode(serviceCode);
-    }
+    let isVip = false;
 
-    if (category) {
-      where.category = normalizeCode(category);
-    }
+    // 2. Duba ko Admin ya riga ya saka API Key din wannan customer din a PrivateTierWhitelist
+    if (userId) {
+      const vipRecord = await prisma.privateTierWhitelist.findFirst({
+        where: {
+          userId: userId,
+          isActive: true,
+          status: "APPROVED",
+        },
+      });
 
-    if (tier) {
-      const normalizedTier = normalizeTier(tier);
-      if (!ALLOWED_TIERS.includes(normalizedTier)) {
-        return res.status(400).json({
-          success: false,
-          message: "Tier must be REGULAR, STANDARD or PREMIUM.",
+      if (vipRecord) {
+        isVip = true;
+        // Sauya farashin kowane plan ya zama na VIP
+        plans = plans.map((plan) => {
+          let customPrice = plan.sellingPrice;
+          
+          if (vipRecord.customMtnPrice && plan.serviceCode.includes("MTN")) {
+            customPrice = vipRecord.customMtnPrice;
+          } else if (vipRecord.discountPerGb) {
+            customPrice = Math.max(plan.sellingPrice - vipRecord.discountPerGb, 0);
+          }
+
+          return {
+            ...plan,
+            sellingPrice: customPrice,
+            isCustomRate: true,
+          };
         });
       }
-      where.tier = normalizedTier;
     }
-
-    if (enabled !== undefined) {
-      where.enabled = parseBoolean(enabled);
-    }
-
-    if (search) {
-      const searchValue = normalizeText(search);
-      where.OR = [
-        { serviceName: { contains: searchValue, mode: "insensitive" } },
-        { serviceCode: { contains: searchValue, mode: "insensitive" } },
-        { category: { contains: searchValue, mode: "insensitive" } },
-      ];
-    }
-
-    const pricing = await prisma.servicePricing.findMany({
-      where,
-      orderBy: [
-        { category: "asc" },
-        { serviceCode: "asc" },
-        { tier: "asc" },
-      ],
-    });
 
     return res.status(200).json({
       success: true,
-      count: pricing.length,
-      pricing,
+      isVipMember: isVip,
+      data: plans,
     });
   } catch (error) {
-    return sendControllerError(res, error, "Unable to load pricing.");
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 

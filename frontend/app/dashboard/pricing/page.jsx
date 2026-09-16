@@ -2,21 +2,19 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { 
-  Tags, 
   Search, 
   LoaderCircle, 
-  CheckCircle2, 
   Zap, 
   ShieldCheck, 
   Crown,
   Smartphone,
   Wifi,
   FileText,
-  AlertTriangle
+  AlertTriangle,
+  Sparkles
 } from "lucide-react";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import api from "@/lib/api";
-import PricingTable from "@/components/PricingTable";
 
 const formatNaira = (val) =>
   `₦${Number(val || 0).toLocaleString("en-NG", {
@@ -26,6 +24,7 @@ const formatNaira = (val) =>
 
 export default function PricingPage() {
   const [pricing, setPricing] = useState([]);
+  const [isVipMember, setIsVipMember] = useState(false);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
   const [search, setSearch] = useState("");
@@ -40,18 +39,19 @@ export default function PricingPage() {
         setLoading(true);
         setErrorMsg("");
         
-        // Zai kira /pricing/public ko /service-pricing
-        const res = await api.get("/pricing/public").catch(async () => {
-          return await api.get("/service-pricing");
-        });
+        // Kira da api instance domin ya tura Bearer Token dinsa
+        const res = await api.get("/pricing");
 
         const rawList =
-          res.data?.data ||
+          res.data?.data?.pricing ||
           res.data?.pricing ||
+          res.data?.data ||
           (Array.isArray(res.data) ? res.data : []);
 
         if (isMounted) {
           setPricing(Array.isArray(rawList) ? rawList : []);
+          // Duba ko backend ya dawo da VIP status dinsa
+          setIsVipMember(Boolean(res.data?.isVipMember || res.data?.isVip));
         }
       } catch (err) {
         console.error("Pricing fetch error:", err);
@@ -102,6 +102,26 @@ export default function PricingPage() {
       description="Real-time wholesale and retail pricing across all networks, services, and tiers."
     >
       <div className="space-y-6">
+        {/* VIP STATUS BANNER - SHI KADAI ZAI GA WANNAN IN ADMIN YA YI ACTIVATING */}
+        {isVipMember && (
+          <div className="flex items-center justify-between rounded-2xl border border-amber-500/30 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent p-4 text-amber-300">
+            <div className="flex items-center gap-3">
+              <div className="rounded-xl bg-amber-500/20 p-2 text-amber-400">
+                <Sparkles size={20} />
+              </div>
+              <div>
+                <h4 className="font-bold text-sm">Dedicated VIP Wholesale Channel Active</h4>
+                <p className="text-xs text-amber-400/80">
+                  Preferential discounted rates have been applied to your terminal across all data and service gateways.
+                </p>
+              </div>
+            </div>
+            <span className="hidden sm:inline-block rounded-full bg-amber-500/20 px-3 py-1 text-[11px] font-extrabold uppercase tracking-wider text-amber-400 border border-amber-500/30">
+              VIP Whitelisted
+            </span>
+          </div>
+        )}
+
         {errorMsg && (
           <div className="flex items-center gap-3 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-red-300 text-sm">
             <AlertTriangle size={18} className="shrink-0" />
@@ -121,8 +141,6 @@ export default function PricingPage() {
               className="w-full rounded-2xl border border-slate-800 bg-slate-900 pl-11 pr-4 py-3 text-sm text-white placeholder-slate-500 outline-none focus:border-blue-500 transition-all"
             />
           </div>
-        
-        <PricingTable />
 
           <div className="flex flex-wrap items-center gap-3">
             <select
@@ -153,7 +171,7 @@ export default function PricingPage() {
         {loading ? (
           <div className="flex items-center justify-center py-20 text-slate-400 gap-3">
             <LoaderCircle className="animate-spin text-blue-500" size={24} />
-            <span>Fetching latest service rates...</span>
+            <span>Fetching your personal terminal rates...</span>
           </div>
         ) : filteredPricing.length === 0 ? (
           <div className="rounded-3xl border border-slate-800 bg-slate-900/50 p-12 text-center text-slate-500">
@@ -175,16 +193,27 @@ export default function PricingPage() {
                 {filteredPricing.map((item, idx) => {
                   const cat = String(item?.category || "").toUpperCase();
                   const tier = String(item?.tier || "REGULAR").toUpperCase();
+                  const isCustom = Boolean(item?.isCustomRate || isVipMember);
 
                   return (
-                    <tr key={item?.id || idx} className="hover:bg-slate-800/30 transition-colors">
+                    <tr 
+                      key={item?.id || idx} 
+                      className={`transition-colors ${isCustom ? "bg-amber-500/[0.02] hover:bg-amber-500/[0.06]" : "hover:bg-slate-800/30"}`}
+                    >
                       <td className="px-6 py-4 font-semibold text-white">
                         <div className="flex items-center gap-2.5">
                           {cat === "DATA" && <Wifi size={16} className="text-blue-400 shrink-0" />}
                           {cat === "AIRTIME" && <Smartphone size={16} className="text-green-400 shrink-0" />}
                           {cat === "IDENTITY" && <FileText size={16} className="text-amber-400 shrink-0" />}
                           <div>
-                            <div>{item?.serviceName || "Service"}</div>
+                            <div className="flex items-center gap-2">
+                              <span>{item?.serviceName || "Service"}</span>
+                              {isCustom && (
+                                <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-black text-amber-400 border border-amber-500/30">
+                                  VIP RATE
+                                </span>
+                              )}
+                            </div>
                             <div className="text-xs font-mono text-slate-500">{item?.serviceCode || "-"}</div>
                           </div>
                         </div>
@@ -197,21 +226,34 @@ export default function PricingPage() {
                       <td className="px-6 py-4">
                         <span
                           className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                            tier === "PREMIUM"
+                            isCustom
+                              ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                              : tier === "PREMIUM"
                               ? "bg-amber-500/10 text-amber-300 border border-amber-500/20"
                               : tier === "STANDARD"
                               ? "bg-blue-500/10 text-blue-300 border border-blue-500/20"
                               : "bg-slate-800 text-slate-400"
                           }`}
                         >
-                          {tier === "PREMIUM" && <Crown size={12} />}
-                          {tier === "STANDARD" && <Zap size={12} />}
-                          {tier === "REGULAR" && <ShieldCheck size={12} />}
-                          {tier}
+                          {isCustom ? (
+                            <>
+                              <Zap size={12} className="text-amber-400" />
+                              VIP TIER
+                            </>
+                          ) : (
+                            <>
+                              {tier === "PREMIUM" && <Crown size={12} />}
+                              {tier === "STANDARD" && <Zap size={12} />}
+                              {tier === "REGULAR" && <ShieldCheck size={12} />}
+                              {tier}
+                            </>
+                          )}
                         </span>
                       </td>
-                      <td className="px-6 py-4 font-bold text-white text-base">
-                        {formatNaira(item?.sellingPrice)}
+                      <td className="px-6 py-4 font-bold text-base">
+                        <span className={isCustom ? "text-amber-400" : "text-white"}>
+                          {formatNaira(item?.sellingPrice)}
+                        </span>
                       </td>
                       <td className="px-6 py-4 text-xs text-slate-400">
                         {item?.validity || (item?.validityDays ? `${item.validityDays} Days` : "-")}

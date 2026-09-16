@@ -34,8 +34,8 @@ const menu = [
   { name: "Refund", href: "/super-admin/refund", icon: RefreshCcw },
   { name: "Pricing", href: "/super-admin/pricing", icon: Tags },
   { 
-    name: "VIP API Whitelist", 
-    href: "/super-admin/pricing?tab=whitelist", 
+    name: "VIP API Activation", 
+    href: "/super-admin/api-whitelist", 
     icon: KeyRound,
     badge: "VIP" 
   },
@@ -105,12 +105,12 @@ export default function SuperSidebar({ onClose }) {
                 onClick={onClose}
                 className={`flex items-center justify-between rounded-xl px-4 py-3 text-sm font-medium transition-all duration-200 ${
                   active
-                    ? "bg-blue-600 text-white shadow-lg"
+                    ? "bg-blue-600 text-white shadow-lg shadow-blue-600/20"
                     : "text-slate-300 hover:bg-slate-800 hover:text-white"
                 }`}
               >
                 <div className="flex items-center gap-3">
-                  <Icon size={18} />
+                  <Icon size={18} className={active ? "text-white" : "text-slate-400"} />
                   <span>{item.name}</span>
                 </div>
                 {item.badge && (

@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import DashboardLayout from "@/components/layouts/DashboardLayout";
 import api from "@/lib/api";
-import PricingTable from '../components/PricingTable';
+import PricingTable from "@/components/PricingTable";
 
 const formatNaira = (val) =>
   `₦${Number(val || 0).toLocaleString("en-NG", {

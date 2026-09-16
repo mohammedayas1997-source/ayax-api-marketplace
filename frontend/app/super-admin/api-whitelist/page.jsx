@@ -94,7 +94,7 @@ export default function AdminApiWhitelistPage() {
             <div>
               <h1 className="text-2xl font-extrabold tracking-tight">VIP API Activation Terminal</h1>
               <p className="text-xs text-slate-400">
-                Paste customer's API Key directly from WhatsApp to activate secret wholesale pricing.
+                Authorize customer API keys directly to enable dedicated wholesale pricing.
               </p>
             </div>
           </div>
@@ -136,14 +136,14 @@ export default function AdminApiWhitelistPage() {
               Direct Whitelist Authorization
             </h2>
             <p className="text-xs text-slate-400 mt-1">
-              Once activated, this customer alone will see your discounted secret rates on their dashboard.
+              Once activated, this customer will automatically access their dedicated rates on their dashboard.
             </p>
           </div>
 
           <form onSubmit={handleActivate} className="space-y-5">
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
-                Paste Customer's API Key *
+                Paste Customer API Key *
               </label>
               <input
                 type="text"
@@ -154,7 +154,7 @@ export default function AdminApiWhitelistPage() {
                 required
               />
               <span className="mt-1.5 block text-[11px] text-slate-500">
-                Kwafi ainihin API Key ɗin da ya turo maka a WhatsApp ka liƙa shi a nan.
+                Paste the customer's active live API key here.
               </span>
             </div>
 
@@ -172,7 +172,7 @@ export default function AdminApiWhitelistPage() {
                   className="w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3 text-xs text-white outline-none transition focus:border-amber-500"
                 />
                 <span className="mt-1 block text-[11px] text-slate-500">
-                  Idan ka cika wannan, MTN 1GB zai koma wannan farashin kai-tsaye.
+                  Fixed unit rate override specifically for MTN 1GB packages.
                 </span>
               </div>
 
@@ -190,20 +190,20 @@ export default function AdminApiWhitelistPage() {
                   required
                 />
                 <span className="mt-1 block text-[11px] text-slate-500">
-                  Ragin da za a cire masa a kowane 1GB na duk sauran plans.
+                  Universal discount deducted across all other package tiers.
                 </span>
               </div>
             </div>
 
             <div>
               <label className="block text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
-                Internal Note (Optional)
+                Internal Reference Note (Optional)
               </label>
               <input
                 type="text"
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder="e.g. WhatsApp VIP Partner - Kano Hub (Daily Volume 1TB)"
+                placeholder="e.g. Authorized partner - High volume terminal"
                 className="w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3 text-xs text-white outline-none transition focus:border-amber-500"
               />
             </div>

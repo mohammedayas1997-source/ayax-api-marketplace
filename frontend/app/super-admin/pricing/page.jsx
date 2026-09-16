@@ -35,6 +35,11 @@ const PRESET_SERVICES = [
   { label: "Glo Data", category: "DATA", code: "GLO" },
   { label: "9mobile Data", category: "DATA", code: "9MOBILE" },
   { label: "Airtime Topup", category: "AIRTIME", code: "AIRTIME" },
+  { label: "NIMC Validation (General)", category: "IDENTITY", code: "NIMC_VALIDATION" },
+  { label: "NIMC IPE Clearance", category: "IDENTITY", code: "NIMC_IPE_CLEARANCE" },
+  { label: "NIMC Bank Mismatch Validation", category: "IDENTITY", code: "NIMC_BANK_MISMATCH" },
+  { label: "NIMC Unactivated Record Sync", category: "IDENTITY", code: "NIMC_UNACTIVATED_SYNC" },
+  { label: "NIMC Slip Verification & Print", category: "IDENTITY", code: "NIMC_SLIP_VERIFICATION" },
   { label: "NIN Verification", category: "IDENTITY", code: "NIN_VERIFY" },
   { label: "BVN Verification", category: "IDENTITY", code: "BVN_VERIFY" },
   { label: "Electricity Bill", category: "ELECTRICITY", code: "ELECTRICITY" },
@@ -151,7 +156,7 @@ const normalizePricing = (item = {}) => ({
 });
 
 export default function SuperPricingPage() {
-  const [activeTab, setActiveTab] = useState("pricing"); // 'pricing' ko 'whitelist'
+  const [activeTab, setActiveTab] = useState("pricing");
   const [pricing, setPricing] = useState([]);
   const [vipRequests, setVipRequests] = useState([]);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -246,6 +251,7 @@ export default function SuperPricingPage() {
 
   const syncServiceDetails = (updated) => {
     const isData = updated.category === "DATA";
+    const isIdentity = updated.category === "IDENTITY";
     let sName = updated.selectedService;
     let sCode = normalizeCode(updated.selectedService);
 
@@ -264,11 +270,20 @@ export default function SuperPricingPage() {
       sCode = normalizeCode(
         `${updated.selectedService}_${effectiveType}_${effectiveSize}_${updated.validity}`
       );
+    } else if (isIdentity) {
+      const foundPreset = PRESET_SERVICES.find((s) => s.label === updated.selectedService);
+      sCode = foundPreset?.code || normalizeCode(updated.selectedService);
+      sName = updated.selectedService;
     }
 
-    const autoFeatures = isData
-      ? `Instant Delivery\nValidity: ${updated.validity}\nType: ${effectiveType}\nAPI Automated`
-      : `High Speed Verification\nAutomated Response\n24/7 Uptime`;
+    let autoFeatures = `High Speed Verification\nAutomated Response\n24/7 Uptime`;
+    if (isData) {
+      autoFeatures = `Instant Delivery\nValidity: ${updated.validity}\nType: ${effectiveType}\nAPI Automated`;
+    } else if (sCode.includes("IPE")) {
+      autoFeatures = `Direct IPE Clearance\nNIMC Portal Synchronization\nInstant Clearance Confirmation`;
+    } else if (sCode.includes("NIMC") || sCode.includes("NIN")) {
+      autoFeatures = `Direct NIMC Routing\nInstant Validation & Slip Verification\nBiometric Data Synchronization`;
+    }
 
     return {
       ...updated,
@@ -457,7 +472,6 @@ export default function SuperPricingPage() {
           { tier: "PREMIUM", sellingPrice: prmPrice },
         ];
 
-        // Idan an saita Hidden VIP Rate
         if (form.includeSecretVip && form.secretVipPrice) {
           const vipPrice = Number(form.secretVipPrice);
           if (Number.isFinite(vipPrice) && vipPrice >= costPrice) {
@@ -531,7 +545,6 @@ export default function SuperPricingPage() {
     }
   };
 
-  // VIP WHITELIST ACTIVATION HANDLER
   const handleActivateVipSubmit = async (e) => {
     e.preventDefault();
     if (!selectedVipUser) return;
@@ -654,7 +667,7 @@ export default function SuperPricingPage() {
             />
           </section>
 
-          {/* DUAL MODE SELECTOR: STANDARD PRICING VS PRIVATE VIP WHITELIST */}
+          {/* DUAL MODE SELECTOR */}
           <div className="mb-6 flex gap-3 border-b border-slate-800 pb-4">
             <button
               onClick={() => setActiveTab("pricing")}
@@ -980,7 +993,7 @@ export default function SuperPricingPage() {
         </section>
       </div>
 
-      {/* MODAL 1: ADD/EDIT PRICING (TARE DA HIDDEN SECRET_VIP TIER) */}
+      {/* MODAL 1: ADD/EDIT PRICING */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/75 p-4 backdrop-blur-sm">
           <div className="flex min-h-full items-center justify-center py-8">
@@ -1005,7 +1018,7 @@ export default function SuperPricingPage() {
               </div>
 
               <form onSubmit={submitPricing} className="space-y-5">
-                {/* SECTION 1: SERVICE & DATA CONFIGURATION */}
+                {/* SECTION 1: SERVICE CONFIGURATION */}
                 <div className="grid gap-5 rounded-2xl border border-slate-800/80 bg-slate-950/50 p-4 sm:grid-cols-2">
                   <FormSelect
                     label="Service Name (Select Service)"
@@ -1122,7 +1135,6 @@ export default function SuperPricingPage() {
                     required
                   />
 
-                  {/* MULTI TIER PRICING INPUTS */}
                   {!selectedPricing && form.applyToAllTiers ? (
                     <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-950 p-4 sm:col-span-2">
                       <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">

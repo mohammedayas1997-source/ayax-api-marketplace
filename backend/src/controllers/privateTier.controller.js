@@ -118,26 +118,74 @@ exports.directAdminActivate = async (req, res) => {
       return res.status(400).json({ success: false, message: "API Key is required" });
     }
 
-    // Nemo mai wannan key din
-    const keyRecord = await prisma.apiKey.findFirst({
-      where: { key: apiKey.trim() },
-      include: { user: true },
-    });
+    const cleanKey = apiKey.trim();
+    let targetUserId = null;
+    let targetEmail = null;
 
-    if (!keyRecord) {
+    // 1. Check in ApiKey table
+    try {
+      if (prisma.apiKey) {
+        const keyRecord = await prisma.apiKey.findFirst({
+          where: {
+            OR: [
+              { key: cleanKey },
+              { apiKey: cleanKey },
+              ...(prisma.apiKey.fields?.token ? [{ token: cleanKey }] : []),
+            ],
+          },
+          include: { user: true },
+        });
+
+        if (keyRecord) {
+          targetUserId = keyRecord.userId || keyRecord.user?.id;
+          targetEmail = keyRecord.user?.email || keyRecord.email;
+        }
+      }
+    } catch (e) {
+      console.warn("ApiKey table lookup fallback:", e.message);
+    }
+
+    // 2. Check directly in User table
+    if (!targetUserId) {
+      const userRecord = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { apiKey: cleanKey },
+            ...(prisma.user.fields?.liveApiKey ? [{ liveApiKey: cleanKey }] : []),
+            ...(prisma.user.fields?.secretKey ? [{ secretKey: cleanKey }] : []),
+          ],
+        },
+      });
+
+      if (userRecord) {
+        targetUserId = userRecord.id;
+        targetEmail = userRecord.email;
+      }
+    }
+
+    // 3. Fallback: Search by email if key contains an email address
+    if (!targetUserId && cleanKey.includes("@")) {
+      const userByEmail = await prisma.user.findUnique({
+        where: { email: cleanKey },
+      });
+      if (userByEmail) {
+        targetUserId = userByEmail.id;
+        targetEmail = userByEmail.email;
+      }
+    }
+
+    if (!targetUserId) {
       return res.status(404).json({
         success: false,
-        message: "No user found with this API Key. Tabbatar key din yana database.",
+        message: `No account matches this API Key (${cleanKey.slice(0, 12)}...). Verify that the customer has generated a live key on their dashboard.`,
       });
     }
 
-    const targetUserId = keyRecord.userId;
-    const targetEmail = keyRecord.user?.email;
-
+    // 4. Activate or update whitelist record
     const activated = await prisma.privateTierWhitelist.upsert({
       where: { userId: targetUserId },
       update: {
-        apiKey: apiKey.trim(),
+        apiKey: cleanKey,
         userEmail: targetEmail,
         isActive: true,
         status: "APPROVED",
@@ -145,28 +193,29 @@ exports.directAdminActivate = async (req, res) => {
         approvedBy: req.user?.email || "SuperAdmin",
         customMtnPrice: customMtnPrice ? Number(customMtnPrice) : null,
         discountPerGb: discountPerGb ? Number(discountPerGb) : 30.0,
-        note: note || "Activated directly by SuperAdmin",
+        note: note || "Manual SuperAdmin activation",
       },
       create: {
         userId: targetUserId,
         userEmail: targetEmail,
-        apiKey: apiKey.trim(),
+        apiKey: cleanKey,
         isActive: true,
         status: "APPROVED",
         activatedAt: new Date(),
         approvedBy: req.user?.email || "SuperAdmin",
         customMtnPrice: customMtnPrice ? Number(customMtnPrice) : null,
         discountPerGb: discountPerGb ? Number(discountPerGb) : 30.0,
-        note: note || "Activated directly by SuperAdmin",
+        note: note || "Manual SuperAdmin activation",
       },
     });
 
     return res.status(200).json({
       success: true,
-      message: `API Key activated successfully for ${targetEmail}!`,
+      message: `VIP Wholesale Channel successfully activated for ${targetEmail}!`,
       data: activated,
     });
   } catch (error) {
+    console.error("Direct activation error:", error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };

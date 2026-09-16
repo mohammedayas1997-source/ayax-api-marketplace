@@ -122,7 +122,7 @@ exports.directAdminActivate = async (req, res) => {
     let targetUserId = null;
     let targetEmail = null;
 
-    // 1. Check in ApiKey table
+    // 1. Primary Lookup: Search via the dedicated ApiKey table
     try {
       if (prisma.apiKey) {
         const keyRecord = await prisma.apiKey.findFirst({
@@ -130,7 +130,6 @@ exports.directAdminActivate = async (req, res) => {
             OR: [
               { key: cleanKey },
               { apiKey: cleanKey },
-              ...(prisma.apiKey.fields?.token ? [{ token: cleanKey }] : []),
             ],
           },
           include: { user: true },
@@ -138,32 +137,39 @@ exports.directAdminActivate = async (req, res) => {
 
         if (keyRecord) {
           targetUserId = keyRecord.userId || keyRecord.user?.id;
-          targetEmail = keyRecord.user?.email || keyRecord.email;
+          targetEmail = keyRecord.user?.email;
         }
       }
-    } catch (e) {
-      console.warn("ApiKey table lookup fallback:", e.message);
+    } catch (err) {
+      console.warn("Direct ApiKey table lookup bypassed:", err.message);
     }
 
-    // 2. Check directly in User table
+    // 2. Relation Lookup: Query User via the apiKeys relation
     if (!targetUserId) {
-      const userRecord = await prisma.user.findFirst({
-        where: {
-          OR: [
-            { apiKey: cleanKey },
-            ...(prisma.user.fields?.liveApiKey ? [{ liveApiKey: cleanKey }] : []),
-            ...(prisma.user.fields?.secretKey ? [{ secretKey: cleanKey }] : []),
-          ],
-        },
-      });
+      try {
+        const userWithKey = await prisma.user.findFirst({
+          where: {
+            apiKeys: {
+              some: {
+                OR: [
+                  { key: cleanKey },
+                  { apiKey: cleanKey },
+                ],
+              },
+            },
+          },
+        });
 
-      if (userRecord) {
-        targetUserId = userRecord.id;
-        targetEmail = userRecord.email;
+        if (userWithKey) {
+          targetUserId = userWithKey.id;
+          targetEmail = userWithKey.email;
+        }
+      } catch (err) {
+        console.warn("User apiKeys relation lookup bypassed:", err.message);
       }
     }
 
-    // 3. Fallback: Search by email if key contains an email address
+    // 3. Fallback: Lookup by User Email
     if (!targetUserId && cleanKey.includes("@")) {
       const userByEmail = await prisma.user.findUnique({
         where: { email: cleanKey },
@@ -177,11 +183,11 @@ exports.directAdminActivate = async (req, res) => {
     if (!targetUserId) {
       return res.status(404).json({
         success: false,
-        message: `No account matches this API Key (${cleanKey.slice(0, 12)}...). Verify that the customer has generated a live key on their dashboard.`,
+        message: `No account matches this API Key (${cleanKey.slice(0, 12)}...). Verify that the key exists in the database.`,
       });
     }
 
-    // 4. Activate or update whitelist record
+    // 4. Upsert Private Whitelist Record
     const activated = await prisma.privateTierWhitelist.upsert({
       where: { userId: targetUserId },
       update: {

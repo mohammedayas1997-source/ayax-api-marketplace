@@ -1,7 +1,8 @@
+const crypto = require("crypto");
 const { PrismaClient } = require("@prisma/client");
 const prisma = new PrismaClient();
 
-// 1. User yana aika buƙatar shiga tsarin bayan fage tare da API Key ɗinsa
+// 1. Submit request for private activation
 exports.submitForPrivateActivation = async (req, res) => {
   try {
     const userId = req.user.id || req.user._id;
@@ -11,9 +12,20 @@ exports.submitForPrivateActivation = async (req, res) => {
       return res.status(400).json({ success: false, message: "API Key is required" });
     }
 
-    // Tabbatar da cewa API Key din na asalin wannan user din ne
+    const cleanKey = apiKey.trim();
+    const keyHash = crypto.createHash("sha256").update(cleanKey).digest("hex");
+
+    // Verify key ownership either plain or hashed
     const verifiedKey = await prisma.apiKey.findFirst({
-      where: { key: apiKey, userId: userId, status: "ACTIVE" },
+      where: {
+        userId: userId,
+        status: "ACTIVE",
+        OR: [
+          { key: cleanKey },
+          { key: keyHash },
+          ...(prisma.apiKey.fields?.hashedKey ? [{ hashedKey: keyHash }] : []),
+        ],
+      },
       include: { user: true },
     });
 
@@ -24,23 +36,22 @@ exports.submitForPrivateActivation = async (req, res) => {
       });
     }
 
-    // Ajiye buƙatar a teburin sirri
     const record = await prisma.privateTierWhitelist.upsert({
       where: { userId: userId },
       update: {
-        apiKey: apiKey,
+        apiKey: cleanKey,
         userEmail: verifiedKey.user.email,
         status: "PENDING",
         isActive: false,
-        note: note || "Custom rate requested",
+        note: note || "Custom wholesale rate requested",
       },
       create: {
         userId: userId,
         userEmail: verifiedKey.user.email,
-        apiKey: apiKey,
+        apiKey: cleanKey,
         status: "PENDING",
         isActive: false,
-        note: note || "Custom rate requested",
+        note: note || "Custom wholesale rate requested",
       },
     });
 
@@ -54,20 +65,20 @@ exports.submitForPrivateActivation = async (req, res) => {
   }
 };
 
-// 2. Admin yana duba dukkan masu neman tsarin sirri
+// 2. Fetch all pending and whitelisted accounts
 exports.getPendingActivations = async (req, res) => {
   try {
-    const pendingList = await prisma.privateTierWhitelist.findMany({
+    const list = await prisma.privateTierWhitelist.findMany({
       orderBy: { requestedAt: "desc" },
     });
 
-    return res.status(200).json({ success: true, count: pendingList.length, data: pendingList });
+    return res.status(200).json({ success: true, count: list.length, data: list });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// 3. Admin yana kunna wa mutum (Activate) tare da sanya farashin da ake so
+// 3. Approve or Suspend user tier
 exports.activateUserPrivateTier = async (req, res) => {
   try {
     const { targetUserId, customMtnPrice, discountPerGb, action = "APPROVE" } = req.body;
@@ -79,7 +90,7 @@ exports.activateUserPrivateTier = async (req, res) => {
           isActive: true,
           status: "APPROVED",
           activatedAt: new Date(),
-          approvedBy: req.user.email || "SuperAdmin",
+          approvedBy: req.user?.email || "SuperAdmin",
           customMtnPrice: customMtnPrice ? Number(customMtnPrice) : null,
           discountPerGb: discountPerGb ? Number(discountPerGb) : 30.0,
         },
@@ -87,11 +98,10 @@ exports.activateUserPrivateTier = async (req, res) => {
 
       return res.status(200).json({
         success: true,
-        message: `User [${activated.userEmail}] successfully activated on private secret tier!`,
+        message: `Account [${activated.userEmail}] successfully activated on private VIP wholesale tier!`,
         data: activated,
       });
     } else {
-      // Reject ko Suspend
       const suspended = await prisma.privateTierWhitelist.update({
         where: { userId: targetUserId },
         data: {
@@ -102,7 +112,7 @@ exports.activateUserPrivateTier = async (req, res) => {
 
       return res.status(200).json({
         success: true,
-        message: `User private tier suspended.`,
+        message: "User private tier suspended.",
         data: suspended,
       });
     }
@@ -110,88 +120,113 @@ exports.activateUserPrivateTier = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// 4. SuperAdmin Direct Terminal Activation
 exports.directAdminActivate = async (req, res) => {
   try {
     const { apiKey, customMtnPrice, discountPerGb, note } = req.body;
 
     if (!apiKey) {
-      return res.status(400).json({ success: false, message: "API Key is required" });
+      return res.status(400).json({ success: false, message: "API Key or Customer Email is required." });
     }
 
-    const cleanKey = apiKey.trim();
+    const cleanInput = apiKey.trim();
     let targetUserId = null;
     let targetEmail = null;
 
-    // 1. Primary Lookup: Search via the dedicated ApiKey table
-    try {
-      if (prisma.apiKey) {
-        const keyRecord = await prisma.apiKey.findFirst({
+    // A. Direct Email Search (SuperAdmin can paste user email directly)
+    if (cleanInput.includes("@")) {
+      const userRecord = await prisma.user.findUnique({
+        where: { email: cleanInput.toLowerCase() },
+      });
+      if (userRecord) {
+        targetUserId = userRecord.id;
+        targetEmail = userRecord.email;
+      }
+    }
+
+    // B. Plain Text and SHA-256 Hash Matching
+    const keyHash = crypto.createHash("sha256").update(cleanInput).digest("hex");
+    const strippedPrefix = cleanInput.replace(/^ayax_live_/, "");
+    const strippedHash = crypto.createHash("sha256").update(strippedPrefix).digest("hex");
+
+    if (!targetUserId && prisma.apiKey) {
+      try {
+        const matchedKey = await prisma.apiKey.findFirst({
           where: {
             OR: [
-              { key: cleanKey },
-              { apiKey: cleanKey },
+              { key: cleanInput },
+              { key: keyHash },
+              { key: strippedPrefix },
+              { key: strippedHash },
+              ...(prisma.apiKey.fields?.hashedKey ? [{ hashedKey: keyHash }] : []),
+              ...(prisma.apiKey.fields?.apiKey ? [{ apiKey: cleanInput }] : []),
             ],
           },
           include: { user: true },
         });
 
-        if (keyRecord) {
-          targetUserId = keyRecord.userId || keyRecord.user?.id;
-          targetEmail = keyRecord.user?.email;
+        if (matchedKey) {
+          targetUserId = matchedKey.userId || matchedKey.user?.id;
+          targetEmail = matchedKey.user?.email || matchedKey.email;
         }
+      } catch (err) {
+        console.warn("ApiKey lookup fallback triggered:", err.message);
       }
-    } catch (err) {
-      console.warn("Direct ApiKey table lookup bypassed:", err.message);
     }
 
-    // 2. Relation Lookup: Query User via the apiKeys relation
+    // C. User Table Relation Search
     if (!targetUserId) {
       try {
-        const userWithKey = await prisma.user.findFirst({
+        const userRelation = await prisma.user.findFirst({
           where: {
             apiKeys: {
               some: {
                 OR: [
-                  { key: cleanKey },
-                  { apiKey: cleanKey },
+                  { key: cleanInput },
+                  { key: keyHash },
+                  { key: strippedPrefix },
                 ],
               },
             },
           },
         });
 
-        if (userWithKey) {
-          targetUserId = userWithKey.id;
-          targetEmail = userWithKey.email;
+        if (userRelation) {
+          targetUserId = userRelation.id;
+          targetEmail = userRelation.email;
         }
-      } catch (err) {
-        console.warn("User apiKeys relation lookup bypassed:", err.message);
-      }
+      } catch (_) {}
     }
 
-    // 3. Fallback: Lookup by User Email
-    if (!targetUserId && cleanKey.includes("@")) {
-      const userByEmail = await prisma.user.findUnique({
-        where: { email: cleanKey },
-      });
-      if (userByEmail) {
-        targetUserId = userByEmail.id;
-        targetEmail = userByEmail.email;
-      }
+    // D. Direct Raw SQL Fallback (In case of table/column casing differences)
+    if (!targetUserId) {
+      try {
+        const rawResults = await prisma.$queryRaw`
+          SELECT "userId" FROM "ApiKey" 
+          WHERE "key" IN (${cleanInput}, ${keyHash}, ${strippedPrefix}, ${strippedHash})
+          LIMIT 1
+        `;
+        if (rawResults && rawResults.length > 0) {
+          targetUserId = rawResults[0].userId;
+          const userObj = await prisma.user.findUnique({ where: { id: targetUserId } });
+          targetEmail = userObj?.email;
+        }
+      } catch (_) {}
     }
 
     if (!targetUserId) {
       return res.status(404).json({
         success: false,
-        message: `No account matches this API Key (${cleanKey.slice(0, 12)}...). Verify that the key exists in the database.`,
+        message: `Account not found for (${cleanInput.slice(0, 16)}...). You can paste the customer's registered email directly into this input field to activate them instantly.`,
       });
     }
 
-    // 4. Upsert Private Whitelist Record
+    // Upsert whitelist entry
     const activated = await prisma.privateTierWhitelist.upsert({
       where: { userId: targetUserId },
       update: {
-        apiKey: cleanKey,
+        apiKey: cleanInput,
         userEmail: targetEmail,
         isActive: true,
         status: "APPROVED",
@@ -204,7 +239,7 @@ exports.directAdminActivate = async (req, res) => {
       create: {
         userId: targetUserId,
         userEmail: targetEmail,
-        apiKey: cleanKey,
+        apiKey: cleanInput,
         isActive: true,
         status: "APPROVED",
         activatedAt: new Date(),

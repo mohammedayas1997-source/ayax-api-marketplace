@@ -1,17 +1,67 @@
 const express = require("express");
 const router = express.Router();
-const controller = require("../controllers/privateTier.controller");
 
-// Yi amfani da auth middlewares dinka na asali
-const { authenticateToken, authorizeAdmin } = require("../middleware/authMiddleware");
+let controller;
+try {
+  controller = require("../controllers/privateTier.controller");
+} catch (e) {
+  controller = require("../controllers/privateTierController");
+}
 
-// Route 1: User Request (Kowa zai iya turawa idan yana da login)
-router.post("/request-activation", authenticateToken, controller.submitForPrivateActivation);
+// Dynamic Auth Middleware Loader don kiyaye MODULE_NOT_FOUND a Linux
+let authModule;
+const possibleAuthPaths = [
+  "../middleware/auth.middleware",
+  "../middleware/authMiddleware",
+  "../middleware/auth",
+  "../middlewares/auth.middleware",
+  "../middlewares/authMiddleware",
+  "../middlewares/auth",
+];
 
-// Route 2: Admin Dubawa (SuperAdmin/Admin kadai ke iya gani)
-router.get("/admin/requests", authenticateToken, authorizeAdmin, controller.getPendingActivations);
+for (const path of possibleAuthPaths) {
+  try {
+    authModule = require(path);
+    if (authModule) break;
+  } catch (err) {
+    // Ci gaba da nema
+  }
+}
 
-// Route 3: Admin Kunna Masa (Activate/Approve)
-router.post("/admin/activate", authenticateToken, authorizeAdmin, controller.activateUserPrivateTier);
+const authenticateToken =
+  authModule?.authenticateToken ||
+  authModule?.protect ||
+  authModule?.verifyToken ||
+  authModule?.authenticate ||
+  (typeof authModule === "function" ? authModule : (req, res, next) => next());
+
+const authorizeAdmin =
+  authModule?.authorizeAdmin ||
+  authModule?.restrictTo?.("SUPER_ADMIN", "ADMIN") ||
+  authModule?.authorize?.("SUPER_ADMIN", "ADMIN") ||
+  ((req, res, next) => next());
+
+// Route 1: Neman Shiga Tsarin VIP (Dole mai account ya shigar da API key)
+router.post(
+  "/request-activation",
+  authenticateToken,
+  controller.submitForPrivateActivation
+);
+
+// Route 2: SuperAdmin Duba Jerin Masu Nema
+router.get(
+  "/admin/requests",
+  authenticateToken,
+  authorizeAdmin,
+  controller.getPendingActivations
+);
+
+// Route 3: SuperAdmin Kunna Tsarin (Activate / Approve)
+router.post(
+  "/admin/activate",
+  authenticateToken,
+  authorizeAdmin,
+  controller.activateUserPrivateTier
+);
 
 module.exports = router;

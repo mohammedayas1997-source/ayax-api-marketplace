@@ -28,6 +28,8 @@ import {
   MapPin,
   Handshake,
   Bell,
+  KeyRound,
+  Zap,
 } from "lucide-react";
 
 const links = [
@@ -117,6 +119,13 @@ const links = [
     name: "API Keys",
     href: "/super-admin/api-marketplace/api-keys",
     icon: LockKeyhole,
+  },
+
+  {
+    name: "VIP API Whitelist",
+    href: "/super-admin/pricing?tab=whitelist",
+    icon: KeyRound,
+    badge: "VIP",
   },
 
   {
@@ -247,7 +256,7 @@ const links = [
 ];
 
 export default function SuperAdminSidebar({
-  onClose = () => {}, // Mun sanya default empty function idan ba a tura onClose ba
+  onClose = () => {},
 }) {
   const pathname = usePathname();
 
@@ -264,18 +273,19 @@ export default function SuperAdminSidebar({
   };
 
   const isLinkActive = (href) => {
-    if (href === "/super-admin") {
+    const cleanHref = href.split("?")[0];
+    if (cleanHref === "/super-admin") {
       return pathname === "/super-admin";
     }
 
     return (
-      pathname === href ||
-      pathname.startsWith(`${href}/`)
+      pathname === cleanHref ||
+      pathname.startsWith(`${cleanHref}/`)
     );
   };
 
   return (
-  <aside className="flex h-screen w-72 min-w-[280px] flex-col border-r border-slate-800 bg-slate-900 p-6">
+    <aside className="flex h-screen w-72 min-w-[280px] flex-col border-r border-slate-800 bg-slate-900 p-6">
       <Link
         href="/super-admin"
         className="mb-8"
@@ -314,18 +324,25 @@ export default function SuperAdminSidebar({
 
           return (
             <Link
-              key={item.href}
+              key={item.name}
               href={item.href}
               onClick={() => typeof onClose === "function" && onClose()}
-              className={`flex items-center gap-3 rounded-xl px-4 py-3 transition ${
+              className={`flex items-center justify-between rounded-xl px-4 py-3 transition ${
                 active
                   ? "bg-blue-600 text-white"
                   : "text-slate-300 hover:bg-slate-800"
               }`}
             >
-              <Icon size={18} />
+              <div className="flex items-center gap-3">
+                <Icon size={18} />
+                <span>{item.name}</span>
+              </div>
 
-              <span>{item.name}</span>
+              {item.badge && (
+                <span className="rounded-md border border-amber-500/30 bg-amber-500/20 px-2 py-0.5 text-[10px] font-extrabold tracking-wide text-amber-400">
+                  {item.badge}
+                </span>
+              )}
             </Link>
           );
         })}

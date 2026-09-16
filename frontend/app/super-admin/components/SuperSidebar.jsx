@@ -11,6 +11,7 @@ import {
   CreditCard,
   RefreshCcw,
   Tags,
+  KeyRound,
   CircuitBoard,
   Server,
   BarChart3,
@@ -32,6 +33,12 @@ const menu = [
   { name: "Funding", href: "/super-admin/funding", icon: CreditCard },
   { name: "Refund", href: "/super-admin/refund", icon: RefreshCcw },
   { name: "Pricing", href: "/super-admin/pricing", icon: Tags },
+  { 
+    name: "VIP API Whitelist", 
+    href: "/super-admin/pricing?tab=whitelist", 
+    icon: KeyRound,
+    badge: "VIP" 
+  },
 
   { name: "GSM Gateway", href: "/super-admin/gsm-gateway", icon: CircuitBoard },
 
@@ -47,13 +54,14 @@ export default function SuperSidebar({ onClose }) {
   const pathname = usePathname();
 
   const isActive = (href) => {
-    if (href === "/super-admin") {
+    const cleanHref = href.split("?")[0];
+    if (cleanHref === "/super-admin") {
       return pathname === "/super-admin";
     }
 
     return (
-      pathname === href ||
-      pathname.startsWith(`${href}/`)
+      pathname === cleanHref ||
+      pathname.startsWith(`${cleanHref}/`)
     );
   };
 
@@ -92,17 +100,24 @@ export default function SuperSidebar({ onClose }) {
 
             return (
               <Link
-                key={item.href}
+                key={item.name}
                 href={item.href}
                 onClick={onClose}
-                className={`flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-all duration-200 ${
+                className={`flex items-center justify-between rounded-xl px-4 py-3 text-sm font-medium transition-all duration-200 ${
                   active
                     ? "bg-blue-600 text-white shadow-lg"
                     : "text-slate-300 hover:bg-slate-800 hover:text-white"
                 }`}
               >
-                <Icon size={18} />
-                <span>{item.name}</span>
+                <div className="flex items-center gap-3">
+                  <Icon size={18} />
+                  <span>{item.name}</span>
+                </div>
+                {item.badge && (
+                  <span className="rounded-md bg-amber-500/20 px-2 py-0.5 text-[10px] font-extrabold tracking-wide text-amber-400 border border-amber-500/30">
+                    {item.badge}
+                  </span>
+                )}
               </Link>
             );
           })}

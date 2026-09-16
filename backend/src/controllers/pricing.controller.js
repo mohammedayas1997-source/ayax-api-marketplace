@@ -1,8 +1,5 @@
 const prisma = require("../config/prisma");
 const { emitEvent } = require("../config/socket");
-const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
-
 const ALLOWED_TIERS = ["REGULAR", "STANDARD", "PREMIUM"];
 
 const normalizeText = (value = "") => String(value).trim();

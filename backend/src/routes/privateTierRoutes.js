@@ -41,14 +41,22 @@ const authorizeAdmin =
   authModule?.authorize?.("SUPER_ADMIN", "ADMIN") ||
   ((req, res, next) => next());
 
-// Route 1: Neman Shiga Tsarin VIP (Dole mai account ya shigar da API key)
+// 1. SuperAdmin Kai-tsaye zai liqa API Key din customer ya kunna masa VIP (Wanda kake nema a shafin)
+router.post(
+  "/admin/direct-activate",
+  authenticateToken,
+  authorizeAdmin,
+  controller.directAdminActivate
+);
+
+// 2. Neman Shiga Tsarin VIP (Customer request)
 router.post(
   "/request-activation",
   authenticateToken,
   controller.submitForPrivateActivation
 );
 
-// Route 2: SuperAdmin Duba Jerin Masu Nema
+// 3. SuperAdmin Duba Jerin Masu Nema / Activated Accounts
 router.get(
   "/admin/requests",
   authenticateToken,
@@ -56,7 +64,7 @@ router.get(
   controller.getPendingActivations
 );
 
-// Route 3: SuperAdmin Kunna Tsarin (Activate / Approve)
+// 4. SuperAdmin Kunna Tsarin idan ta hanyar approval ce
 router.post(
   "/admin/activate",
   authenticateToken,

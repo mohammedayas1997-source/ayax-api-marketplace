@@ -110,3 +110,63 @@ exports.activateUserPrivateTier = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+exports.directAdminActivate = async (req, res) => {
+  try {
+    const { apiKey, customMtnPrice, discountPerGb, note } = req.body;
+
+    if (!apiKey) {
+      return res.status(400).json({ success: false, message: "API Key is required" });
+    }
+
+    // Nemo mai wannan key din
+    const keyRecord = await prisma.apiKey.findFirst({
+      where: { key: apiKey.trim() },
+      include: { user: true },
+    });
+
+    if (!keyRecord) {
+      return res.status(404).json({
+        success: false,
+        message: "No user found with this API Key. Tabbatar key din yana database.",
+      });
+    }
+
+    const targetUserId = keyRecord.userId;
+    const targetEmail = keyRecord.user?.email;
+
+    const activated = await prisma.privateTierWhitelist.upsert({
+      where: { userId: targetUserId },
+      update: {
+        apiKey: apiKey.trim(),
+        userEmail: targetEmail,
+        isActive: true,
+        status: "APPROVED",
+        activatedAt: new Date(),
+        approvedBy: req.user?.email || "SuperAdmin",
+        customMtnPrice: customMtnPrice ? Number(customMtnPrice) : null,
+        discountPerGb: discountPerGb ? Number(discountPerGb) : 30.0,
+        note: note || "Activated directly by SuperAdmin",
+      },
+      create: {
+        userId: targetUserId,
+        userEmail: targetEmail,
+        apiKey: apiKey.trim(),
+        isActive: true,
+        status: "APPROVED",
+        activatedAt: new Date(),
+        approvedBy: req.user?.email || "SuperAdmin",
+        customMtnPrice: customMtnPrice ? Number(customMtnPrice) : null,
+        discountPerGb: discountPerGb ? Number(discountPerGb) : 30.0,
+        note: note || "Activated directly by SuperAdmin",
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `API Key activated successfully for ${targetEmail}!`,
+      data: activated,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};

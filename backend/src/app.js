@@ -46,6 +46,8 @@ const userModuleRoutes = require("./modules/users/user.routes");
 const adminWalletRoutes = require("./modules/wallet/wallet.routes");
 const userWalletRoutes = require("./modules/wallet/wallet.routes");
 
+const privateTierRoutes = require("./routes/privateTierRoutes");
+
 const apiProviderRoutes = require("./modules/api-marketplace/api-provider.routes");
 const apiServiceRoutes = require("./modules/api-marketplace/api-service.routes");
 const apiKeyModuleRoutes = require("./modules/api-marketplace/api-key.routes");
@@ -356,7 +358,7 @@ app.use("/api/v1/api-docs", documentationRoutes);
 app.use("/api/v1/api-marketplace", apiMarketplaceDashboardRoutes);
 app.use("/api/v1/marketplace", marketplaceRoutes);
 
-app.use("/api/v1/private-tier", require("./routes/privateTierRoutes"));
+app.use("/api/v1/private-tier", privateTierRoutes);
 
 app.use("/api/v1/settings", require("./routes/setting.routes"));
 

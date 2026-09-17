@@ -1,6 +1,13 @@
-const User = require("../models/User");
-const Transaction = require("../models/Transaction");
+
 const axios = require("axios");
+// Idan kana da prisma instance a src/config/prisma.js ko src/utils/prisma.js:
+let prisma;
+try {
+  prisma = require('../config/prisma') || require('../prisma');
+} catch (_) {
+  const { PrismaClient } = require('@prisma/client');
+  prisma = new PrismaClient();
+}
 
 // Multi-Gateway Dispatch Controller for Data Bundles
 exports.purchaseData = async (req, res) => {

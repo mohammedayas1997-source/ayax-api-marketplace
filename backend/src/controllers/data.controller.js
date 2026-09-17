@@ -14,11 +14,31 @@ const cleanLocalPhone = (phone = "") => {
   return digits;
 };
 
-// Helper: Tabbatar da tsarin Authorization Token na Al-Ihsan
+// Helper: Nemo Al-Ihsan Token daga duk sunayen da zai iya zama a Render
+const getAlihsanToken = () => {
+  return (
+    process.env.ALIHSAN_AUTH_TOKEN ||
+    process.env.ALIHSAN_TOKEN ||
+    process.env.ALIHSAN_API_KEY ||
+    process.env.VTU_API_KEY ||
+    process.env.DATA_API_KEY ||
+    "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x"
+  );
+};
+
+// Helper: Tabbatar da tsarin Authorization Token na Al-Ihsan (Token xxxxxxxxx)
 const formatAlihsanAuth = (rawToken) => {
   if (!rawToken) return "";
   const token = String(rawToken).trim();
   return token.startsWith("Token ") ? token : `Token ${token}`;
+};
+
+// Helper: Karanta lissafin kudi ko da a string ne ko da comma
+const parseBalanceValue = (val) => {
+  if (val === undefined || val === null) return 0;
+  const cleaned = String(val).replace(/[^0-9.-]+/g, "");
+  const num = parseFloat(cleaned);
+  return isNaN(num) ? 0 : num;
 };
 
 // Helper: Duba balance na Providers a lokacin da bukata ta taso
@@ -34,11 +54,7 @@ const getProviderBalances = async () => {
   };
 
   // 1. Al-Ihsan Datasub (Gyaran Endpoint da Token Format)
-  const rawAlihsanToken =
-    process.env.ALIHSAN_AUTH_TOKEN ||
-    process.env.ALIHSAN_API_KEY ||
-    process.env.VTU_API_KEY ||
-    "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x";
+  const rawAlihsanToken = getAlihsanToken();
 
   if (rawAlihsanToken) {
     try {
@@ -51,31 +67,34 @@ const getProviderBalances = async () => {
           "Content-Type": "application/json",
           Accept: "application/json",
         },
-        timeout: 6000,
+        timeout: 7000,
       });
 
-      balances.ALIHSAN = Number(
-        res.data?.user?.wallet_balance ||
-        res.data?.wallet_balance ||
-        res.data?.balance ||
-        res.data?.user?.balance ||
-        0
-      );
+      const rawBal =
+        res.data?.user?.wallet_balance ??
+        res.data?.user?.balance ??
+        res.data?.wallet_balance ??
+        res.data?.balance ??
+        res.data?.data?.wallet_balance ??
+        res.data?.data?.balance ??
+        0;
+
+      balances.ALIHSAN = parseBalanceValue(rawBal);
     } catch (_) {
-      // Gwada tsohuwar hanyar user.php idan ba a yi nasara ba
       try {
         const resOld = await axios.get("https://alihsandatasub.com.ng/api/v1/user.php", {
           headers: { Authorization: formatAlihsanAuth(rawAlihsanToken) },
-          timeout: 4000,
+          timeout: 5000,
         });
-        balances.ALIHSAN = Number(
-          resOld.data?.user?.wallet_balance ||
-          resOld.data?.wallet_balance ||
-          resOld.data?.balance ||
-          0
-        );
+        const oldBal =
+          resOld.data?.user?.wallet_balance ??
+          resOld.data?.wallet_balance ??
+          resOld.data?.balance ??
+          0;
+        balances.ALIHSAN = parseBalanceValue(oldBal);
       } catch (errFallback) {
-        balances.ALIHSAN = 0;
+        // Idan kiran balance ya gaza, a sa masa 999999 don kar a hana shi gwada tura odar
+        balances.ALIHSAN = 999999;
       }
     }
   }
@@ -87,7 +106,7 @@ const getProviderBalances = async () => {
         `https://smartsmssolutions.com/api/json.php?token=${process.env.SMARTSMS_API_TOKEN}&type=balance`,
         { timeout: 4000 }
       );
-      balances.SMARTSMS = Number(res.data?.balance || 0);
+      balances.SMARTSMS = parseBalanceValue(res.data?.balance);
     } catch (_) {
       balances.SMARTSMS = 0;
     }
@@ -100,7 +119,7 @@ const getProviderBalances = async () => {
         `https://www.clubconnect.com.ng/api/walletbalance?UserID=${process.env.CLUBCONNECT_USER_ID}&APIKey=${process.env.CLUBCONNECT_API_KEY}`,
         { timeout: 4000 }
       );
-      balances.CLUBCONNECT = Number(res.data?.balance || res.data?.WalletBalance || 0);
+      balances.CLUBCONNECT = parseBalanceValue(res.data?.balance || res.data?.WalletBalance);
     } catch (_) {
       balances.CLUBCONNECT = 0;
     }
@@ -113,7 +132,7 @@ const getProviderBalances = async () => {
         headers: { Authorization: `Token ${process.env.BILALSADA_API_TOKEN}` },
         timeout: 4000,
       });
-      balances.BILALSADA = Number(res.data?.user?.wallet_balance || res.data?.wallet || 0);
+      balances.BILALSADA = parseBalanceValue(res.data?.user?.wallet_balance || res.data?.wallet);
     } catch (_) {
       balances.BILALSADA = 0;
     }
@@ -126,7 +145,7 @@ const getProviderBalances = async () => {
         headers: { Authorization: `Bearer ${process.env.GLOBECONNECT_API_KEY}` },
         timeout: 4000,
       });
-      balances.GLOBECONNECT = Number(res.data?.balance || res.data?.data?.balance || 0);
+      balances.GLOBECONNECT = parseBalanceValue(res.data?.balance || res.data?.data?.balance);
     } catch (_) {
       balances.GLOBECONNECT = 0;
     }
@@ -139,7 +158,7 @@ const getProviderBalances = async () => {
         headers: { Authorization: `Token ${process.env.AJAH_API_KEY}` },
         timeout: 4000,
       });
-      balances.AJAH = Number(res.data?.user?.wallet_balance || res.data?.balance || 0);
+      balances.AJAH = parseBalanceValue(res.data?.user?.wallet_balance || res.data?.balance);
     } catch (_) {
       balances.AJAH = 0;
     }
@@ -155,7 +174,7 @@ const getProviderBalances = async () => {
         },
         timeout: 4000,
       });
-      balances.VTPASS = Number(res.data?.contents?.balance || 0);
+      balances.VTPASS = parseBalanceValue(res.data?.contents?.balance);
     } catch (_) {
       balances.VTPASS = 0;
     }
@@ -171,12 +190,7 @@ const dispatchDataAPI = async ({ provider, network, phone, planCode, numericMB, 
   // 1. AL-IHSAN DATASUB
   if (provider === "ALIHSAN") {
     const netMap = { MTN: 1, GLO: 2, "9MOBILE": 3, AIRTEL: 4 };
-    const rawAlihsanToken =
-      process.env.ALIHSAN_AUTH_TOKEN ||
-      process.env.ALIHSAN_API_KEY ||
-      process.env.VTU_API_KEY ||
-      "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x";
-
+    const rawAlihsanToken = getAlihsanToken();
     const authHeader = formatAlihsanAuth(rawAlihsanToken);
     const baseUrl = process.env.ALIHSAN_BASE_URL || "https://alihsandatasub.com.ng/api";
 
@@ -185,7 +199,7 @@ const dispatchDataAPI = async ({ provider, network, phone, planCode, numericMB, 
       {
         network: netMap[normNet] || 1,
         plan: Number(planCode || numericMB),
-        mobile_number: phone,
+        mobile_number: cleanLocalPhone(phone),
         Ported_number: true,
         reference: reference,
       },
@@ -199,11 +213,11 @@ const dispatchDataAPI = async ({ provider, network, phone, planCode, numericMB, 
       }
     );
 
-    const statusText = String(res.data?.status || "").toLowerCase();
+    const statusText = String(res.data?.status || res.data?.Status || "").toLowerCase();
     if (statusText === "success" || statusText === "successful" || statusText === "true") {
       return { success: true, provider: "ALIHSAN", raw: res.data };
     }
-    throw new Error(res.data?.message || res.data?.error || "Al-Ihsan data dispatch failed");
+    throw new Error(res.data?.message || res.data?.error || res.data?.msg || "Al-Ihsan data dispatch failed");
   }
 
   // 2. SMARTSMS
@@ -215,7 +229,7 @@ const dispatchDataAPI = async ({ provider, network, phone, planCode, numericMB, 
         token: process.env.SMARTSMS_API_TOKEN,
         type: "internet_data",
         network: netMap[normNet] || "1",
-        phone,
+        phone: cleanLocalPhone(phone),
         product_code: String(planCode || numericMB),
         ref: reference,
       },
@@ -238,7 +252,7 @@ const dispatchDataAPI = async ({ provider, network, phone, planCode, numericMB, 
     const userId = process.env.CLUBCONNECT_USER_ID;
     const apiKey = process.env.CLUBCONNECT_API_KEY;
 
-    const url = `https://www.clubconnect.com.ng/api/data?UserID=${userId}&APIKey=${apiKey}&MobileNetwork=${clubNetMap[normNet] || "01"}&DataPlan=${planCode || numericMB}&MobileNumber=${phone}&RequestID=${reference}`;
+    const url = `https://www.clubconnect.com.ng/api/data?UserID=${userId}&APIKey=${apiKey}&MobileNetwork=${clubNetMap[normNet] || "01"}&DataPlan=${planCode || numericMB}&MobileNumber=${cleanLocalPhone(phone)}&RequestID=${reference}`;
 
     const res = await axios.get(url, { timeout: 35000 });
     const statusText = String(res.data?.status || res.data?.statuscode || "").toLowerCase();
@@ -256,7 +270,7 @@ const dispatchDataAPI = async ({ provider, network, phone, planCode, numericMB, 
       "https://bilalsadasub.com/api/data",
       {
         network: netMap[normNet] || 1,
-        phone,
+        phone: cleanLocalPhone(phone),
         plan: Number(planCode || numericMB),
         "request-id": reference,
       },
@@ -278,7 +292,7 @@ const dispatchDataAPI = async ({ provider, network, phone, planCode, numericMB, 
       {
         network: normNet,
         plan_id: planCode || numericMB,
-        phone,
+        phone: cleanLocalPhone(phone),
         reference,
       },
       {
@@ -302,7 +316,7 @@ const dispatchDataAPI = async ({ provider, network, phone, planCode, numericMB, 
       {
         network_id: normNet.toLowerCase(),
         plan_id: planCode || numericMB,
-        phone_number: phone,
+        phone_number: cleanLocalPhone(phone),
         ident: reference,
       },
       {
@@ -332,9 +346,9 @@ const dispatchDataAPI = async ({ provider, network, phone, planCode, numericMB, 
       {
         request_id: reference,
         serviceID: serviceMap[normNet] || "glo-data",
-        billersCode: phone,
+        billersCode: cleanLocalPhone(phone),
         variation_code: String(planCode || numericMB),
-        phone,
+        phone: cleanLocalPhone(phone),
       },
       {
         headers: {
@@ -351,6 +365,67 @@ const dispatchDataAPI = async ({ provider, network, phone, planCode, numericMB, 
   }
 
   throw new Error(`Unsupported API data provider: ${provider}`);
+};
+
+// Helper: Tura Airtime ta hanyar API da aka zaba
+const dispatchAirtimeAPI = async ({ provider, network, phone, amount, reference }) => {
+  const normNet = network.toUpperCase();
+
+  // 1. AL-IHSAN AIRTIME
+  if (provider === "ALIHSAN") {
+    const netMap = { MTN: 1, GLO: 2, "9MOBILE": 3, AIRTEL: 4 };
+    const rawAlihsanToken = getAlihsanToken();
+    const authHeader = formatAlihsanAuth(rawAlihsanToken);
+    const baseUrl = process.env.ALIHSAN_BASE_URL || "https://alihsandatasub.com.ng/api";
+
+    const res = await axios.post(
+      `${baseUrl}/topup/`,
+      {
+        network: netMap[normNet] || 1,
+        amount: Number(amount),
+        mobile_number: cleanLocalPhone(phone),
+        Ported_number: true,
+        airtime_type: "VTU",
+      },
+      {
+        headers: {
+          Authorization: authHeader,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        timeout: 35000,
+      }
+    );
+
+    const statusText = String(res.data?.status || res.data?.Status || "").toLowerCase();
+    if (statusText === "success" || statusText === "successful" || statusText === "true") {
+      return { success: true, provider: "ALIHSAN", raw: res.data };
+    }
+    throw new Error(res.data?.message || res.data?.error || "Al-Ihsan airtime failed");
+  }
+
+  // 2. SMARTSMS AIRTIME
+  if (provider === "SMARTSMS") {
+    const netMap = { MTN: "1", AIRTEL: "2", GLO: "3", "9MOBILE": "4" };
+    const res = await axios.post(
+      "https://smartsmssolutions.com/api/json.php",
+      {
+        token: process.env.SMARTSMS_API_TOKEN,
+        type: "airtime",
+        network: netMap[normNet] || "1",
+        phone: cleanLocalPhone(phone),
+        amount: Number(amount),
+        ref: reference,
+      },
+      { timeout: 35000 }
+    );
+    if (res.data?.code === "1000" || res.data?.status === "success") {
+      return { success: true, provider: "SMARTSMS", raw: res.data };
+    }
+    throw new Error(res.data?.message || "SmartSMS airtime failed");
+  }
+
+  throw new Error(`Unsupported Airtime provider: ${provider}`);
 };
 
 /* ======================================================
@@ -667,15 +742,8 @@ exports.purchaseData = async (req, res) => {
     const balances = await getProviderBalances();
     const providerErrors = [];
 
-    const hasAlIhsan = Boolean(
-      process.env.ALIHSAN_AUTH_TOKEN ||
-      process.env.ALIHSAN_API_KEY ||
-      process.env.VTU_API_KEY ||
-      "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x"
-    );
-
     const allProviders = [
-      { name: "ALIHSAN", balance: balances.ALIHSAN, hasEnv: hasAlIhsan },
+      { name: "ALIHSAN", balance: balances.ALIHSAN, hasEnv: Boolean(getAlihsanToken()) },
       { name: "SMARTSMS", balance: balances.SMARTSMS, hasEnv: Boolean(process.env.SMARTSMS_API_TOKEN) },
       { name: "CLUBCONNECT", balance: balances.CLUBCONNECT, hasEnv: Boolean(process.env.CLUBCONNECT_API_KEY) },
       { name: "BILALSADA", balance: balances.BILALSADA, hasEnv: Boolean(process.env.BILALSADA_API_TOKEN) },
@@ -684,6 +752,7 @@ exports.purchaseData = async (req, res) => {
       { name: "VTPASS", balance: balances.VTPASS, hasEnv: Boolean(process.env.VTPASS_API_KEY) },
     ];
 
+    // Zabi providers da suke da kudi ko kuma wadanda ba su da 0
     let candidates = allProviders
       .filter((p) => p.hasEnv && p.balance >= cost)
       .map((p) => p.name);
@@ -694,7 +763,7 @@ exports.purchaseData = async (req, res) => {
 
     for (const provider of candidates) {
       try {
-        console.log(`🌐 [DATA ROUTING]: Trying ${provider} for ${resolvedNetwork} Data to ${targetPhone}... (Balance: ₦${balances[provider]})`);
+        console.log(`🌐 [DATA ROUTING]: Trying ${provider} for ${resolvedNetwork} Data to ${targetPhone}...`);
         const resData = await dispatchDataAPI({
           provider,
           network: resolvedNetwork,
@@ -771,7 +840,141 @@ exports.purchaseData = async (req, res) => {
 };
 
 /* ======================================================
-   3. QUERY TRANSACTION STATUS
+   3. UNIVERSAL AIRTIME PURCHASE
+====================================================== */
+exports.purchaseAirtime = async (req, res) => {
+  try {
+    const user = req.user || req.apiKeyUser;
+    const { network, phone, phoneNumber, amount, reference } = req.body;
+
+    const targetPhone = cleanLocalPhone(phoneNumber || phone || "");
+    const resolvedNetwork = String(network || "MTN").toUpperCase().trim();
+    const airtimeAmount = Number(amount || 0);
+
+    if (!targetPhone || targetPhone.length < 10) {
+      return res.status(400).json({
+        status: "error",
+        code: "VALIDATION_ERROR",
+        message: "A valid recipient phone number is required.",
+      });
+    }
+
+    if (airtimeAmount < 50) {
+      return res.status(400).json({
+        status: "error",
+        code: "VALIDATION_ERROR",
+        message: "Minimum airtime purchase is ₦50.",
+      });
+    }
+
+    if (!user || !user.id) {
+      return res.status(401).json({
+        status: "error",
+        code: "UNAUTHORIZED",
+        message: "Authentication required.",
+      });
+    }
+
+    const wallet = await prisma.wallet.findUnique({
+      where: { userId: user.id },
+    });
+
+    if (!wallet || Number(wallet.balance) < airtimeAmount) {
+      return res.status(402).json({
+        status: "error",
+        code: "INSUFFICIENT_BALANCE",
+        message: "Insufficient wallet balance for this airtime purchase.",
+      });
+    }
+
+    const txReference = reference || `AYAX_AIRTIME_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+
+    const { updatedWallet, transaction } = await prisma.$transaction(async (tx) => {
+      const newWallet = await tx.wallet.update({
+        where: { userId: user.id },
+        data: { balance: { decrement: airtimeAmount } },
+      });
+
+      const newTx = await tx.transaction.create({
+        data: {
+          userId: user.id,
+          type: "DEBIT",
+          service: `${resolvedNetwork} AIRTIME`,
+          amount: airtimeAmount,
+          status: "PENDING",
+          reference: txReference,
+          description: `₦${airtimeAmount} Airtime to ${targetPhone}`,
+        },
+      });
+
+      return { updatedWallet: newWallet, transaction: newTx };
+    });
+
+    const airtimeProviders = ["ALIHSAN", "SMARTSMS"];
+    const airtimeErrors = [];
+
+    for (const provider of airtimeProviders) {
+      try {
+        const resData = await dispatchAirtimeAPI({
+          provider,
+          network: resolvedNetwork,
+          phone: targetPhone,
+          amount: airtimeAmount,
+          reference: txReference,
+        });
+
+        if (resData.success) {
+          await prisma.transaction.update({
+            where: { id: transaction.id },
+            data: {
+              status: "SUCCESSFUL",
+              description: `₦${airtimeAmount} Airtime to ${targetPhone} via ${provider}`,
+            },
+          });
+
+          return res.status(200).json({
+            status: "success",
+            code: "AIRTIME_SUCCESSFUL",
+            message: `₦${airtimeAmount} Airtime sent to ${targetPhone} successfully!`,
+            walletBalance: updatedWallet.balance,
+          });
+        }
+      } catch (err) {
+        airtimeErrors.push(`${provider}: ${err.message}`);
+      }
+    }
+
+    // Refund wallet
+    await prisma.$transaction([
+      prisma.wallet.update({
+        where: { userId: user.id },
+        data: { balance: { increment: airtimeAmount } },
+      }),
+      prisma.transaction.update({
+        where: { id: transaction.id },
+        data: {
+          status: "FAILED",
+          description: `FAILED: ₦${airtimeAmount} Airtime to ${targetPhone} (Refunded)`,
+        },
+      }),
+    ]);
+
+    return res.status(502).json({
+      status: "error",
+      code: "VENDOR_ERROR",
+      message: `Airtime delivery failed across gateways. Wallet refunded. Errors: ${airtimeErrors.join(" | ")}`,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: "error",
+      code: "SERVER_ERROR",
+      message: error.message,
+    });
+  }
+};
+
+/* ======================================================
+   4. QUERY TRANSACTION STATUS
 ====================================================== */
 exports.checkDataStatus = async (req, res) => {
   try {

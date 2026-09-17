@@ -14,6 +14,13 @@ const cleanLocalPhone = (phone = "") => {
   return digits;
 };
 
+// Helper: Tabbatar da tsarin Authorization Token na Al-Ihsan
+const formatAlihsanAuth = (rawToken) => {
+  if (!rawToken) return "";
+  const token = String(rawToken).trim();
+  return token.startsWith("Token ") ? token : `Token ${token}`;
+};
+
 // Helper: Duba balance na Providers a lokacin da bukata ta taso
 const getProviderBalances = async () => {
   const balances = {
@@ -26,27 +33,50 @@ const getProviderBalances = async () => {
     VTPASS: 0,
   };
 
-  // 1. Al-Ihsan Datasub
-  const alihsanToken =
+  // 1. Al-Ihsan Datasub (Gyaran Endpoint da Token Format)
+  const rawAlihsanToken =
     process.env.ALIHSAN_AUTH_TOKEN ||
     process.env.ALIHSAN_API_KEY ||
+    process.env.VTU_API_KEY ||
     "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x";
 
-  if (alihsanToken) {
+  if (rawAlihsanToken) {
     try {
-      const baseUrl = process.env.ALIHSAN_BASE_URL || "https://alihsandatasub.com.ng/api/v1";
-      const res = await axios.get(`${baseUrl}/user.php`, {
-        headers: { Authorization: alihsanToken },
-        timeout: 4000,
+      const authHeader = formatAlihsanAuth(rawAlihsanToken);
+      const baseUrl = process.env.ALIHSAN_BASE_URL || "https://alihsandatasub.com.ng/api";
+      
+      const res = await axios.get(`${baseUrl}/user/`, {
+        headers: {
+          Authorization: authHeader,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        timeout: 6000,
       });
+
       balances.ALIHSAN = Number(
         res.data?.user?.wallet_balance ||
         res.data?.wallet_balance ||
         res.data?.balance ||
+        res.data?.user?.balance ||
         0
       );
     } catch (_) {
-      balances.ALIHSAN = 0;
+      // Gwada tsohuwar hanyar user.php idan ba a yi nasara ba
+      try {
+        const resOld = await axios.get("https://alihsandatasub.com.ng/api/v1/user.php", {
+          headers: { Authorization: formatAlihsanAuth(rawAlihsanToken) },
+          timeout: 4000,
+        });
+        balances.ALIHSAN = Number(
+          resOld.data?.user?.wallet_balance ||
+          resOld.data?.wallet_balance ||
+          resOld.data?.balance ||
+          0
+        );
+      } catch (errFallback) {
+        balances.ALIHSAN = 0;
+      }
     }
   }
 
@@ -141,15 +171,17 @@ const dispatchDataAPI = async ({ provider, network, phone, planCode, numericMB, 
   // 1. AL-IHSAN DATASUB
   if (provider === "ALIHSAN") {
     const netMap = { MTN: 1, GLO: 2, "9MOBILE": 3, AIRTEL: 4 };
-    const alihsanToken =
+    const rawAlihsanToken =
       process.env.ALIHSAN_AUTH_TOKEN ||
       process.env.ALIHSAN_API_KEY ||
+      process.env.VTU_API_KEY ||
       "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x";
 
-    const baseUrl = process.env.ALIHSAN_BASE_URL || "https://alihsandatasub.com.ng/api/v1";
+    const authHeader = formatAlihsanAuth(rawAlihsanToken);
+    const baseUrl = process.env.ALIHSAN_BASE_URL || "https://alihsandatasub.com.ng/api";
 
     const res = await axios.post(
-      `${baseUrl}/data.php`,
+      `${baseUrl}/data/`,
       {
         network: netMap[normNet] || 1,
         plan: Number(planCode || numericMB),
@@ -159,7 +191,7 @@ const dispatchDataAPI = async ({ provider, network, phone, planCode, numericMB, 
       },
       {
         headers: {
-          Authorization: alihsanToken,
+          Authorization: authHeader,
           "Content-Type": "application/json",
           Accept: "application/json",
         },
@@ -631,13 +663,14 @@ exports.purchaseData = async (req, res) => {
       });
     }
 
-    // 7. ROUTE 2: SMART CASCADING API (IDAN GSM GATEWAY OFFLINE NE KO YA SAMU MATSALA)
+    // 7. ROUTE 2: SMART CASCADING API
     const balances = await getProviderBalances();
     const providerErrors = [];
 
     const hasAlIhsan = Boolean(
       process.env.ALIHSAN_AUTH_TOKEN ||
       process.env.ALIHSAN_API_KEY ||
+      process.env.VTU_API_KEY ||
       "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x"
     );
 
@@ -661,7 +694,7 @@ exports.purchaseData = async (req, res) => {
 
     for (const provider of candidates) {
       try {
-        console.log(`🌐 [DATA ROUTING]: Trying ${provider} for ${resolvedNetwork} Data to ${targetPhone}...`);
+        console.log(`🌐 [DATA ROUTING]: Trying ${provider} for ${resolvedNetwork} Data to ${targetPhone}... (Balance: ₦${balances[provider]})`);
         const resData = await dispatchDataAPI({
           provider,
           network: resolvedNetwork,

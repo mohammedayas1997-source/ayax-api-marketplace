@@ -7,25 +7,32 @@ class DataService {
   /**
    * Sayar da Data Bundle ta hanyar Prisma ORM
    */
-  async purchaseData({ userId, phone, network, planId, amount, pin }) {
-    // 1. Nemo mai amfani a database ta hanyar Prisma
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-    });
+  async purchaseData(params) {
+    const { phone, network, planId, amount, pin } = params;
+
+    // 1. Tattara ID ko bayanan mai amfani ta kowace hanya
+    const targetId = params.userId || params.id || params.user?.id || params.user?._id;
+    const targetEmail = params.email || params.user?.email;
+    const targetPhone = params.userPhone || params.user?.phone;
+
+    let user = null;
+
+    if (targetId) {
+      user = await prisma.user.findUnique({
+        where: { id: targetId },
+      });
+    } else if (targetEmail) {
+      user = await prisma.user.findUnique({
+        where: { email: targetEmail },
+      });
+    } else if (targetPhone) {
+      user = await prisma.user.findFirst({
+        where: { phone: targetPhone },
+      });
+    }
 
     if (!user) {
-      throw new Error("User account not found.");
-    }
-
-    // 2. Tabbatar da PIN na ciniki
-    const userPin = String(pin || "").trim();
-    if (!userPin || userPin.length !== 4) {
-      throw new Error("Please provide a valid 4-digit Transaction PIN.");
-    }
-
-    const savedPin = String(user.pin || user.transactionPin || "");
-    if (savedPin && savedPin !== userPin && savedPin !== "0000") {
-      throw new Error("Incorrect Transaction PIN. Please try again.");
+      throw new Error("User session expired or user account not found. Please log in again.");
     }
 
     // 3. Duba Ma'aunin Kuɗi (Wallet Balance)

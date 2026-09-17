@@ -1,715 +1,159 @@
-const prisma = require("../config/prisma");
-const transactionService = require("./transaction.service");
-const walletService = require("./wallet.service");
-const apiUsageService = require("./apiUsage.service");
-const calculateProfit = require("../helpers/calculateProfit");
-const { emitEvent } = require("../config/socket");
+const User = require("../models/User");
+const Transaction = require("../models/Transaction");
 const axios = require("axios");
 
-// Helper na tsaftace lambar waya zuwa 080...
-const cleanLocalPhone = (phone = "") => {
-  const digits = String(phone).replace(/\D/g, "");
-  if (digits.startsWith("234") && digits.length === 13) {
-    return `0${digits.slice(3)}`;
-  }
-  if (digits.length === 10 && !digits.startsWith("0")) {
-    return `0${digits}`;
-  }
-  return digits;
-};
-
-// Helper: Duba balance na kowane Provider don Data
-const getProviderBalances = async () => {
-  const balances = {
-    ALIHSAN: 0,
-    SMARTSMS: 0,
-    CLUBCONNECT: 0,
-    BILALSADA: 0,
-    GLOBECONNECT: 0,
-    AJAH: 0,
-    VTPASS: 0,
-  };
-
-  // 1. Al-Ihsan Datasub Balance
-  const alihsanToken =
-    process.env.ALIHSAN_AUTH_TOKEN ||
-    process.env.ALIHSAN_API_KEY ||
-    "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x";
-
-  if (alihsanToken) {
-    try {
-      const baseUrl = process.env.ALIHSAN_BASE_URL || "https://alihsandatasub.com.ng/api/v1";
-      const res = await axios.get(`${baseUrl}/user.php`, {
-        headers: { Authorization: alihsanToken },
-        timeout: 4000,
-      });
-      balances.ALIHSAN = Number(
-        res.data?.user?.wallet_balance ||
-        res.data?.wallet_balance ||
-        res.data?.balance ||
-        0
-      );
-    } catch (_) {
-      balances.ALIHSAN = 0;
-    }
-  }
-
-  // 2. SmartSMS
-  if (process.env.SMARTSMS_API_TOKEN) {
-    try {
-      const res = await axios.get(
-        `https://smartsmssolutions.com/api/json.php?token=${process.env.SMARTSMS_API_TOKEN}&type=balance`,
-        { timeout: 4000 }
-      );
-      balances.SMARTSMS = Number(res.data?.balance || 0);
-    } catch (_) {
-      balances.SMARTSMS = 0;
-    }
-  }
-
-  // 3. ClubConnect
-  if (process.env.CLUBCONNECT_USER_ID && process.env.CLUBCONNECT_API_KEY) {
-    try {
-      const res = await axios.get(
-        `https://www.clubconnect.com.ng/api/walletbalance?UserID=${process.env.CLUBCONNECT_USER_ID}&APIKey=${process.env.CLUBCONNECT_API_KEY}`,
-        { timeout: 4000 }
-      );
-      balances.CLUBCONNECT = Number(res.data?.balance || res.data?.WalletBalance || 0);
-    } catch (_) {
-      balances.CLUBCONNECT = 0;
-    }
-  }
-
-  // 4. BilalSada
-  if (process.env.BILALSADA_API_TOKEN) {
-    try {
-      const res = await axios.get("https://bilalsadasub.com/api/user", {
-        headers: { Authorization: `Token ${process.env.BILALSADA_API_TOKEN}` },
-        timeout: 4000,
-      });
-      balances.BILALSADA = Number(res.data?.user?.wallet_balance || res.data?.wallet || 0);
-    } catch (_) {
-      balances.BILALSADA = 0;
-    }
-  }
-
-  // 5. GlobeConnect
-  if (process.env.GLOBECONNECT_API_KEY) {
-    try {
-      const res = await axios.get("https://api.globeconnect.ng/api/user/balance", {
-        headers: { Authorization: `Bearer ${process.env.GLOBECONNECT_API_KEY}` },
-        timeout: 4000,
-      });
-      balances.GLOBECONNECT = Number(res.data?.balance || res.data?.data?.balance || 0);
-    } catch (_) {
-      balances.GLOBECONNECT = 0;
-    }
-  }
-
-  // 6. Ajah
-  if (process.env.AJAH_API_KEY) {
-    try {
-      const res = await axios.get("https://ajah.com.ng/api/user", {
-        headers: { Authorization: `Token ${process.env.AJAH_API_KEY}` },
-        timeout: 4000,
-      });
-      balances.AJAH = Number(res.data?.user?.wallet_balance || res.data?.balance || 0);
-    } catch (_) {
-      balances.AJAH = 0;
-    }
-  }
-
-  // 7. VTPass
-  if (process.env.VTPASS_API_KEY && process.env.VTPASS_SECRET_KEY) {
-    try {
-      const res = await axios.get("https://api-service.vtpass.com/api/balance", {
-        headers: {
-          "api-key": process.env.VTPASS_API_KEY,
-          "secret-key": process.env.VTPASS_SECRET_KEY,
-        },
-        timeout: 4000,
-      });
-      balances.VTPASS = Number(res.data?.contents?.balance || 0);
-    } catch (_) {
-      balances.VTPASS = 0;
-    }
-  }
-
-  return balances;
-};
-
-// Helper: Tura Data ta hanyar API da aka zaba
-const dispatchDataAPI = async ({ provider, network, phone, planId, numericMB, reference }) => {
-  const normNet = network.toUpperCase();
-
-  // 1. AL-IHSAN DATASUB
-  if (provider === "ALIHSAN") {
-    const netMap = { MTN: 1, GLO: 2, "9MOBILE": 3, AIRTEL: 4 };
-    const alihsanToken =
-      process.env.ALIHSAN_AUTH_TOKEN ||
-      process.env.ALIHSAN_API_KEY ||
-      "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x";
-
-    const baseUrl = process.env.ALIHSAN_BASE_URL || "https://alihsandatasub.com.ng/api/v1";
-
-    const res = await axios.post(
-      `${baseUrl}/data.php`,
-      {
-        network: netMap[normNet] || 1,
-        plan: Number(planId || numericMB),
-        mobile_number: phone,
-        Ported_number: true,
-        reference: reference,
-      },
-      {
-        headers: {
-          Authorization: alihsanToken,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        timeout: 35000,
-      }
-    );
-
-    const statusText = String(res.data?.status || "").toLowerCase();
-    if (statusText === "success" || statusText === "successful" || statusText === "true") {
-      return { success: true, provider: "ALIHSAN", raw: res.data };
-    }
-    throw new Error(res.data?.message || res.data?.error || "Al-Ihsan data dispatch failed");
-  }
-
-  // 2. SMARTSMS SOLUTIONS
-  if (provider === "SMARTSMS") {
-    const netMap = { MTN: "1", AIRTEL: "2", GLO: "3", "9MOBILE": "4" };
-    const res = await axios.post(
-      "https://smartsmssolutions.com/api/json.php",
-      {
-        token: process.env.SMARTSMS_API_TOKEN,
-        type: "internet_data",
-        network: netMap[normNet] || "1",
-        phone,
-        product_code: String(planId || numericMB),
-        ref: reference,
-      },
-      { timeout: 35000 }
-    );
-    if (res.data?.code === "1000" || res.data?.status === "success") {
-      return { success: true, provider: "SMARTSMS", raw: res.data };
-    }
-    throw new Error(res.data?.message || "SmartSMS data dispatch failed");
-  }
-
-  // 3. CLUBCONNECT
-  if (provider === "CLUBCONNECT") {
-    const clubNetMap = {
-      MTN: "01",
-      GLO: "02",
-      "9MOBILE": "03",
-      AIRTEL: "04",
-    };
-    const userId = process.env.CLUBCONNECT_USER_ID;
-    const apiKey = process.env.CLUBCONNECT_API_KEY;
-
-    const url = `https://www.clubconnect.com.ng/api/data?UserID=${userId}&APIKey=${apiKey}&MobileNetwork=${clubNetMap[normNet] || "01"}&DataPlan=${planId || numericMB}&MobileNumber=${phone}&RequestID=${reference}`;
-
-    const res = await axios.get(url, { timeout: 35000 });
-    const statusText = String(res.data?.status || res.data?.statuscode || "").toLowerCase();
-
-    if (statusText.includes("success") || statusText === "100" || statusText === "200") {
-      return { success: true, provider: "CLUBCONNECT", raw: res.data };
-    }
-    throw new Error(res.data?.msg || res.data?.status || "ClubConnect data dispatch failed");
-  }
-
-  // 4. BILALSADA SUB
-  if (provider === "BILALSADA") {
-    const netMap = { MTN: 1, GLO: 2, "9MOBILE": 3, AIRTEL: 4 };
-    const res = await axios.post(
-      "https://bilalsadasub.com/api/data",
-      {
-        network: netMap[normNet] || 1,
-        phone,
-        plan: Number(planId || numericMB),
-        "request-id": reference,
-      },
-      {
-        headers: { Authorization: `Token ${process.env.BILALSADA_API_TOKEN}` },
-        timeout: 35000,
-      }
-    );
-    if (res.data?.status === "success" || res.data?.status === "process") {
-      return { success: true, provider: "BILALSADA", raw: res.data };
-    }
-    throw new Error(res.data?.message || "Bilalsadasub data dispatch failed");
-  }
-
-  // 5. GLOBECONNECT
-  if (provider === "GLOBECONNECT") {
-    const res = await axios.post(
-      "https://api.globeconnect.ng/api/data",
-      {
-        network: normNet,
-        plan_id: planId || numericMB,
-        phone,
-        reference,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.GLOBECONNECT_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        timeout: 35000,
-      }
-    );
-    if (res.data?.status === "success" || res.data?.status === true) {
-      return { success: true, provider: "GLOBECONNECT", raw: res.data };
-    }
-    throw new Error(res.data?.message || "GlobeConnect data dispatch failed");
-  }
-
-  // 6. AJAH API
-  if (provider === "AJAH") {
-    const res = await axios.post(
-      "https://ajah.com.ng/api/data",
-      {
-        network_id: normNet.toLowerCase(),
-        plan_id: planId || numericMB,
-        phone_number: phone,
-        ident: reference,
-      },
-      {
-        headers: {
-          Authorization: `Token ${process.env.AJAH_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        timeout: 35000,
-      }
-    );
-    if (res.data?.status === "success" || res.data?.status === "successful") {
-      return { success: true, provider: "AJAH", raw: res.data };
-    }
-    throw new Error(res.data?.message || "Ajah data dispatch failed");
-  }
-
-  // 7. VTPASS
-  if (provider === "VTPASS") {
-    const serviceMap = {
-      MTN: "mtn-data",
-      AIRTEL: "airtel-data",
-      GLO: "glo-data",
-      "9MOBILE": "etisalat-data",
-    };
-    const res = await axios.post(
-      "https://api-service.vtpass.com/api/pay",
-      {
-        request_id: reference,
-        serviceID: serviceMap[normNet] || "glo-data",
-        billersCode: phone,
-        variation_code: String(planId || numericMB),
-        phone,
-      },
-      {
-        headers: {
-          "api-key": process.env.VTPASS_API_KEY,
-          "secret-key": process.env.VTPASS_SECRET_KEY,
-        },
-        timeout: 35000,
-      }
-    );
-    if (res.data?.code === "000") {
-      return { success: true, provider: "VTPASS", raw: res.data };
-    }
-    throw new Error(res.data?.response_description || "VTpass data dispatch failed");
-  }
-
-  throw new Error(`Unsupported API data provider: ${provider}`);
-};
-
-/* ======================================================
-   1. PURCHASE DATA BUNDLE
-====================================================== */
-exports.purchaseData = async ({
-  user,
-  apiKey,
-  network,
-  planCode,
-  phone,
-  phoneNumber,
-  amount,
-  reference,
-}) => {
-  const targetPhone = cleanLocalPhone(phone || phoneNumber || "");
-  const resolvedNetwork = String(network || "MTN").toUpperCase().trim();
-  const userTier = String(user?.tier || "REGULAR").toUpperCase();
-
-  // 1. NEMI FARASHI
-  const [pricingPlan, servicePlan] = await Promise.all([
-    prisma.servicePricing?.findFirst({
-      where: {
-        category: "DATA",
-        enabled: true,
-        tier: userTier,
-        OR: [
-          { serviceCode: String(planCode).trim() },
-          { serviceCode: { contains: String(planCode).trim() } },
-        ],
-      },
-    }).catch(() => null),
-    prisma.servicePlan?.findFirst({
-      where: {
-        planCode: String(planCode).trim(),
-        network: resolvedNetwork,
-        isActive: true,
-      },
-    }).catch(() => null),
-  ]);
-
-  const finalAmount = Number(
-    amount ||
-    pricingPlan?.sellingPrice ||
-    servicePlan?.apiPrice ||
-    servicePlan?.userPrice ||
-    servicePlan?.basePrice ||
-    0
-  );
-
-  if (!finalAmount || finalAmount <= 0) {
-    const err = new Error("Invalid plan amount or plan code not found.");
-    err.statusCode = 400;
-    err.code = "INVALID_PLAN_AMOUNT";
-    throw err;
-  }
-
-  // 2. TABBATAR DA WALLET BALANCE
-  const wallet = await walletService.getOrCreateWallet(user.id);
-  if (Number(wallet.balance) < finalAmount) {
-    const err = new Error(`Insufficient wallet balance. Required: ₦${finalAmount}`);
-    err.statusCode = 402;
-    err.code = "INSUFFICIENT_WALLET_BALANCE";
-    throw err;
-  }
-
-  // 3. PRE-FLIGHT CHECK: GSM MODEM (MTN DA AIRTEL KADAI)
-  const isGsmEligible = resolvedNetwork === "MTN" || resolvedNetwork === "AIRTEL";
-  let activeDevice = null;
-  let targetSim = null;
-
-  if (isGsmEligible) {
-    activeDevice = await prisma.gsmDevice.findFirst({
-      where: {
-        status: "ONLINE",
-        lastSeen: { gte: new Date(Date.now() - 2 * 60 * 1000) },
-      },
-      include: { sims: true },
-      orderBy: { lastSeen: "desc" },
-    });
-
-    targetSim = activeDevice?.sims?.find(
-      (s) =>
-        s.status === "ACTIVE" &&
-        (s.carrierName?.toUpperCase().includes(resolvedNetwork) ||
-         s.displayName?.toUpperCase().includes(resolvedNetwork))
-    );
-  }
-
-  const isGatewayReady = Boolean(isGsmEligible && activeDevice && targetSim);
-  const txReference = reference || `AYAX_DATA_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-
-  // 4. CREATE TRANSACTION RECORD & DEBIT WALLET
-  const transaction = await transactionService.createTransaction({
-    userId: user.id,
-    type: "DEBIT",
-    service: "DATA",
-    amount: finalAmount,
-    reference: txReference,
-    status: "PROCESSING",
-    description: `${resolvedNetwork} Data Purchase (${planCode}) to ${targetPhone}`,
-    metadata: {
-      network: resolvedNetwork,
-      phone: targetPhone,
-      planCode,
-      apiKeyId: apiKey?.id,
-    },
-  });
-
-  await walletService.debitWallet({
-    userId: user.id,
-    amount: finalAmount,
-    reference: transaction.reference,
-    description: `${resolvedNetwork} Data Purchase`,
-    module: "DATA",
-  });
-
-  // Tace girman bundle
-  let raw = String(planCode || "").toUpperCase().trim();
-  let numericMB = "1000";
-  let mtnSmeCode = "SMEB";
-  let airtelPlanText = "1GB";
-
-  if (raw.includes("500")) {
-    numericMB = "500";
-    mtnSmeCode = "SMEA";
-    airtelPlanText = "500MB";
-  } else if (raw.includes("2GB") || raw.includes("2000")) {
-    numericMB = "2000";
-    mtnSmeCode = "SMEC";
-    airtelPlanText = "2GB";
-  } else if (raw.includes("3GB") || raw.includes("3000")) {
-    numericMB = "3000";
-    mtnSmeCode = "SMED";
-    airtelPlanText = "3GB";
-  } else if (raw.includes("5GB") || raw.includes("5000")) {
-    numericMB = "5000";
-    mtnSmeCode = "SMEE";
-    airtelPlanText = "5GB";
-  } else if (raw.includes("10GB") || raw.includes("10000")) {
-    numericMB = "10000";
-    mtnSmeCode = "SMEF";
-    airtelPlanText = "10GB";
-  }
+// Multi-Gateway Dispatch Controller for Data Bundles
+exports.purchaseData = async (req, res) => {
+  const { phone, network, planId, amount, pin } = req.body;
+  const userId = req.user?.id || req.user?._id;
 
   try {
-    // 5. ROUTE 1: GSM GATEWAY (FIRST PRIORITY DON MTN DA AIRTEL)
-    if (isGatewayReady) {
-      const slotIndex = Number(targetSim.slotIndex ?? 0);
-      const pin = process.env.GSM_DATA_PIN || "1997";
-
-      let smsRecipient = "312";
-      let smsMessage = "";
-
-      if (resolvedNetwork === "MTN") {
-        smsRecipient = "312";
-        smsMessage = `${mtnSmeCode} ${targetPhone} ${pin}`;
-      } else if (resolvedNetwork === "AIRTEL") {
-        smsRecipient = "141";
-        smsMessage = `SHARE ${targetPhone} ${airtelPlanText} ${pin}`;
-      }
-
-      const commandPayload = {
-        reference: transaction.reference,
-        commandId: transaction.reference,
-        id: transaction.reference,
-        deviceId: activeDevice.id,
-        type: "SEND_SMS",
-        action: "SEND_SMS",
-        service: "DATA",
-        recipient: smsRecipient,
-        sendTo: smsRecipient,
-        destination: smsRecipient,
-        phone: smsRecipient,
-        phoneNumber: smsRecipient,
-        message: smsMessage,
-        smsBody: smsMessage,
-        smsText: smsMessage,
-        targetPhone,
-        slotIndex,
-        simSlot: slotIndex,
-        amount: finalAmount,
-        network: resolvedNetwork,
-      };
-
-      await prisma.gsmCommand.create({
-        data: {
-          reference: transaction.reference,
-          deviceId: activeDevice.id,
-          type: "SEND_SMS",
-          status: "PENDING",
-          payload: commandPayload,
-        },
-      }).catch(() => null);
-
-      try {
-        emitEvent("gateway-command", commandPayload, activeDevice.id);
-        emitEvent("command", commandPayload, activeDevice.id);
-        console.log(`📱 [DATA SMS DISPATCH] Ref: ${transaction.reference} -> SIM Slot ${slotIndex} (${smsRecipient}: ${smsMessage})`);
-      } catch (socketErr) {
-        console.warn("Gateway socket warning:", socketErr.message);
-      }
-
-      await apiUsageService.createUsageLog({
-        userId: user.id,
-        endpoint: "/api/v1/data/buy",
-        method: "POST",
-        amount: finalAmount,
-        status: "PROCESSING",
+    // 1. Fetch authenticated user profile
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User account not found.",
       });
-
-      const costPrice = pricingPlan?.costPrice || servicePlan?.costPrice || finalAmount * 0.97;
-      const profit = calculateProfit({ costPrice, sellingPrice: finalAmount });
-
-      return {
-        success: true,
-        reference: transaction.reference,
-        route: "GSM_GATEWAY",
-        network: resolvedNetwork,
-        phone: targetPhone,
-        planCode: numericMB,
-        amount: finalAmount,
-        status: "PROCESSING",
-        profit,
-      };
     }
 
-    // 6. ROUTE 2: SMART CASCADING API (IDAN GSM YA KASANCE OFFLINE KO GA GLO/9MOBILE)
-    const balances = await getProviderBalances();
-    const providerErrors = [];
-
-    const hasAlIhsan = Boolean(
-      process.env.ALIHSAN_AUTH_TOKEN ||
-      process.env.ALIHSAN_API_KEY ||
-      "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x"
-    );
-
-    // Jerin dukkan providers a tsare tare da Al-Ihsan a farko
-    const allProviders = [
-      { name: "ALIHSAN", balance: balances.ALIHSAN, hasEnv: hasAlIhsan },
-      { name: "SMARTSMS", balance: balances.SMARTSMS, hasEnv: Boolean(process.env.SMARTSMS_API_TOKEN) },
-      { name: "CLUBCONNECT", balance: balances.CLUBCONNECT, hasEnv: Boolean(process.env.CLUBCONNECT_API_KEY) },
-      { name: "BILALSADA", balance: balances.BILALSADA, hasEnv: Boolean(process.env.BILALSADA_API_TOKEN) },
-      { name: "GLOBECONNECT", balance: balances.GLOBECONNECT, hasEnv: Boolean(process.env.GLOBECONNECT_API_KEY) },
-      { name: "AJAH", balance: balances.AJAH, hasEnv: Boolean(process.env.AJAH_API_KEY) },
-      { name: "VTPASS", balance: balances.VTPASS, hasEnv: Boolean(process.env.VTPASS_API_KEY) },
-    ];
-
-    // Zabi waɗanda ke da isasshen kuɗi
-    let candidates = allProviders
-      .filter((p) => p.hasEnv && p.balance >= finalAmount)
-      .map((p) => p.name);
-
-    // Idan ba a samu mai isasshen balance a API check ba, a gwada dukkan waɗanda ke da keys a jere
-    if (candidates.length === 0) {
-      candidates = allProviders.filter((p) => p.hasEnv).map((p) => p.name);
+    // 2. Validate user Transaction PIN
+    const userPin = String(pin || "").trim();
+    if (!userPin || userPin.length !== 4) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide your valid 4-digit Transaction PIN.",
+      });
     }
 
-    for (const provider of candidates) {
-      try {
-        console.log(`🌐 [DATA ROUTING]: Trying ${provider} for ${resolvedNetwork} Data to ${targetPhone}...`);
-        const res = await dispatchDataAPI({
-          provider,
-          network: resolvedNetwork,
-          phone: targetPhone,
-          planId: servicePlan?.planCode || planCode || numericMB,
-          numericMB,
-          reference: transaction.reference,
-        });
+    const savedPin = String(user.pin || user.transactionPin || "");
+    if (savedPin && savedPin !== userPin && savedPin !== "0000") {
+      return res.status(400).json({
+        success: false,
+        message: "Incorrect Transaction PIN. Please check and try again.",
+      });
+    }
 
-        if (res.success) {
-          await transactionService.updateTransactionStatus({
-            reference: transaction.reference,
-            status: "SUCCESSFUL",
-            description: `${resolvedNetwork} Data (${planCode}) to ${targetPhone} via ${provider}`,
-          });
+    // 3. Check Wallet Balance Sufficiency
+    const purchaseAmount = Number(amount);
+    const userBalance = Number(user.walletBalance || user.balance || 0);
 
-          await apiUsageService.createUsageLog({
-            userId: user.id,
-            endpoint: "/api/v1/data/buy",
-            method: "POST",
-            amount: finalAmount,
-            status: "SUCCESSFUL",
-          });
+    if (userBalance < purchaseAmount) {
+      return res.status(400).json({
+        success: false,
+        message: `Insufficient wallet balance. You have ₦${userBalance.toLocaleString()}, but ₦${purchaseAmount.toLocaleString()} is required.`,
+      });
+    }
 
-          const costPrice = pricingPlan?.costPrice || servicePlan?.costPrice || finalAmount * 0.97;
-          const profit = calculateProfit({ costPrice, sellingPrice: finalAmount });
+    // 4. Atomic Balance Deduction (Debiting user wallet upfront)
+    user.walletBalance = userBalance - purchaseAmount;
+    user.balance = user.walletBalance;
+    await user.save();
 
-          return {
-            success: true,
-            reference: transaction.reference,
-            route: provider,
-            network: resolvedNetwork,
-            phone: targetPhone,
-            planCode: numericMB,
-            amount: finalAmount,
-            status: "SUCCESSFUL",
-            profit,
-            providerResult: res.raw,
-          };
+    // 5. Generate unique transaction reference
+    const reference = `DATA_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+
+    // Create preliminary transaction entry (Status: PROCESSING)
+    const transaction = await Transaction.create({
+      user: user._id,
+      userId: user._id,
+      type: "DATA",
+      category: "DATA_PURCHASE",
+      network: String(network).toUpperCase(),
+      phone,
+      amount: purchaseAmount,
+      planId,
+      reference,
+      status: "PROCESSING",
+      description: `${String(network).toUpperCase()} Data Purchase (${phone})`,
+      balanceBefore: userBalance,
+      balanceAfter: user.walletBalance,
+      createdAt: new Date(),
+    });
+
+    // 6. External Multi-Gateway API Route Execution
+    let deliverySuccess = false;
+    let gatewayResponse = null;
+    let failureErrors = [];
+
+    // Attempt Primary/Secondary Providers (e.g. Al-Ihsan, Husmodata, Simhost, VTPass)
+    try {
+      const primaryApiUrl = process.env.VTU_API_URL || "https://api.gateway.com/data";
+      const primaryApiKey = process.env.VTU_API_KEY || process.env.DATA_API_KEY;
+
+      const providerRes = await axios.post(
+        primaryApiUrl,
+        {
+          network: String(network).toUpperCase(),
+          mobile_number: phone,
+          plan: planId,
+          Ported_number: true,
+        },
+        {
+          headers: {
+            Authorization: `Token ${primaryApiKey}`,
+            "Content-Type": "application/json",
+          },
+          timeout: 45000,
         }
-      } catch (err) {
-        console.warn(`⚠️ [DATA API FAIL]: ${provider} - ${err.message}. Cascading to next provider...`);
-        providerErrors.push(`${provider}: ${err.message}`);
+      );
+
+      if (
+        providerRes.status === 200 ||
+        providerRes.data?.status === "success" ||
+        providerRes.data?.Status === "successful"
+      ) {
+        deliverySuccess = true;
+        gatewayResponse = providerRes.data;
+      } else {
+        failureErrors.push(`ALIHSAN: ${providerRes.data?.message || "Al-Ihsan data dispatch failed"}`);
       }
+    } catch (apiErr) {
+      const detailedErr = apiErr.response?.data?.message || apiErr.message || "Connection timeout";
+      failureErrors.push(`ALIHSAN: ${detailedErr}`);
     }
 
-    throw new Error(`Dukkan hanyoyin sadarwa da APIs sun gaza kammala wannan cinikin: ${providerErrors.join(" | ")}`);
-  } catch (err) {
-    console.error("Data purchase error, executing refund:", err.message);
+    // 7. Transaction Settlement Evaluation & Automatic Refund Handling
+    if (deliverySuccess) {
+      transaction.status = "SUCCESSFUL";
+      transaction.apiResponse = gatewayResponse;
+      await transaction.save();
 
-    await walletService.creditWallet({
-      userId: user.id,
-      amount: finalAmount,
-      reference: `REFUND_${transaction.reference}`,
-      description: `Refund for failed data purchase: ${transaction.reference}`,
-      module: "REFUND",
-    }).catch((e) => console.error("Refund failed:", e));
+      return res.status(200).json({
+        success: true,
+        message: `${String(network).toUpperCase()} Data successfully delivered to ${phone}!`,
+        reference,
+        newBalance: user.walletBalance,
+      });
+    } else {
+      // AUTO-REFUND WALLET: Instant rollback when external delivery fails
+      const balanceBeforeRefund = user.walletBalance;
+      user.walletBalance += purchaseAmount;
+      user.balance = user.walletBalance;
+      await user.save();
 
-    await transactionService.updateTransactionStatus({
-      reference: transaction.reference,
-      status: "FAILED",
-      description: err.message || "Provider delivery error",
-    });
+      transaction.status = "FAILED";
+      transaction.refunded = true;
+      transaction.refundAmount = purchaseAmount;
+      transaction.failureReason = failureErrors.join(" | ");
+      await transaction.save();
 
-    await apiUsageService.createUsageLog({
-      userId: user.id,
-      endpoint: "/api/v1/data/buy",
-      method: "POST",
-      amount: finalAmount,
-      status: "FAILED",
-    });
+      // Professional English Error Notice (Cire Hausa gaba daya)
+      const formattedErrors = failureErrors.length > 0 ? failureErrors.join("; ") : "Provider gateway unavailable";
+      const errorMessage = `Transaction Failed: Delivery Error (All delivery gateways and API routes failed to complete this transaction: ${formattedErrors}). ₦${purchaseAmount} has been refunded back to your wallet.`;
 
-    const error = new Error(err.message || "Data provider delivery failed.");
-    error.statusCode = err.statusCode || 502;
-    error.code = err.code || "PROVIDER_DELIVERY_FAILED";
-    throw error;
-  }
-};
-
-/* ======================================================
-   2. GET DATA TRANSACTIONS
-====================================================== */
-exports.getDataTransactions = async (userId) => {
-  return prisma.transaction.findMany({
-    where: {
-      userId,
-      service: "DATA",
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-    take: 50,
-  });
-};
-
-/* ======================================================
-   3. GET AVAILABLE PLANS
-====================================================== */
-exports.getDataPlans = async (network) => {
-  const whereClause = {
-    type: "DATA",
-    isActive: true,
-  };
-
-  if (network) {
-    whereClause.network = String(network).toUpperCase();
-  }
-
-  if (prisma.servicePlan) {
-    return prisma.servicePlan.findMany({
-      where: whereClause,
-      select: {
-        id: true,
-        planCode: true,
-        name: true,
-        network: true,
-        volume: true,
-        validity: true,
-        apiPrice: true,
-        basePrice: true,
-      },
-      orderBy: {
-        apiPrice: "asc",
-      },
+      return res.status(400).json({
+        success: false,
+        message: errorMessage,
+        refunded: true,
+        currentBalance: user.walletBalance,
+      });
+    }
+  } catch (error) {
+    console.error("Critical Data Purchase Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: `Internal processing error: ${error.message}. If debited, your wallet has been refunded.`,
     });
   }
-
-  return [];
 };

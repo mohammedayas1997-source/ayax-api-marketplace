@@ -1,89 +1,78 @@
-
+const { PrismaClient } = require("@prisma/client");
 const axios = require("axios");
-// Idan kana da prisma instance a src/config/prisma.js ko src/utils/prisma.js:
-let prisma;
-try {
-  prisma = require('../config/prisma') || require('../prisma');
-} catch (_) {
-  const { PrismaClient } = require('@prisma/client');
-  prisma = new PrismaClient();
-}
 
-// Multi-Gateway Dispatch Controller for Data Bundles
-exports.purchaseData = async (req, res) => {
-  const { phone, network, planId, amount, pin } = req.body;
-  const userId = req.user?.id || req.user?._id;
+const prisma = new PrismaClient();
 
-  try {
-    // 1. Fetch authenticated user profile
-    const user = await User.findById(userId);
+class DataService {
+  /**
+   * Sayar da Data Bundle ta hanyar Prisma ORM
+   */
+  async purchaseData({ userId, phone, network, planId, amount, pin }) {
+    // 1. Nemo mai amfani a database ta hanyar Prisma
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+    });
+
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User account not found.",
-      });
+      throw new Error("User account not found.");
     }
 
-    // 2. Validate user Transaction PIN
+    // 2. Tabbatar da PIN na ciniki
     const userPin = String(pin || "").trim();
     if (!userPin || userPin.length !== 4) {
-      return res.status(400).json({
-        success: false,
-        message: "Please provide your valid 4-digit Transaction PIN.",
-      });
+      throw new Error("Please provide a valid 4-digit Transaction PIN.");
     }
 
     const savedPin = String(user.pin || user.transactionPin || "");
     if (savedPin && savedPin !== userPin && savedPin !== "0000") {
-      return res.status(400).json({
-        success: false,
-        message: "Incorrect Transaction PIN. Please check and try again.",
-      });
+      throw new Error("Incorrect Transaction PIN. Please try again.");
     }
 
-    // 3. Check Wallet Balance Sufficiency
+    // 3. Duba Ma'aunin Kuɗi (Wallet Balance)
     const purchaseAmount = Number(amount);
     const userBalance = Number(user.walletBalance || user.balance || 0);
 
     if (userBalance < purchaseAmount) {
-      return res.status(400).json({
-        success: false,
-        message: `Insufficient wallet balance. You have ₦${userBalance.toLocaleString()}, but ₦${purchaseAmount.toLocaleString()} is required.`,
-      });
+      throw new Error(
+        `Insufficient balance. You have ₦${userBalance.toLocaleString()}, but ₦${purchaseAmount.toLocaleString()} is required.`
+      );
     }
 
-    // 4. Atomic Balance Deduction (Debiting user wallet upfront)
-    user.walletBalance = userBalance - purchaseAmount;
-    user.balance = user.walletBalance;
-    await user.save();
-
-    // 5. Generate unique transaction reference
-    const reference = `DATA_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
-
-    // Create preliminary transaction entry (Status: PROCESSING)
-    const transaction = await Transaction.create({
-      user: user._id,
-      userId: user._id,
-      type: "DATA",
-      category: "DATA_PURCHASE",
-      network: String(network).toUpperCase(),
-      phone,
-      amount: purchaseAmount,
-      planId,
-      reference,
-      status: "PROCESSING",
-      description: `${String(network).toUpperCase()} Data Purchase (${phone})`,
-      balanceBefore: userBalance,
-      balanceAfter: user.walletBalance,
-      createdAt: new Date(),
+    // 4. Rage kuɗin a wallet kafin aika buƙata (Atomic Transaction)
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        walletBalance: userBalance - purchaseAmount,
+      },
     });
 
-    // 6. External Multi-Gateway API Route Execution
-    let deliverySuccess = false;
-    let gatewayResponse = null;
-    let failureErrors = [];
+    // 5. Ƙirƙiri rikodin ciniki (Transaction record)
+    const reference = `DATA_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
 
-    // Attempt Primary/Secondary Providers (e.g. Al-Ihsan, Husmodata, Simhost, VTPass)
+    let transactionRecord = null;
+    try {
+      transactionRecord = await prisma.transaction.create({
+        data: {
+          userId: user.id,
+          type: "DATA",
+          network: String(network).toUpperCase(),
+          phone: String(phone),
+          amount: purchaseAmount,
+          planId: String(planId),
+          reference: reference,
+          status: "PROCESSING",
+          description: `${String(network).toUpperCase()} Data Purchase (${phone})`,
+        },
+      });
+    } catch (_) {
+      // Idan babu teburin transaction a schema, a ci gaba
+    }
+
+    // 6. Aika oda zuwa VTU Gateway / API Provider
+    let deliverySuccess = false;
+    let failureErrors = [];
+    let providerData = null;
+
     try {
       const primaryApiUrl = process.env.VTU_API_URL || "https://api.gateway.com/data";
       const primaryApiKey = process.env.VTU_API_KEY || process.env.DATA_API_KEY;
@@ -111,56 +100,55 @@ exports.purchaseData = async (req, res) => {
         providerRes.data?.Status === "successful"
       ) {
         deliverySuccess = true;
-        gatewayResponse = providerRes.data;
+        providerData = providerRes.data;
       } else {
-        failureErrors.push(`ALIHSAN: ${providerRes.data?.message || "Al-Ihsan data dispatch failed"}`);
+        failureErrors.push(providerRes.data?.message || "Gateway dispatch rejected");
       }
     } catch (apiErr) {
-      const detailedErr = apiErr.response?.data?.message || apiErr.message || "Connection timeout";
-      failureErrors.push(`ALIHSAN: ${detailedErr}`);
+      const detailed = apiErr.response?.data?.message || apiErr.message || "Network timeout";
+      failureErrors.push(detailed);
     }
 
-    // 7. Transaction Settlement Evaluation & Automatic Refund Handling
+    // 7. Kammala ko Mayar da Kuɗi (Auto-Refund)
     if (deliverySuccess) {
-      transaction.status = "SUCCESSFUL";
-      transaction.apiResponse = gatewayResponse;
-      await transaction.save();
+      if (transactionRecord) {
+        await prisma.transaction.update({
+          where: { id: transactionRecord.id },
+          data: { status: "SUCCESSFUL" },
+        }).catch(() => {});
+      }
 
-      return res.status(200).json({
+      return {
         success: true,
         message: `${String(network).toUpperCase()} Data successfully delivered to ${phone}!`,
         reference,
-        newBalance: user.walletBalance,
-      });
+        newBalance: updatedUser.walletBalance,
+      };
     } else {
-      // AUTO-REFUND WALLET: Instant rollback when external delivery fails
-      const balanceBeforeRefund = user.walletBalance;
-      user.walletBalance += purchaseAmount;
-      user.balance = user.walletBalance;
-      await user.save();
-
-      transaction.status = "FAILED";
-      transaction.refunded = true;
-      transaction.refundAmount = purchaseAmount;
-      transaction.failureReason = failureErrors.join(" | ");
-      await transaction.save();
-
-      // Professional English Error Notice (Cire Hausa gaba daya)
-      const formattedErrors = failureErrors.length > 0 ? failureErrors.join("; ") : "Provider gateway unavailable";
-      const errorMessage = `Transaction Failed: Delivery Error (All delivery gateways and API routes failed to complete this transaction: ${formattedErrors}). ₦${purchaseAmount} has been refunded back to your wallet.`;
-
-      return res.status(400).json({
-        success: false,
-        message: errorMessage,
-        refunded: true,
-        currentBalance: user.walletBalance,
+      // Mayar da kuɗi kai-tsaye idan odar ba ta tafi ba
+      const refundedUser = await prisma.user.update({
+        where: { id: userId },
+        data: {
+          walletBalance: { increment: purchaseAmount },
+        },
       });
+
+      if (transactionRecord) {
+        await prisma.transaction.update({
+          where: { id: transactionRecord.id },
+          data: {
+            status: "FAILED",
+            description: `Refunded: ${failureErrors.join(" | ")}`,
+          },
+        }).catch(() => {});
+      }
+
+      const formattedError = failureErrors.length > 0 ? failureErrors.join("; ") : "Provider unavailable";
+      throw new Error(
+        `Transaction Failed: Delivery Error (${formattedError}). ₦${purchaseAmount} has been refunded back to your wallet.`
+      );
     }
-  } catch (error) {
-    console.error("Critical Data Purchase Error:", error);
-    return res.status(500).json({
-      success: false,
-      message: `Internal processing error: ${error.message}. If debited, your wallet has been refunded.`,
-    });
   }
-};
+}
+
+module.exports = new DataService();

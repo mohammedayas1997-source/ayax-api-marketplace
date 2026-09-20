@@ -13,7 +13,9 @@ import {
   Layers,
   Clock,
   Loader2,
-  CheckCircle2,
+  Copy,
+  Check,
+  Hash,
 } from "lucide-react";
 import api from "@/lib/api";
 
@@ -28,6 +30,14 @@ export default function PricingPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
+  const [copiedId, setCopiedId] = useState("");
+
+  const copyToClipboard = (text, id) => {
+    if (!text) return;
+    navigator.clipboard.writeText(String(text));
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(""), 2000);
+  };
 
   useEffect(() => {
     const fetchPublicPricing = async () => {
@@ -35,7 +45,6 @@ export default function PricingPage() {
         setLoading(true);
         const res = await api.get("/service-pricing").catch(() => null);
 
-        // Karbar ainihin abin da database ke dauke da shi
         const serverItems =
           res?.data?.pricing ||
           res?.data?.data?.pricing ||
@@ -43,20 +52,36 @@ export default function PricingPage() {
           (Array.isArray(res?.data) ? res?.data : null);
 
         if (Array.isArray(serverItems)) {
-          // Idan Admin ya goge kaya, serverItems zai zama empty array ko abubuwan da suka rage kawai
           const formatted = serverItems
             .filter((item) => item && item.enabled !== false && item.isDeleted !== true)
             .map((item) => {
               const rawCategory = String(item.category || "OTHER").toUpperCase();
               const sName = String(item.serviceName || item.name || "").toUpperCase();
+              const meta = item.metadata && typeof item.metadata === "object" ? item.metadata : {};
 
               // Raba Category cikin tsari
               let displayCategory = rawCategory;
+              let inferredNetwork = meta.network || item.network || "";
+              let inferredNetworkId = meta.networkId || item.networkId || "";
+
               if (rawCategory === "DATA") {
-                if (sName.includes("MTN")) displayCategory = "DATA (MTN)";
-                else if (sName.includes("AIRTEL")) displayCategory = "DATA (AIRTEL)";
-                else if (sName.includes("GLO")) displayCategory = "DATA (GLO)";
-                else if (sName.includes("9MOBILE")) displayCategory = "DATA (9MOBILE)";
+                if (sName.includes("MTN") || inferredNetwork === "MTN") {
+                  displayCategory = "DATA (MTN)";
+                  inferredNetwork = "MTN";
+                  if (!inferredNetworkId) inferredNetworkId = "1";
+                } else if (sName.includes("AIRTEL") || inferredNetwork === "AIRTEL") {
+                  displayCategory = "DATA (AIRTEL)";
+                  inferredNetwork = "AIRTEL";
+                  if (!inferredNetworkId) inferredNetworkId = "2";
+                } else if (sName.includes("GLO") || inferredNetwork === "GLO") {
+                  displayCategory = "DATA (GLO)";
+                  inferredNetwork = "GLO";
+                  if (!inferredNetworkId) inferredNetworkId = "4";
+                } else if (sName.includes("9MOBILE") || inferredNetwork === "9MOBILE") {
+                  displayCategory = "DATA (9MOBILE)";
+                  inferredNetwork = "9MOBILE";
+                  if (!inferredNetworkId) inferredNetworkId = "3";
+                }
               } else if (rawCategory === "IDENTITY") {
                 if (sName.includes("VALIDATION")) {
                   displayCategory = "NIN VALIDATION";
@@ -65,7 +90,7 @@ export default function PricingPage() {
                 }
               }
 
-              const meta = item.metadata || {};
+              const planId = String(meta.planId || item.planId || item.serviceCode || item.code || "").trim();
               const validity =
                 meta.validity ||
                 item.validity ||
@@ -87,6 +112,9 @@ export default function PricingPage() {
                 id: item.id || item._id,
                 category: displayCategory,
                 name: item.serviceName || item.name,
+                network: inferredNetwork || null,
+                networkId: inferredNetworkId || null,
+                planId: planId || "N/A",
                 planType,
                 validity,
                 apiPrice: apiDisplay,
@@ -97,7 +125,6 @@ export default function PricingPage() {
 
           setPricingList(formatted);
         } else {
-          // Idan har ba a taba saita wani abu a database ba ko babu connection
           setPricingList([]);
         }
       } catch (err) {
@@ -125,6 +152,9 @@ export default function PricingPage() {
       const matchesSearch =
         item.name.toLowerCase().includes(q) ||
         item.category.toLowerCase().includes(q) ||
+        (item.planId && item.planId.toLowerCase().includes(q)) ||
+        (item.networkId && String(item.networkId).includes(q)) ||
+        (item.network && item.network.toLowerCase().includes(q)) ||
         (item.planType && item.planType.toLowerCase().includes(q)) ||
         (item.validity && item.validity.toLowerCase().includes(q));
 
@@ -174,13 +204,13 @@ export default function PricingPage() {
       {/* HERO SECTION */}
       <section className="max-w-7xl mx-auto px-6 pt-16 pb-10 text-center">
         <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold uppercase tracking-wider mb-6">
-          <Zap size={14} /> Comprehensive Automated Rates
+          <Zap size={14} /> Developer Marketplace Catalog
         </div>
         <h1 className="text-4xl sm:text-6xl font-extrabold tracking-tight">
-          Live API & Service Rates <span className="text-blue-500">(1GB - 100GB & NIN)</span>
+          Live API & Service Rates <span className="text-blue-500">(Plan IDs & Network IDs)</span>
         </h1>
         <p className="text-slate-400 mt-5 max-w-3xl mx-auto text-lg leading-relaxed">
-          Real-time rates for High-Speed SME & Corporate Data bundles, complete NIN Validation (Bank Mismatch, IPE Clearance, Unactivated records), and Slip Printing verification services.
+          Official API catalog for Developers and Resellers. Query Network IDs, Plan IDs, SME & Corporate Data bundles, and Identity verification parameters.
         </p>
       </section>
 
@@ -192,9 +222,9 @@ export default function PricingPage() {
               <Sliders size={22} />
             </div>
             <div>
-              <h3 className="font-bold text-white text-base">NIN Validation & Identity Sync</h3>
+              <h3 className="font-bold text-white text-base">Direct API Integration Ready</h3>
               <p className="text-xs text-slate-300 mt-0.5">
-                Every NIN Validation problem is automated with direct clearance routing. Check individual rates below.
+                Pass the exact <span className="text-amber-400 font-mono">network_id</span> and <span className="text-amber-400 font-mono">plan_id</span> in your POST payloads to guarantee accurate dispatch.
               </p>
             </div>
           </div>
@@ -230,7 +260,7 @@ export default function PricingPage() {
             <Search size={18} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
             <input
               type="text"
-              placeholder="Search Bank Mismatch, 1GB, BVN..."
+              placeholder="Search by Plan ID, 1GB, MTN, Network..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white outline-none focus:border-blue-500 transition-all"
@@ -247,27 +277,28 @@ export default function PricingPage() {
               <thead>
                 <tr className="border-b border-slate-800 bg-slate-950/60 text-slate-400 text-xs uppercase tracking-wider">
                   <th className="py-4 px-6 font-semibold">Service Category</th>
-                  <th className="py-4 px-6 font-semibold">Package / Issue Description</th>
-                  <th className="py-4 px-6 font-semibold">Plan Type / Speed</th>
-                  <th className="py-4 px-6 font-semibold">API Tier Cost</th>
+                  <th className="py-4 px-6 font-semibold">Package Description</th>
+                  <th className="py-4 px-6 font-semibold">Network & Plan ID</th>
+                  <th className="py-4 px-6 font-semibold">Type & Validity</th>
+                  <th className="py-4 px-6 font-semibold">Wholesale / API</th>
                   <th className="py-4 px-6 font-semibold">Retail Price</th>
                   <th className="py-4 px-6 font-semibold">Status</th>
-                  <th className="py-4 px-6 font-semibold text-right">Integration</th>
+                  <th className="py-4 px-6 font-semibold text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800 text-sm">
                 {loading ? (
                   <tr>
-                    <td colSpan="7" className="py-14 text-center text-slate-400">
+                    <td colSpan="8" className="py-14 text-center text-slate-400">
                       <div className="inline-flex items-center gap-3">
                         <Loader2 size={20} className="animate-spin text-blue-500" />
-                        Fetching live pricing table...
+                        Fetching live marketplace catalog...
                       </div>
                     </td>
                   </tr>
                 ) : filteredPricing.length === 0 ? (
                   <tr>
-                    <td colSpan="7" className="py-12 text-center text-slate-500">
+                    <td colSpan="8" className="py-12 text-center text-slate-500">
                       No matching pricing plans found.
                     </td>
                   </tr>
@@ -284,6 +315,34 @@ export default function PricingPage() {
                         {item.name}
                       </td>
 
+                      {/* NETWORK ID & PLAN ID */}
+                      <td className="py-4 px-6">
+                        <div className="flex flex-col gap-1.5">
+                          {item.networkId && (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-mono text-blue-300 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20 w-max">
+                              <Hash size={10} /> net_id: <strong>{item.networkId}</strong>
+                            </span>
+                          )}
+                          <div className="flex items-center gap-1.5">
+                            <span className="inline-flex items-center gap-1 text-xs font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                              plan_id: {item.planId}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => copyToClipboard(item.planId, `plan-${item.id}`)}
+                              className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                              title="Copy Plan ID"
+                            >
+                              {copiedId === `plan-${item.id}` ? (
+                                <Check size={12} className="text-green-400" />
+                              ) : (
+                                <Copy size={12} />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </td>
+
                       <td className="py-4 px-6 text-slate-400">
                         <div className="flex flex-col gap-1 text-xs">
                           <span className="font-semibold text-slate-300">
@@ -295,7 +354,7 @@ export default function PricingPage() {
                         </div>
                       </td>
 
-                      <td className="py-4 px-6 font-mono text-slate-400">
+                      <td className="py-4 px-6 font-mono text-slate-300">
                         {item.apiPrice}
                       </td>
 
@@ -313,7 +372,7 @@ export default function PricingPage() {
                       <td className="py-4 px-6 text-right">
                         <Link
                           href="/register"
-                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600/10 border border-blue-500/30 text-blue-400 hover:bg-blue-600 hover:text-white font-medium text-xs transition-all"
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600/10 border border-blue-500/30 text-blue-400 hover:bg-blue-600 hover:text-white font-medium text-xs transition-all whitespace-nowrap"
                         >
                           Integrate <ArrowRight size={14} />
                         </Link>
@@ -330,14 +389,14 @@ export default function PricingPage() {
             <div className="flex items-center gap-2">
               <Shield size={16} className="text-blue-500" />
               <span>
-                Real-time API synchronization active. All listed rates reflect actual gateway costs.
+                Real-time API synchronization active. Dispatch orders using mapped <code className="text-amber-400 font-mono">plan_id</code> and <code className="text-blue-400 font-mono">network_id</code>.
               </span>
             </div>
             <Link
               href="/login"
               className="font-semibold text-blue-400 hover:text-blue-300 transition-colors"
             >
-              Sign In to View Portal &rarr;
+              Sign In to Developer Portal &rarr;
             </Link>
           </div>
         </div>

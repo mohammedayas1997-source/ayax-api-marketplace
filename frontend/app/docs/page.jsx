@@ -17,6 +17,7 @@ import {
   Database,
   FileCode2,
   Globe2,
+  Hash,
   KeyRound,
   Layers3,
   LockKeyhole,
@@ -41,6 +42,11 @@ const documentationLinks = [
     id: "overview",
     label: "Overview",
     icon: Globe2,
+  },
+  {
+    id: "network-standards",
+    label: "Network & Plan IDs",
+    icon: Hash,
   },
   {
     id: "environments",
@@ -79,13 +85,13 @@ const services = [
     icon: Wifi,
     title: "Data API",
     description:
-      "Purchase internet data bundles for supported mobile networks.",
+      "Purchase high-speed internet data bundles via network_id and plan_id.",
   },
   {
     icon: Smartphone,
     title: "Airtime API",
     description:
-      "Send airtime top-up to supported mobile phone numbers.",
+      "Send automated VTU airtime top-up via network_id and phone numbers.",
   },
   {
     icon: Zap,
@@ -119,29 +125,67 @@ const services = [
   },
 ];
 
+const networkDirectory = [
+  { id: "1", name: "MTN", prefix: "100 Series (101, 102, 103, 105)", sampleCode: "102 (1GB SME)" },
+  { id: "2", name: "AIRTEL", prefix: "200 Series (201, 202, 203, 205)", sampleCode: "202 (1GB CG)" },
+  { id: "3", name: "9MOBILE", prefix: "300 Series (301, 302, 303, 305)", sampleCode: "301 (1GB SME)" },
+  { id: "4", name: "GLO", prefix: "400 Series (401, 402, 403, 405)", sampleCode: "401 (1GB CG)" },
+];
+
 const endpoints = [
   {
     id: "data-plans",
     category: "Data API",
     method: "GET",
     path: "/api/v1/data/plans",
-    title: "Get Data Plans",
+    title: "Get Data Plans (Marketplace Catalog)",
     description:
-      "Retrieve active data plans available to your developer account.",
-    request: `No request body is required.`,
+      "Retrieve active data plans with their respective network_id, plan_id, validity, and wholesale apiPrice.",
+    request: `No request body is required. Optional query parameter: ?network_id=1`,
     response: `{
   "success": true,
-  "message": "Data plans retrieved successfully",
-  "data": [
-    {
-      "id": "plan_1gb_mtn",
-      "network": "MTN",
-      "name": "1GB",
-      "validity": "30 Days",
-      "amount": 500,
-      "currency": "NGN"
-    }
-  ]
+  "status": "success",
+  "message": "Marketplace plans retrieved successfully",
+  "data": {
+    "networks": [
+      { "id": "1", "name": "MTN" },
+      { "id": "2", "name": "AIRTEL" },
+      { "id": "3", "name": "9MOBILE" },
+      { "id": "4", "name": "GLO" }
+    ],
+    "plans": [
+      {
+        "planId": "101",
+        "networkId": "1",
+        "network": "MTN",
+        "name": "MTN 500MB SME",
+        "volume": "500MB",
+        "type": "SME",
+        "validity": "30 Days",
+        "apiPrice": 140
+      },
+      {
+        "planId": "102",
+        "networkId": "1",
+        "network": "MTN",
+        "name": "MTN 1GB SME",
+        "volume": "1GB",
+        "type": "SME",
+        "validity": "30 Days",
+        "apiPrice": 280
+      },
+      {
+        "planId": "202",
+        "networkId": "2",
+        "network": "AIRTEL",
+        "name": "AIRTEL 1GB CG",
+        "volume": "1GB",
+        "type": "CG",
+        "validity": "30 Days",
+        "apiPrice": 290
+      }
+    ]
+  }
 }`,
   },
   {
@@ -149,24 +193,29 @@ const endpoints = [
     category: "Data API",
     method: "POST",
     path: "/api/v1/data/buy",
-    title: "Purchase Data",
+    title: "Purchase Data Bundle",
     description:
-      "Purchase a data bundle using an active plan ID and unique reference.",
+      "Purchase a data bundle using the network_id, plan_id, recipient phone number, and a unique reference.",
     request: `{
+  "network_id": "1",
   "network": "MTN",
+  "plan_id": "102",
   "phone": "08012345678",
-  "planId": "plan_1gb_mtn",
-  "reference": "AYAX-2026-0001"
+  "reference": "AYAX-DATA-2026-0001"
 }`,
     response: `{
   "success": true,
-  "message": "Data transaction submitted successfully",
+  "status": "success",
+  "message": "MTN 1GB SME dispatched successfully",
   "data": {
-    "reference": "AYAX-2026-0001",
-    "status": "PROCESSING",
+    "reference": "AYAX-DATA-2026-0001",
     "network": "MTN",
+    "network_id": "1",
+    "plan_id": "102",
+    "plan_name": "MTN 1GB SME",
+    "amount": 280,
     "phone": "08012345678",
-    "amount": 500
+    "status": "PROCESSING"
   }
 }`,
   },
@@ -177,20 +226,23 @@ const endpoints = [
     path: "/api/v1/airtime/buy",
     title: "Purchase Airtime",
     description:
-      "Send airtime to a supported mobile network phone number.",
+      "Send VTU airtime to a supported mobile network using network_id, recipient phone number, and amount.",
     request: `{
+  "network_id": "2",
   "network": "AIRTEL",
   "phone": "08012345678",
   "amount": 500,
-  "reference": "AYAX-2026-0002"
+  "reference": "AYAX-AIR-2026-0002"
 }`,
     response: `{
   "success": true,
+  "status": "success",
   "message": "Airtime transaction submitted successfully",
   "data": {
-    "reference": "AYAX-2026-0002",
+    "reference": "AYAX-AIR-2026-0002",
     "status": "PROCESSING",
     "network": "AIRTEL",
+    "network_id": "2",
     "phone": "08012345678",
     "amount": 500
   }
@@ -234,13 +286,13 @@ const endpoints = [
   "meterType": "PREPAID",
   "amount": 5000,
   "phone": "08012345678",
-  "reference": "AYAX-2026-0003"
+  "reference": "AYAX-ELEC-2026-0003"
 }`,
     response: `{
   "success": true,
   "message": "Electricity transaction submitted successfully",
   "data": {
-    "reference": "AYAX-2026-0003",
+    "reference": "AYAX-ELEC-2026-0003",
     "status": "PROCESSING",
     "token": null
   }
@@ -533,15 +585,15 @@ const endpoints = [
     title: "Transaction Status",
     description:
       "Retrieve the latest state of a transaction using its reference.",
-    request: `GET /api/v1/transactions/AYAX-2026-0001`,
+    request: `GET /api/v1/transactions/AYAX-DATA-2026-0001`,
     response: `{
   "success": true,
   "message": "Transaction retrieved successfully",
   "data": {
-    "reference": "AYAX-2026-0001",
+    "reference": "AYAX-DATA-2026-0001",
     "status": "SUCCESSFUL",
     "service": "DATA",
-    "amount": 500,
+    "amount": 280,
     "createdAt": "2026-07-22T10:30:00.000Z"
   }
 }`,
@@ -553,7 +605,7 @@ const errorCodes = [
     code: "400",
     title: "Bad Request",
     description:
-      "The request body or one of the supplied parameters is invalid.",
+      "The request body or one of the supplied parameters (such as network_id or plan_id) is invalid or missing.",
   },
   {
     code: "401",
@@ -571,7 +623,7 @@ const errorCodes = [
     code: "404",
     title: "Not Found",
     description:
-      "The requested transaction, plan or API resource was not found.",
+      "The requested transaction, plan_id, or API resource was not found.",
   },
   {
     code: "409",
@@ -595,7 +647,7 @@ const errorCodes = [
     code: "500",
     title: "Server Error",
     description:
-      "The request could not be completed because of a server error.",
+      "The request could not be completed because of an internal upstream or gateway error.",
   },
 ];
 
@@ -833,9 +885,15 @@ export default function DocsPage() {
             <p className="mt-6 max-w-3xl text-lg leading-8 text-slate-400">
               Integrate Data, Airtime, Electricity,
               Cable, NIMC (NIN) Verification, BVN KYC and
-              Transaction services into your website,
-              mobile application, POS system or reseller
-              platform.
+              Transaction services using standardized{" "}
+              <code className="rounded bg-slate-900 px-2 py-1 font-mono text-amber-300">
+                network_id
+              </code>{" "}
+              and{" "}
+              <code className="rounded bg-slate-900 px-2 py-1 font-mono text-amber-300">
+                plan_id
+              </code>{" "}
+              routing into your website, mobile app or POS terminal.
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
@@ -866,15 +924,22 @@ export default function DocsPage() {
               </div>
 
               <span className="text-xs text-slate-500">
-                Quick Start
+                Quick Start: Data Purchase
               </span>
             </div>
 
-            <pre className="mt-5 overflow-x-auto text-sm leading-7 text-slate-300">
-              <code>{`curl --request GET \\
-  --url "${BASE_URL}/api/v1/data/plans" \\
+            <pre className="mt-5 overflow-x-auto text-sm leading-7 text-slate-300 font-mono">
+              <code>{`curl --request POST \\
+  --url "${BASE_URL}/api/v1/data/buy" \\
   --header "accept: application/json" \\
-  --header "x-api-key: ayax_live_your_key"`}</code>
+  --header "content-type: application/json" \\
+  --header "x-api-key: ayax_live_your_key" \\
+  --data '{
+    "network_id": "1",
+    "plan_id": "102",
+    "phone": "08012345678",
+    "reference": "AYAX-DATA-2026-0001"
+  }'`}</code>
             </pre>
           </div>
         </div>
@@ -976,6 +1041,51 @@ export default function DocsPage() {
                 label="Response Format"
                 value="JSON"
               />
+            </div>
+          </DocSection>
+
+          {/* DEDICATED NETWORK & PLAN STANDARDS SECTION */}
+          <DocSection id="network-standards">
+            <SectionHeading
+              icon={<Hash />}
+              eyebrow="Standards & Parameters"
+              title="Network & Plan Identification"
+              description="Mandatory Network IDs and standardized Plan Codes for VTU and Data routing."
+            />
+
+            <p className="mt-6 leading-8 text-slate-400">
+              To guarantee zero-failure dispatch, Ayax maps all Nigerian telecom networks to dedicated numerical identifiers. When calling data or airtime purchase endpoints, you must supply the appropriate <code className="rounded bg-slate-950 px-2 py-1 font-mono text-amber-300">network_id</code> and <code className="rounded bg-slate-950 px-2 py-1 font-mono text-amber-300">plan_id</code>.
+            </p>
+
+            <div className="mt-8 overflow-hidden rounded-2xl border border-slate-800">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-slate-800 bg-slate-950 text-xs uppercase tracking-wider text-slate-400">
+                  <tr>
+                    <th className="px-6 py-4">Network ID</th>
+                    <th className="px-6 py-4">Network Name</th>
+                    <th className="px-6 py-4">Plan Code Series</th>
+                    <th className="px-6 py-4">Common Sample</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 bg-slate-900/40">
+                  {networkDirectory.map((net) => (
+                    <tr key={net.id} className="hover:bg-slate-800/30">
+                      <td className="px-6 py-4 font-mono font-bold text-amber-400">
+                        {net.id}
+                      </td>
+                      <td className="px-6 py-4 font-bold text-white">
+                        {net.name}
+                      </td>
+                      <td className="px-6 py-4 font-mono text-slate-300">
+                        {net.prefix}
+                      </td>
+                      <td className="px-6 py-4 font-mono text-emerald-400">
+                        {net.sampleCode}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </DocSection>
 
@@ -1299,12 +1409,16 @@ Accept: application/json`}
               title="Successful Response"
               value={`{
   "success": true,
-  "message": "Transaction submitted successfully",
+  "status": "success",
+  "message": "Data bundle dispatched successfully",
   "data": {
-    "reference": "AYAX-2026-0001",
+    "reference": "AYAX-DATA-2026-0001",
     "status": "PROCESSING",
-    "service": "DATA",
-    "amount": 500
+    "network": "MTN",
+    "network_id": "1",
+    "plan_id": "102",
+    "amount": 280,
+    "phone": "08012345678"
   }
 }`}
               copiedValue={copiedValue}
@@ -1316,6 +1430,7 @@ Accept: application/json`}
               title="Failed Response"
               value={`{
   "success": false,
+  "status": "failed",
   "message": "Insufficient wallet balance",
   "error": {
     "code": "INSUFFICIENT_BALANCE"

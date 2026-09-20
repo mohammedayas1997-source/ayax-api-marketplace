@@ -29,12 +29,19 @@ import SuperTopbar from "../components/SuperTopbar";
 import api from "@/lib/api";
 import { socket } from "@/lib/socket";
 
+const NETWORK_MAP = {
+  MTN: "1",
+  AIRTEL: "2",
+  "9MOBILE": "3",
+  GLO: "4",
+};
+
 const PRESET_SERVICES = [
-  { label: "MTN Data", category: "DATA", code: "MTN" },
-  { label: "Airtel Data", category: "DATA", code: "AIRTEL" },
-  { label: "Glo Data", category: "DATA", code: "GLO" },
-  { label: "9mobile Data", category: "DATA", code: "9MOBILE" },
-  { label: "Airtime Topup", category: "AIRTIME", code: "AIRTIME" },
+  { label: "MTN Data", category: "DATA", code: "MTN", network: "MTN", networkId: "1" },
+  { label: "Airtel Data", category: "DATA", code: "AIRTEL", network: "AIRTEL", networkId: "2" },
+  { label: "Glo Data", category: "DATA", code: "GLO", network: "GLO", networkId: "4" },
+  { label: "9mobile Data", category: "DATA", code: "9MOBILE", network: "9MOBILE", networkId: "3" },
+  { label: "Airtime Topup", category: "AIRTIME", code: "AIRTIME", network: "MTN", networkId: "1" },
   { label: "NIMC Validation (General)", category: "IDENTITY", code: "NIMC_VALIDATION" },
   { label: "NIMC IPE Clearance", category: "IDENTITY", code: "NIMC_IPE_CLEARANCE" },
   { label: "NIMC Bank Mismatch Validation", category: "IDENTITY", code: "NIMC_BANK_MISMATCH" },
@@ -101,12 +108,16 @@ const TIERS = ["REGULAR", "STANDARD", "PREMIUM", "SECRET_VIP"];
 
 const EMPTY_FORM = {
   selectedService: "MTN Data",
+  networkId: "1",
+  network: "MTN",
+  planId: "102",
+  gatewayPlanId: "102",
   dataType: "SME",
   customDataType: "",
   dataSize: "1GB",
   customDataSize: "",
   validity: "30 Days",
-  serviceCode: "MTN_DATA_SME_1GB_30DAYS",
+  serviceCode: "102",
   serviceName: "MTN Data SME 1GB (30 Days)",
   category: "DATA",
   applyToAllTiers: true,
@@ -140,20 +151,34 @@ const normalizeCode = (value = "") =>
     .replace(/_+/g, "_")
     .replace(/^_+|_+$/g, "");
 
-const normalizePricing = (item = {}) => ({
-  id: item.id,
-  serviceCode: item.serviceCode || "",
-  serviceName: item.serviceName || "Unnamed Service",
-  category: String(item.category || "OTHER").toUpperCase(),
-  tier: String(item.tier || "REGULAR").toUpperCase(),
-  costPrice: Number(item.costPrice || 0),
-  sellingPrice: Number(item.sellingPrice || 0),
-  currency: item.currency || "NGN",
-  enabled: Boolean(item.enabled),
-  features: item.features || [],
-  createdAt: item.createdAt,
-  updatedAt: item.updatedAt,
-});
+const normalizePricing = (item = {}) => {
+  const metadata = item.metadata && typeof item.metadata === "object" ? item.metadata : {};
+  const netId = String(item.networkId || metadata.networkId || "").trim();
+  const netName = String(item.network || metadata.network || "").toUpperCase();
+  const planIdentifier = String(item.planId || metadata.planId || item.serviceCode || "");
+
+  return {
+    id: item.id,
+    serviceCode: item.serviceCode || "",
+    serviceName: item.serviceName || "Unnamed Service",
+    category: String(item.category || "OTHER").toUpperCase(),
+    tier: String(item.tier || "REGULAR").toUpperCase(),
+    costPrice: Number(item.costPrice || 0),
+    sellingPrice: Number(item.sellingPrice || 0),
+    currency: item.currency || "NGN",
+    enabled: Boolean(item.enabled),
+    features: item.features || [],
+    networkId: netId || null,
+    network: netName || null,
+    planId: planIdentifier,
+    gatewayPlanId: metadata.gatewayPlanId || planIdentifier,
+    dataType: metadata.dataType || item.dataType || null,
+    dataSize: metadata.dataSize || item.dataSize || null,
+    validity: metadata.validity || item.validity || "30 Days",
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
+};
 
 export default function SuperPricingPage() {
   const [activeTab, setActiveTab] = useState("pricing");
@@ -249,11 +274,40 @@ export default function SuperPricingPage() {
     };
   }, [loadPricing, fetchPricing, fetchVipRequests]);
 
+  // Compute standard auto Plan ID based on network and volume
+  const computePlanId = (netId, size) => {
+    const cleanSize = String(size || "").toUpperCase();
+    if (netId === "1") {
+      if (cleanSize.includes("500")) return "101";
+      if (cleanSize.includes("1GB")) return "102";
+      if (cleanSize.includes("2GB")) return "103";
+      if (cleanSize.includes("3GB")) return "104";
+      if (cleanSize.includes("5GB")) return "105";
+      if (cleanSize.includes("10GB")) return "106";
+    } else if (netId === "2") {
+      if (cleanSize.includes("500")) return "201";
+      if (cleanSize.includes("1GB")) return "202";
+      if (cleanSize.includes("2GB")) return "203";
+      if (cleanSize.includes("5GB")) return "205";
+      if (cleanSize.includes("10GB")) return "210";
+    } else if (netId === "3") {
+      if (cleanSize.includes("1GB")) return "301";
+      if (cleanSize.includes("2GB")) return "302";
+      if (cleanSize.includes("3GB")) return "303";
+      if (cleanSize.includes("5GB")) return "305";
+    } else if (netId === "4") {
+      if (cleanSize.includes("1GB")) return "401";
+      if (cleanSize.includes("2GB")) return "402";
+      if (cleanSize.includes("3GB")) return "403";
+      if (cleanSize.includes("5GB")) return "405";
+    }
+    return "";
+  };
+
   const syncServiceDetails = (updated) => {
     const isData = updated.category === "DATA";
     const isIdentity = updated.category === "IDENTITY";
     let sName = updated.selectedService;
-    let sCode = normalizeCode(updated.selectedService);
 
     const effectiveType =
       updated.dataType === "OTHER"
@@ -265,16 +319,20 @@ export default function SuperPricingPage() {
         ? updated.customDataSize.trim() || "CUSTOM"
         : updated.dataSize;
 
+    let autoPlanId = updated.planId;
     if (isData) {
       sName = `${updated.selectedService} ${effectiveType} ${effectiveSize} (${updated.validity})`;
-      sCode = normalizeCode(
-        `${updated.selectedService}_${effectiveType}_${effectiveSize}_${updated.validity}`
-      );
+      const suggested = computePlanId(updated.networkId, effectiveSize);
+      if (suggested && (!autoPlanId || autoPlanId === "102" || autoPlanId === updated.serviceCode)) {
+        autoPlanId = suggested;
+      }
     } else if (isIdentity) {
       const foundPreset = PRESET_SERVICES.find((s) => s.label === updated.selectedService);
-      sCode = foundPreset?.code || normalizeCode(updated.selectedService);
       sName = updated.selectedService;
+      autoPlanId = foundPreset?.code || normalizeCode(updated.selectedService);
     }
+
+    const sCode = autoPlanId || normalizeCode(sName);
 
     let autoFeatures = `High Speed Verification\nAutomated Response\n24/7 Uptime`;
     if (isData) {
@@ -287,6 +345,8 @@ export default function SuperPricingPage() {
 
     return {
       ...updated,
+      planId: autoPlanId,
+      gatewayPlanId: updated.gatewayPlanId || autoPlanId,
       serviceName: sName,
       serviceCode: sCode,
       features: autoFeatures,
@@ -298,7 +358,17 @@ export default function SuperPricingPage() {
       let updated = { ...current, [field]: value };
       if (field === "selectedService") {
         const found = PRESET_SERVICES.find((s) => s.label === value);
-        if (found) updated.category = found.category;
+        if (found) {
+          updated.category = found.category;
+          if (found.network) updated.network = found.network;
+          if (found.networkId) updated.networkId = found.networkId;
+        }
+      } else if (field === "networkId") {
+        const reverseMap = { "1": "MTN", "2": "AIRTEL", "3": "9MOBILE", "4": "GLO" };
+        if (reverseMap[value]) {
+          updated.network = reverseMap[value];
+          updated.selectedService = `${reverseMap[value]} Data`;
+        }
       }
       return syncServiceDetails(updated);
     });
@@ -309,6 +379,10 @@ export default function SuperPricingPage() {
       const updated = { ...current, [field]: value };
       if (field === "customDataType" || field === "customDataSize") {
         return syncServiceDetails(updated);
+      }
+      if (field === "planId") {
+        updated.serviceCode = normalizeCode(value);
+        if (!updated.gatewayPlanId) updated.gatewayPlanId = normalizeCode(value);
       }
       return updated;
     });
@@ -321,6 +395,8 @@ export default function SuperPricingPage() {
         !searchValue ||
         item.serviceName.toLowerCase().includes(searchValue) ||
         item.serviceCode.toLowerCase().includes(searchValue) ||
+        (item.planId && item.planId.toLowerCase().includes(searchValue)) ||
+        (item.network && item.network.toLowerCase().includes(searchValue)) ||
         item.category.toLowerCase().includes(searchValue) ||
         item.tier.toLowerCase().includes(searchValue);
 
@@ -362,11 +438,15 @@ export default function SuperPricingPage() {
     setSelectedPricing(item);
     setForm({
       selectedService: item.serviceName,
-      dataType: "SME",
+      networkId: item.networkId || "1",
+      network: item.network || "MTN",
+      planId: item.planId || item.serviceCode,
+      gatewayPlanId: item.gatewayPlanId || item.planId || item.serviceCode,
+      dataType: item.dataType || "SME",
       customDataType: "",
-      dataSize: "1GB",
+      dataSize: item.dataSize || "1GB",
       customDataSize: "",
-      validity: "30 Days",
+      validity: item.validity || "30 Days",
       serviceCode: item.serviceCode,
       serviceName: item.serviceName,
       category: item.category,
@@ -397,13 +477,14 @@ export default function SuperPricingPage() {
   const submitPricing = async (event) => {
     event.preventDefault();
 
-    const serviceCode = normalizeCode(form.serviceCode);
+    const planId = normalizeCode(form.planId || form.serviceCode);
+    const serviceCode = planId;
     const serviceName = form.serviceName.trim();
     const costPrice = Number(form.costPrice);
 
-    if (!serviceCode || !serviceName) {
+    if (!planId || !serviceName) {
       setMessageType("error");
-      setMessage("Service code and service name are required.");
+      setMessage("Plan ID/Service code and service name are required.");
       return;
     }
 
@@ -417,6 +498,16 @@ export default function SuperPricingPage() {
       .split("\n")
       .map((item) => item.trim())
       .filter(Boolean);
+
+    const baseMetadata = {
+      networkId: form.networkId || (NETWORK_MAP[form.network] ?? "1"),
+      network: form.network || "MTN",
+      planId,
+      gatewayPlanId: form.gatewayPlanId || planId,
+      dataType: form.dataType === "OTHER" ? form.customDataType : form.dataType,
+      dataSize: form.dataSize === "OTHER" ? form.customDataSize : form.dataSize,
+      validity: form.validity,
+    };
 
     try {
       setSubmitting(true);
@@ -434,14 +525,23 @@ export default function SuperPricingPage() {
 
         const payload = {
           serviceCode,
+          planId,
+          networkId: baseMetadata.networkId,
+          network: baseMetadata.network,
           serviceName,
           category: form.category,
           tier: form.singleTier,
           costPrice,
           sellingPrice,
+          apiPrice: sellingPrice,
           currency: form.currency,
           enabled: form.enabled,
           features,
+          metadata: baseMetadata,
+          dataType: baseMetadata.dataType,
+          dataSize: baseMetadata.dataSize,
+          validity: baseMetadata.validity,
+          gatewayPlanId: baseMetadata.gatewayPlanId,
         };
 
         if (selectedPricing?.id) {
@@ -481,21 +581,30 @@ export default function SuperPricingPage() {
 
         const payloads = tierPayloads.map((t) => ({
           serviceCode,
+          planId,
+          networkId: baseMetadata.networkId,
+          network: baseMetadata.network,
           serviceName,
           category: form.category,
           tier: t.tier,
           costPrice,
           sellingPrice: t.sellingPrice,
+          apiPrice: t.sellingPrice,
           currency: form.currency,
           enabled: form.enabled,
           features,
+          metadata: baseMetadata,
+          dataType: baseMetadata.dataType,
+          dataSize: baseMetadata.dataSize,
+          validity: baseMetadata.validity,
+          gatewayPlanId: baseMetadata.gatewayPlanId,
         }));
 
         await Promise.all(payloads.map((p) => api.post("/pricing", p)));
       }
 
       setMessageType("success");
-      setMessage("Pricing configured and updated successfully.");
+      setMessage(`Pricing with Plan ID [${planId}] and Network ID [${baseMetadata.networkId}] saved successfully!`);
       closeModal();
       await fetchPricing();
     } catch (error) {
@@ -582,6 +691,9 @@ export default function SuperPricingPage() {
     }
 
     const headers = [
+      "Network ID",
+      "Network",
+      "Plan ID",
       "Service Code",
       "Service Name",
       "Category",
@@ -594,6 +706,9 @@ export default function SuperPricingPage() {
     ];
 
     const rows = filteredPricing.map((item) => [
+      item.networkId || "",
+      item.network || "",
+      item.planId || "",
       item.serviceCode,
       item.serviceName,
       item.category,
@@ -628,7 +743,7 @@ export default function SuperPricingPage() {
         <SuperSidebar />
 
         <section className="min-w-0 flex-1 p-4 sm:p-6 lg:p-10">
-          <SuperTopbar title="Service Pricing & VIP Engine" />
+          <SuperTopbar title="Service Pricing & Marketplace Engine" />
 
           {message && (
             <div
@@ -654,7 +769,7 @@ export default function SuperPricingPage() {
           {/* TELEMETRY CARDS */}
           <section className="mb-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
             <Stat title="Total Pricing" value={stats.total} icon={<Tags />} />
-            <Stat title="Active" value={stats.active} icon={<Power />} />
+            <Stat title="Active Plans" value={stats.active} icon={<Power />} />
             <Stat
               title="Pending VIP Requests"
               value={stats.pendingVip}
@@ -709,7 +824,7 @@ export default function SuperPricingPage() {
                     <input
                       value={query}
                       onChange={(event) => setQuery(event.target.value)}
-                      placeholder="Search service, code, category or tier..."
+                      placeholder="Search Plan ID, Network, service..."
                       className="w-full bg-transparent py-4 outline-none"
                     />
                   </div>
@@ -811,7 +926,7 @@ export default function SuperPricingPage() {
                               </h2>
                               <TierBadge tier={item.tier} />
                               <span
-                                className={`rounded-full px-3 py-1 text-xs ${
+                                className={`rounded-full px-3 py-1 text-xs font-semibold ${
                                   item.enabled
                                     ? "bg-green-500/10 text-green-400"
                                     : "bg-red-500/10 text-red-400"
@@ -820,9 +935,17 @@ export default function SuperPricingPage() {
                                 {item.enabled ? "ACTIVE" : "DISABLED"}
                               </span>
                             </div>
-                            <p className="mt-2 text-sm text-slate-500">
-                              {item.serviceCode} • {item.category}
-                            </p>
+                            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-400">
+                              {item.networkId && (
+                                <span className="rounded-md bg-blue-500/10 px-2 py-0.5 font-mono text-xs font-bold text-blue-400">
+                                  Network ID: {item.networkId} ({item.network || "GSM"})
+                                </span>
+                              )}
+                              <span className="rounded-md bg-amber-500/10 px-2 py-0.5 font-mono text-xs font-bold text-amber-400">
+                                Plan ID: {item.planId || item.serviceCode}
+                              </span>
+                              <span>• {item.category}</span>
+                            </div>
                           </div>
                           <ShieldCheck className="text-blue-400" />
                         </div>
@@ -993,7 +1116,7 @@ export default function SuperPricingPage() {
         </section>
       </div>
 
-      {/* MODAL 1: ADD/EDIT PRICING */}
+      {/* MODAL 1: ADD/EDIT PRICING (WITH NETWORK ID & PLAN ID DISPATCH) */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/75 p-4 backdrop-blur-sm">
           <div className="flex min-h-full items-center justify-center py-8">
@@ -1004,7 +1127,7 @@ export default function SuperPricingPage() {
                     {selectedPricing ? "Edit Service Pricing" : "Add Service Pricing"}
                   </h2>
                   <p className="mt-2 text-sm text-slate-400">
-                    Automatic package builder and multi-tier pricing configuration.
+                    Automatic marketplace package builder with Network ID and Plan ID dispatch.
                   </p>
                 </div>
                 <button
@@ -1018,10 +1141,10 @@ export default function SuperPricingPage() {
               </div>
 
               <form onSubmit={submitPricing} className="space-y-5">
-                {/* SECTION 1: SERVICE CONFIGURATION */}
+                {/* SECTION 1: SERVICE & NETWORK CONFIGURATION */}
                 <div className="grid gap-5 rounded-2xl border border-slate-800/80 bg-slate-950/50 p-4 sm:grid-cols-2">
                   <FormSelect
-                    label="Service Name (Select Service)"
+                    label="Service Name (Select Preset)"
                     value={form.selectedService}
                     onChange={(value) => handleSelectionChange("selectedService", value)}
                     options={PRESET_SERVICES.map((s) => s.label)}
@@ -1032,6 +1155,29 @@ export default function SuperPricingPage() {
                     value={form.category}
                     onChange={(value) => handleSelectionChange("category", value)}
                     options={CATEGORIES}
+                  />
+
+                  {/* NETWORK ID & NETWORK SELECTOR */}
+                  <div>
+                    <label className="text-sm text-slate-300">Network / Gateway Provider</label>
+                    <select
+                      value={form.networkId}
+                      onChange={(e) => handleSelectionChange("networkId", e.target.value)}
+                      className="mt-2 w-full rounded-2xl border border-slate-800 bg-slate-950 px-4 py-4 outline-none focus:border-blue-500"
+                    >
+                      <option value="1">MTN (Network ID: 1)</option>
+                      <option value="2">AIRTEL (Network ID: 2)</option>
+                      <option value="3">9MOBILE (Network ID: 3)</option>
+                      <option value="4">GLO (Network ID: 4)</option>
+                    </select>
+                  </div>
+
+                  <FormInput
+                    label="Marketplace Plan ID (API Plan Code)"
+                    value={form.planId}
+                    onChange={(value) => updateForm("planId", value)}
+                    placeholder="e.g. 101, 102, 201"
+                    required
                   />
 
                   {form.category === "DATA" && (
@@ -1053,7 +1199,7 @@ export default function SuperPricingPage() {
                       {form.dataType === "OTHER" && (
                         <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-3 sm:col-span-1">
                           <FormInput
-                            label="Custom Plan Type (e.g. DC, Gifting, Coupon)"
+                            label="Custom Plan Type (e.g. DC, Gifting)"
                             value={form.customDataType}
                             onChange={(value) => updateForm("customDataType", value)}
                             placeholder="e.g. DC, Direct Coupon, Special"
@@ -1069,10 +1215,10 @@ export default function SuperPricingPage() {
                           }`}
                         >
                           <FormInput
-                            label="Custom Data Size / Volume (e.g. 250MB, 2.5GB, 12GB)"
+                            label="Custom Data Size (e.g. 250MB, 2.5GB)"
                             value={form.customDataSize}
                             onChange={(value) => updateForm("customDataSize", value)}
-                            placeholder="e.g. 2.5GB, 750MB, 12GB"
+                            placeholder="e.g. 2.5GB, 750MB"
                             required
                           />
                         </div>
@@ -1210,7 +1356,7 @@ export default function SuperPricingPage() {
                   )}
 
                   <FormInput
-                    label="Generated Service Name (Auto)"
+                    label="Service Name"
                     value={form.serviceName}
                     onChange={(value) => updateForm("serviceName", value)}
                     placeholder="Auto generated"
@@ -1218,10 +1364,10 @@ export default function SuperPricingPage() {
                   />
 
                   <FormInput
-                    label="Generated Service Code (Auto)"
+                    label="Service Code (Mapped to Plan ID)"
                     value={form.serviceCode}
                     onChange={(value) => updateForm("serviceCode", normalizeCode(value))}
-                    placeholder="AUTO_CODE"
+                    placeholder="102"
                     required
                   />
 
@@ -1246,7 +1392,7 @@ export default function SuperPricingPage() {
                 {/* SECTION 3: FEATURES */}
                 <div>
                   <label className="text-sm text-slate-300">
-                    Package Features (Auto Generated)
+                    Package Features
                   </label>
                   <textarea
                     value={form.features}

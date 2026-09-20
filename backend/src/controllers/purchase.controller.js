@@ -1,6 +1,5 @@
 const prisma = require("../config/prisma");
 const generateReference = require("../utils/generateReference");
-const { findBestSim } = require("../services/gsm.service");
 const { emitEvent, emitGatewayCommand } = require("../config/socket");
 const axios = require("axios");
 
@@ -130,7 +129,6 @@ exports.buyApiPlan = async (req, res) => {
     ).toUpperCase().trim();
 
     const sellingPrice = Number(plan.apiPrice ?? plan.sellingPrice ?? plan.price ?? 0);
-    const costPrice = Number(plan.costPrice ?? sellingPrice);
     const planName = plan.name || plan.serviceName || `${planNetwork} Data Plan`;
     const gatewayPlanId = meta.gatewayPlanId || plan.gatewayPlanId || lookupPlanCode;
 
@@ -245,41 +243,51 @@ exports.buyApiPlan = async (req, res) => {
     }
 
     // =========================================================================
-    // STEP 1: CHECK LOCAL GSM MODEM GATEWAY (PRIMARY ROUTE)
+    // STEP 1: STRICT GATEWAY SIM MATCHING (PREVENTS CROSS-PLAN DISPENSING)
     // =========================================================================
     let activeDevice = null;
     let targetSim = null;
 
     try {
-      activeDevice = await prisma.gsmDevice.findFirst({
+      const onlineDevices = await prisma.gsmDevice.findMany({
         where: {
           status: "ONLINE",
           lastSeen: { gte: new Date(Date.now() - 3 * 60 * 1000) },
         },
-        include: { sims: true },
+        include: {
+          sims: {
+            where: {
+              status: "ACTIVE",
+            },
+          },
+        },
         orderBy: { lastSeen: "desc" },
       });
 
-      if (typeof findBestSim === "function") {
-        targetSim = await findBestSim({
-          type: "DATA",
-          network: planNetwork,
-          minBalance: 0,
-        }).catch(() => null);
-      }
+      for (const device of onlineDevices) {
+        for (const sim of device.sims) {
+          const simCarrier = String(sim.carrierName || sim.displayName || "").toUpperCase();
+          if (!simCarrier.includes(planNetwork)) continue;
 
-      if (!targetSim && activeDevice && activeDevice.sims) {
-        targetSim = activeDevice.sims.find(
-          (s) =>
-            s.status === "ACTIVE" &&
-            (String(s.carrierName || "").toUpperCase().includes(planNetwork) ||
-             String(s.displayName || "").toUpperCase().includes(planNetwork) ||
-             String(s.network || "").toUpperCase().includes(planNetwork))
-        );
+          // Check if SIM supports the specific plan_id
+          const hasPlan = Array.isArray(sim.supportedPlans) && sim.supportedPlans.includes(lookupPlanCode);
+          if (!hasPlan) continue;
+
+          // Check remaining stock for this specific plan_id
+          const balances = sim.planBalances && typeof sim.planBalances === "object" ? sim.planBalances : {};
+          const remainingStock = balances[lookupPlanCode] !== undefined ? Number(balances[lookupPlanCode]) : 1;
+
+          if (remainingStock > 0) {
+            targetSim = sim;
+            activeDevice = device;
+            break;
+          }
+        }
+        if (targetSim) break;
       }
 
       if (activeDevice && targetSim) {
-        const slotIndex = Number(targetSim.slotIndex ?? targetSim.slot ?? 0);
+        const slotIndex = Number(targetSim.slotIndex ?? 0);
         const gsmPin = process.env.GSM_DATA_PIN || "1997";
 
         let ussdCode = `*312*${targetPhone}*${numericSize}*${gsmPin}#`;
@@ -322,6 +330,16 @@ exports.buyApiPlan = async (req, res) => {
           },
         }).catch(() => null);
 
+        // Decrement stock for this exact plan on the selected SIM
+        const balances = targetSim.planBalances && typeof targetSim.planBalances === "object" ? { ...targetSim.planBalances } : {};
+        const currentStock = balances[lookupPlanCode] !== undefined ? Number(balances[lookupPlanCode]) : 1;
+        balances[lookupPlanCode] = Math.max(0, currentStock - 1);
+
+        await prisma.gsmSim.update({
+          where: { id: targetSim.id },
+          data: { planBalances: balances },
+        }).catch(() => null);
+
         emitEvent("gateway-command", commandPayload, activeDevice.id);
         emitEvent("command", commandPayload, activeDevice.id);
         emitEvent(`gateway-command-${activeDevice.id}`, commandPayload);
@@ -346,9 +364,11 @@ exports.buyApiPlan = async (req, res) => {
             deviceId: activeDevice.id,
           },
         });
+      } else {
+        console.warn(`[STRICT ROUTE]: Plan ${lookupPlanCode} exhausted or not mapped on any active modem. Routing to external fallback...`);
       }
     } catch (gsmErr) {
-      console.warn("Primary local modem route error:", gsmErr.message);
+      console.warn("Primary local modem route notice:", gsmErr.message);
     }
 
     // =========================================================================

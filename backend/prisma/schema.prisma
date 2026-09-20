@@ -758,6 +758,13 @@ model GsmSim {
   status           String           @default("ACTIVE")
   expiryDate       DateTime?
   lastBalanceCheck DateTime?
+
+  // ==========================================
+  // SABBIN FILAYE DON KARE TSALLAKEN PLAN:
+  // ==========================================
+  supportedPlans   String[]         @default([]) // Misali: ["101", "102", "103"]
+  planBalances     Json?            // Misali: {"101": 25, "102": 0} (101 akwai 25, 102 ya kare)
+
   GsmHealthLog     GsmHealthLog[]
   GsmRecharge      GsmRecharge[]
   device           GsmDevice        @relation(fields: [deviceId], references: [id], onDelete: Cascade)

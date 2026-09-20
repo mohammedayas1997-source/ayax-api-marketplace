@@ -1,18 +1,32 @@
 const prisma = require("../config/prisma");
 const { emitEvent } = require("../config/socket");
-const ALLOWED_TIERS = ["REGULAR", "STANDARD", "PREMIUM"];
 
-const normalizeText = (value = "") => String(value).trim();
+const ALLOWED_TIERS = [
+  "REGULAR",
+  "STANDARD",
+  "PREMIUM",
+  "AGENT",
+  "DEVELOPER",
+];
+
+const NETWORK_MAP = {
+  "1": "MTN",
+  "2": "AIRTEL",
+  "3": "9MOBILE",
+  "4": "GLO",
+};
+
+const normalizeText = (value = "") => String(value || "").trim();
 
 const normalizeCode = (value = "") =>
-  String(value)
+  String(value || "")
     .trim()
     .toUpperCase()
     .replace(/[^A-Z0-9_]/g, "_")
     .replace(/_+/g, "_")
     .replace(/^_+|_+$/g, "");
 
-const normalizeTier = (value = "") => String(value).trim().toUpperCase();
+const normalizeTier = (value = "") => String(value || "").trim().toUpperCase();
 
 const parseBoolean = (value, fallback = true) => {
   if (value === undefined || value === null) return fallback;
@@ -59,13 +73,46 @@ const sendControllerError = (res, error, fallbackMessage) => {
   });
 };
 
+const serializePricing = (item) => {
+  const metadata = item.metadata && typeof item.metadata === "object" ? item.metadata : {};
+  const networkId = String(metadata.networkId || "").trim();
+  const network = String(metadata.network || NETWORK_MAP[networkId] || "").toUpperCase();
+
+  return {
+    id: item.id,
+    serviceCode: item.serviceCode,
+    serviceName: item.serviceName,
+    category: item.category,
+    tier: item.tier,
+    costPrice: Number(item.costPrice || 0),
+    sellingPrice: Number(item.sellingPrice || 0),
+    apiPrice: Number(item.sellingPrice || 0),
+    currency: item.currency,
+    enabled: item.enabled,
+    features: item.features,
+    metadata: item.metadata,
+    networkId: networkId || null,
+    network: network || null,
+    planId: metadata.planId || item.serviceCode,
+    dataType: metadata.dataType || null,
+    dataSize: metadata.dataSize || metadata.volume || null,
+    validity: metadata.validity || "30 Days",
+    ussdCode: metadata.ussdCode || null,
+    gatewayPlanId: metadata.gatewayPlanId || metadata.planId || item.serviceCode,
+    createdBy: item.createdBy,
+    updatedBy: item.updatedBy,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
+};
+
 /* ======================================================
    PUBLIC PRICING (LANDING PAGE & VTU APP LOOKUP)
    GET /api/v1/pricing/public
 ====================================================== */
 exports.getPublicPricing = async (req, res) => {
   try {
-    const { category, tier = "REGULAR" } = req.query;
+    const { category, tier = "REGULAR", network, networkId } = req.query;
 
     const where = {
       enabled: true,
@@ -92,14 +139,37 @@ exports.getPublicPricing = async (req, res) => {
         currency: true,
         features: true,
         metadata: true,
+        enabled: true,
+        createdAt: true,
+        updatedAt: true,
       },
       orderBy: [{ category: "asc" }, { sellingPrice: "asc" }],
     });
 
+    let serializedList = pricing.map(serializePricing);
+
+    const cleanNetworkId = normalizeText(networkId);
+    const cleanNetwork = normalizeText(network).toUpperCase();
+
+    if (cleanNetworkId) {
+      serializedList = serializedList.filter(
+        (p) => String(p.networkId) === cleanNetworkId
+      );
+    }
+
+    if (cleanNetwork) {
+      serializedList = serializedList.filter(
+        (p) =>
+          String(p.network).toUpperCase() === cleanNetwork ||
+          String(p.serviceName).toUpperCase().includes(cleanNetwork) ||
+          String(p.serviceCode).toUpperCase().includes(cleanNetwork)
+      );
+    }
+
     return res.status(200).json({
       success: true,
-      count: pricing.length,
-      pricing,
+      count: serializedList.length,
+      pricing: serializedList,
     });
   } catch (error) {
     return sendControllerError(res, error, "Unable to load public pricing.");
@@ -110,7 +180,6 @@ exports.getPublicPricing = async (req, res) => {
    GET ALL PRICING (ADMIN / DASHBOARD)
    GET /api/v1/pricing
 ====================================================== */
-// A cikin controllers/pricing.controller.js
 exports.getPricing = async (req, res) => {
   try {
     const userId = req.user?.id || req.user?._id;
@@ -124,7 +193,7 @@ exports.getPricing = async (req, res) => {
     let isVip = false;
 
     // 2. Duba ko Admin ya riga ya saka API Key din wannan customer din a PrivateTierWhitelist
-    if (userId) {
+    if (userId && prisma.privateTierWhitelist) {
       const vipRecord = await prisma.privateTierWhitelist.findFirst({
         where: {
           userId: userId,
@@ -154,10 +223,12 @@ exports.getPricing = async (req, res) => {
       }
     }
 
+    const serializedPlans = plans.map(serializePricing);
+
     return res.status(200).json({
       success: true,
       isVipMember: isVip,
-      data: plans,
+      data: serializedPlans,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -185,7 +256,7 @@ exports.getPricingById = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      pricing,
+      pricing: serializePricing(pricing),
     });
   } catch (error) {
     return sendControllerError(res, error, "Unable to load pricing.");
@@ -221,7 +292,7 @@ exports.getServicePricing = async (req, res) => {
       success: true,
       serviceCode,
       count: pricing.length,
-      pricing,
+      pricing: pricing.map(serializePricing),
     });
   } catch (error) {
     return sendControllerError(res, error, "Unable to load service pricing.");
@@ -245,11 +316,20 @@ exports.createPricing = async (req, res) => {
       enabled,
       features,
       metadata,
+      networkId,
+      network,
+      planId,
+      dataType,
+      dataSize,
+      volume,
+      validity,
+      ussdCode,
+      gatewayPlanId,
     } = req.body;
 
-    const normalizedServiceCode = normalizeCode(serviceCode);
+    const normalizedServiceCode = normalizeCode(planId || serviceCode);
     const normalizedServiceName = normalizeText(serviceName);
-    const normalizedCategory = normalizeCode(category);
+    const normalizedCategory = normalizeCode(category || "DATA");
     const normalizedTier = normalizeTier(tier || "REGULAR");
 
     if (
@@ -260,14 +340,14 @@ exports.createPricing = async (req, res) => {
     ) {
       return res.status(400).json({
         success: false,
-        message: "serviceCode, serviceName, category and tier are required.",
+        message: "serviceCode/planId, serviceName, category and tier are required.",
       });
     }
 
     if (!ALLOWED_TIERS.includes(normalizedTier)) {
       return res.status(400).json({
         success: false,
-        message: "Tier must be REGULAR, STANDARD or PREMIUM.",
+        message: `Tier must be one of: ${ALLOWED_TIERS.join(", ")}.`,
       });
     }
 
@@ -295,9 +375,26 @@ exports.createPricing = async (req, res) => {
       });
     }
 
+    const cleanNetworkId = normalizeText(networkId || (metadata && metadata.networkId));
+    const cleanNetwork = normalizeText(
+      network || (metadata && metadata.network) || NETWORK_MAP[cleanNetworkId] || ""
+    ).toUpperCase();
+
+    const finalMetadata = {
+      ...(typeof metadata === "object" && metadata !== null ? metadata : {}),
+      networkId: cleanNetworkId || null,
+      network: cleanNetwork || null,
+      planId: normalizedServiceCode,
+      dataType: dataType ? normalizeText(dataType).toUpperCase() : "SME",
+      dataSize: dataSize || volume ? normalizeText(dataSize || volume) : null,
+      volume: volume || dataSize ? normalizeText(volume || dataSize) : null,
+      validity: validity ? normalizeText(validity) : "30 Days",
+      ussdCode: ussdCode ? normalizeText(ussdCode) : null,
+      gatewayPlanId: gatewayPlanId ? normalizeText(gatewayPlanId) : normalizedServiceCode,
+    };
+
     const userId = getAuthenticatedUserId(req);
 
-    // Amfani da upsert maimakon create domin kaucewa matsalar Duplicate Error yayin tura dukkan tiers
     const pricing = await prisma.servicePricing.upsert({
       where: {
         serviceCode_tier: {
@@ -313,7 +410,7 @@ exports.createPricing = async (req, res) => {
         currency: normalizeCode(currency || "NGN"),
         enabled: parseBoolean(enabled, true),
         features: parseJsonValue(features),
-        metadata: parseJsonValue(metadata),
+        metadata: finalMetadata,
         updatedBy: userId,
       },
       create: {
@@ -326,7 +423,7 @@ exports.createPricing = async (req, res) => {
         currency: normalizeCode(currency || "NGN"),
         enabled: parseBoolean(enabled, true),
         features: parseJsonValue(features),
-        metadata: parseJsonValue(metadata),
+        metadata: finalMetadata,
         createdBy: userId,
         updatedBy: userId,
       },
@@ -334,13 +431,13 @@ exports.createPricing = async (req, res) => {
 
     emitEvent("pricing-created", {
       message: "Service pricing created/updated.",
-      pricing,
+      pricing: serializePricing(pricing),
     });
 
     return res.status(201).json({
       success: true,
       message: "Service pricing saved successfully.",
-      pricing,
+      pricing: serializePricing(pricing),
     });
   } catch (error) {
     return sendControllerError(res, error, "Unable to save pricing.");
@@ -366,9 +463,9 @@ exports.createBulkPricing = async (req, res) => {
     const operations = [];
 
     for (const item of items) {
-      const normalizedServiceCode = normalizeCode(item.serviceCode);
+      const normalizedServiceCode = normalizeCode(item.planId || item.serviceCode);
       const normalizedServiceName = normalizeText(item.serviceName);
-      const normalizedCategory = normalizeCode(item.category);
+      const normalizedCategory = normalizeCode(item.category || "DATA");
       const normalizedTier = normalizeTier(item.tier || "REGULAR");
       const numericCostPrice = Number(item.costPrice || 0);
       const numericSellingPrice = Number(item.sellingPrice || 0);
@@ -390,6 +487,24 @@ exports.createBulkPricing = async (req, res) => {
         continue;
       }
 
+      const cleanNetworkId = normalizeText(item.networkId || (item.metadata && item.metadata.networkId));
+      const cleanNetwork = normalizeText(
+        item.network || (item.metadata && item.metadata.network) || NETWORK_MAP[cleanNetworkId] || ""
+      ).toUpperCase();
+
+      const finalMetadata = {
+        ...(typeof item.metadata === "object" && item.metadata !== null ? item.metadata : {}),
+        networkId: cleanNetworkId || null,
+        network: cleanNetwork || null,
+        planId: normalizedServiceCode,
+        dataType: item.dataType ? normalizeText(item.dataType).toUpperCase() : "SME",
+        dataSize: item.dataSize || item.volume ? normalizeText(item.dataSize || item.volume) : null,
+        volume: item.volume || item.dataSize ? normalizeText(item.volume || item.dataSize) : null,
+        validity: item.validity ? normalizeText(item.validity) : "30 Days",
+        ussdCode: item.ussdCode ? normalizeText(item.ussdCode) : null,
+        gatewayPlanId: item.gatewayPlanId ? normalizeText(item.gatewayPlanId) : normalizedServiceCode,
+      };
+
       const operation = prisma.servicePricing.upsert({
         where: {
           serviceCode_tier: {
@@ -405,7 +520,7 @@ exports.createBulkPricing = async (req, res) => {
           currency: normalizeCode(item.currency || "NGN"),
           enabled: parseBoolean(item.enabled, true),
           features: parseJsonValue(item.features),
-          metadata: parseJsonValue(item.metadata),
+          metadata: finalMetadata,
           updatedBy: userId,
         },
         create: {
@@ -418,7 +533,7 @@ exports.createBulkPricing = async (req, res) => {
           currency: normalizeCode(item.currency || "NGN"),
           enabled: parseBoolean(item.enabled, true),
           features: parseJsonValue(item.features),
-          metadata: parseJsonValue(item.metadata),
+          metadata: finalMetadata,
           createdBy: userId,
           updatedBy: userId,
         },
@@ -445,7 +560,7 @@ exports.createBulkPricing = async (req, res) => {
       success: true,
       message: `${results.length} pricing records processed successfully.`,
       count: results.length,
-      pricing: results,
+      pricing: results.map(serializePricing),
     });
   } catch (error) {
     return sendControllerError(res, error, "Unable to process bulk pricing.");
@@ -473,8 +588,8 @@ exports.updatePricing = async (req, res) => {
 
     const data = {};
 
-    if (req.body.serviceCode !== undefined) {
-      const serviceCode = normalizeCode(req.body.serviceCode);
+    if (req.body.serviceCode !== undefined || req.body.planId !== undefined) {
+      const serviceCode = normalizeCode(req.body.planId || req.body.serviceCode);
       if (!serviceCode) {
         return res.status(400).json({
           success: false,
@@ -511,7 +626,7 @@ exports.updatePricing = async (req, res) => {
       if (!ALLOWED_TIERS.includes(tier)) {
         return res.status(400).json({
           success: false,
-          message: "Tier must be REGULAR, STANDARD or PREMIUM.",
+          message: `Tier must be one of: ${ALLOWED_TIERS.join(", ")}.`,
         });
       }
       data.tier = tier;
@@ -559,10 +674,50 @@ exports.updatePricing = async (req, res) => {
     if (req.body.features !== undefined) {
       data.features = parseJsonValue(req.body.features);
     }
-    if (req.body.metadata !== undefined) {
-      data.metadata = parseJsonValue(req.body.metadata);
+
+    const updatedMetadata = {
+      ...(existing.metadata && typeof existing.metadata === "object" ? existing.metadata : {}),
+      ...(req.body.metadata && typeof req.body.metadata === "object" ? req.body.metadata : {}),
+    };
+
+    if (req.body.networkId !== undefined) {
+      updatedMetadata.networkId = normalizeText(req.body.networkId);
+      if (!req.body.network && NETWORK_MAP[updatedMetadata.networkId]) {
+        updatedMetadata.network = NETWORK_MAP[updatedMetadata.networkId];
+      }
     }
 
+    if (req.body.network !== undefined) {
+      updatedMetadata.network = normalizeText(req.body.network).toUpperCase();
+    }
+
+    if (req.body.planId !== undefined || req.body.serviceCode !== undefined) {
+      updatedMetadata.planId = normalizeCode(req.body.planId || req.body.serviceCode);
+    }
+
+    if (req.body.dataType !== undefined) {
+      updatedMetadata.dataType = normalizeText(req.body.dataType).toUpperCase();
+    }
+
+    if (req.body.dataSize !== undefined || req.body.volume !== undefined) {
+      const vol = normalizeText(req.body.volume || req.body.dataSize);
+      updatedMetadata.dataSize = vol;
+      updatedMetadata.volume = vol;
+    }
+
+    if (req.body.validity !== undefined) {
+      updatedMetadata.validity = normalizeText(req.body.validity);
+    }
+
+    if (req.body.ussdCode !== undefined) {
+      updatedMetadata.ussdCode = normalizeText(req.body.ussdCode);
+    }
+
+    if (req.body.gatewayPlanId !== undefined) {
+      updatedMetadata.gatewayPlanId = normalizeText(req.body.gatewayPlanId);
+    }
+
+    data.metadata = Object.keys(updatedMetadata).length > 0 ? updatedMetadata : null;
     data.updatedBy = getAuthenticatedUserId(req);
 
     const pricing = await prisma.servicePricing.update({
@@ -574,13 +729,13 @@ exports.updatePricing = async (req, res) => {
 
     emitEvent("pricing-updated", {
       message: "Service pricing updated.",
-      pricing,
+      pricing: serializePricing(pricing),
     });
 
     return res.status(200).json({
       success: true,
       message: "Service pricing updated successfully.",
-      pricing,
+      pricing: serializePricing(pricing),
     });
   } catch (error) {
     return sendControllerError(res, error, "Unable to update pricing.");
@@ -623,7 +778,7 @@ exports.togglePricingStatus = async (req, res) => {
 
     emitEvent("pricing-status-updated", {
       message: "Pricing status updated.",
-      pricing,
+      pricing: serializePricing(pricing),
     });
 
     return res.status(200).json({
@@ -631,7 +786,7 @@ exports.togglePricingStatus = async (req, res) => {
       message: nextEnabled
         ? "Pricing enabled successfully."
         : "Pricing disabled successfully.",
-      pricing,
+      pricing: serializePricing(pricing),
     });
   } catch (error) {
     return sendControllerError(res, error, "Unable to update pricing status.");
@@ -678,6 +833,11 @@ exports.deletePricing = async (req, res) => {
     return sendControllerError(res, error, "Unable to delete pricing.");
   }
 };
+
+/* ======================================================
+   GET USER PRICING LIST (VIP & PRIVATE TIER SUPPORT)
+   GET /api/v1/pricing/user-list
+====================================================== */
 exports.getUserPricingList = async (req, res) => {
   try {
     const userId = req.user?.id || req.user?._id;
@@ -685,18 +845,18 @@ exports.getUserPricingList = async (req, res) => {
     // 1. Dauko ainihin farashin kowa da kowa daga ServicePricing
     let plans = await prisma.servicePricing.findMany({
       where: { enabled: true },
-      orderBy: { sellingPrice: "asc" }
+      orderBy: { sellingPrice: "asc" },
     });
 
     // 2. Duba ko wannan mutumin yana da Activated Private Tier
     let privateProfile = null;
-    if (userId) {
+    if (userId && prisma.privateTierWhitelist) {
       privateProfile = await prisma.privateTierWhitelist.findFirst({
         where: {
           userId: userId,
           isActive: true,
-          status: "APPROVED"
-        }
+          status: "APPROVED",
+        },
       });
     }
 
@@ -707,29 +867,30 @@ exports.getUserPricingList = async (req, res) => {
 
       if (privateProfile) {
         if (plan.category?.toLowerCase() === "data" || plan.serviceCode?.includes("DATA")) {
-          // Idan akwai fixed custom price na MTN misali
           if (privateProfile.customMtnPrice && plan.serviceCode?.includes("MTN")) {
             finalPrice = privateProfile.customMtnPrice;
             isCustomRate = true;
           } else if (privateProfile.discountPerGb) {
-            // Cire ragin da aka saita masa
             finalPrice = Math.max(plan.sellingPrice - privateProfile.discountPerGb, 0);
             isCustomRate = true;
           }
         }
       }
 
+      const serialized = serializePricing(plan);
+
       return {
-        ...plan,
-        sellingPrice: finalPrice, // Wannan farashin ne zai nuna a frontend dinsa
-        isCustomRate: isCustomRate // Don sanar da frontend dinsa cewa nasa ne na musamman
+        ...serialized,
+        sellingPrice: finalPrice,
+        apiPrice: finalPrice,
+        isCustomRate: isCustomRate,
       };
     });
 
     return res.status(200).json({
       success: true,
       isVipMember: Boolean(privateProfile),
-      data: tailoredPlans
+      data: tailoredPlans,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });

@@ -1,13 +1,15 @@
-const express = require("express");
-const router = express.Router();
+const router = require("express").Router();
+const auth = require("../middlewares/auth.middleware"); // ko protect middleware
+const adminController = require("../controllers/admin.controller");
 
-const {
-  getSuperAdminDashboard,
-} = require("../controllers/superAdminDashboardController");
+// SuperAdmin Dashboard
+router.get("/dashboard", auth, adminController.getSuperAdminDashboard);
 
-router.get(
-  "/dashboard",
-  getSuperAdminDashboard
-);
+// Plan & Network Management
+router.get("/plans", auth, adminController.getAllAdminPlans);
+router.post("/plans/create", auth, adminController.createAdminPlan);
+router.put("/plans/update/:planId", auth, adminController.updateAdminPlan);
+router.patch("/plans/toggle-status/:planId", auth, adminController.togglePlanStatus);
+router.delete("/plans/delete/:planId", auth, adminController.deleteAdminPlan);
 
 module.exports = router;

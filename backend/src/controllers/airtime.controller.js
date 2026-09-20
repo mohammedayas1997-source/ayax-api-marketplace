@@ -33,7 +33,7 @@ const getProviderBalances = async () => {
     VTPASS: 0,
   };
 
-  // 1. Al-Ihsan Datasub (Gyaran Endpoint da Token Format)
+  // 1. Al-Ihsan Datasub
   const rawAlihsanToken =
     process.env.ALIHSAN_AUTH_TOKEN ||
     process.env.ALIHSAN_API_KEY ||
@@ -171,7 +171,8 @@ const dispatchAirtimeAPI = async ({ provider, network, phone, amount, reference 
 
   // 1. AL-IHSAN AIRTIME TOPUP
   if (provider === "ALIHSAN") {
-    const netMap = { MTN: 1, GLO: 2, "9MOBILE": 3, AIRTEL: 4 };
+    // Official Network IDs na Al-Ihsan: MTN=1, AIRTEL=2, 9MOBILE=3, GLO=4
+    const netMap = { MTN: 1, AIRTEL: 2, "9MOBILE": 3, GLO: 4 };
     const rawAlihsanToken =
       process.env.ALIHSAN_AUTH_TOKEN ||
       process.env.ALIHSAN_API_KEY ||
@@ -352,7 +353,7 @@ const dispatchAirtimeAPI = async ({ provider, network, phone, amount, reference 
 };
 
 /* ======================================================
-   UNIVERSAL AIRTIME PURCHASE (HYBRID ROUTING)
+   UNIVERSAL AIRTIME PURCHASE (PRIMARY GATEWAY FIRST)
 ====================================================== */
 exports.purchaseAirtime = async (req, res) => {
   try {
@@ -448,94 +449,116 @@ exports.purchaseAirtime = async (req, res) => {
       return { updatedWallet: newWallet, transaction: newTx };
     });
 
-    // 4. ROUTE 1: GSM MODEM GATEWAY (USSD VENDING DA GANGAN)
+    // =========================================================================
+    // MATAKI NA 1: DOLE ZAI FARA DUBA GATEWAY NAKU (GSM MODEM / SIM ROUTER)
+    // =========================================================================
     let activeDevice = null;
     let targetSim = null;
 
-    activeDevice = await prisma.gsmDevice.findFirst({
-      where: {
-        status: "ONLINE",
-        lastSeen: { gte: new Date(Date.now() - 2 * 60 * 1000) },
-      },
-      include: { sims: true },
-      orderBy: { lastSeen: "desc" },
-    });
+    try {
+      console.log(`📡 [PRIMARY ROUTE]: Checking local GSM Gateway for ${resolvedNetwork}...`);
+      
+      activeDevice = await prisma.gsmDevice.findFirst({
+        where: {
+          status: "ONLINE",
+          lastSeen: { gte: new Date(Date.now() - 3 * 60 * 1000) }, // Tsakanin mintuna 3 na karshe
+        },
+        include: { sims: true },
+        orderBy: { lastSeen: "desc" },
+      });
 
-    targetSim = activeDevice?.sims?.find(
-      (s) =>
-        s.status === "ACTIVE" &&
-        (s.carrierName?.toUpperCase().includes(resolvedNetwork) ||
-         s.displayName?.toUpperCase().includes(resolvedNetwork))
-    );
-
-    if (activeDevice && targetSim) {
-      const slotIndex = Number(targetSim.slotIndex ?? 0);
-      const pin = process.env.GSM_AIRTIME_PIN || "1997";
-
-      let ussdCode = "";
-      if (resolvedNetwork === "MTN") {
-        ussdCode = `*321*1*${targetPhone}*${purchaseAmount}*${pin}#`;
-      } else if (resolvedNetwork === "AIRTEL") {
-        ussdCode = `*432*1*${targetPhone}*${purchaseAmount}*${pin}#`;
-      } else if (resolvedNetwork === "GLO") {
-        ussdCode = `*131*${targetPhone}*${purchaseAmount}*${pin}#`;
+      if (activeDevice && activeDevice.sims && activeDevice.sims.length > 0) {
+        targetSim = activeDevice.sims.find(
+          (s) =>
+            s.status === "ACTIVE" &&
+            (String(s.carrierName || "").toUpperCase().includes(resolvedNetwork) ||
+             String(s.displayName || "").toUpperCase().includes(resolvedNetwork) ||
+             String(s.network || "").toUpperCase().includes(resolvedNetwork))
+        );
       }
 
-      if (ussdCode) {
-        const commandPayload = {
-          reference: txReference,
-          commandId: txReference,
-          id: txReference,
-          deviceId: activeDevice.id,
-          type: "SEND_USSD",
-          action: "SEND_USSD",
-          service: "AIRTIME",
-          ussdCode: ussdCode,
-          code: ussdCode,
-          targetPhone,
-          slotIndex,
-          simSlot: slotIndex,
-          amount: purchaseAmount,
-          network: resolvedNetwork,
-        };
+      if (activeDevice && targetSim) {
+        const slotIndex = Number(targetSim.slotIndex ?? 0);
+        const pin = process.env.GSM_AIRTIME_PIN || "1997";
 
-        await prisma.gsmCommand.create({
-          data: {
-            reference: txReference,
-            deviceId: activeDevice.id,
-            type: "SEND_USSD",
-            status: "PENDING",
-            payload: commandPayload,
-          },
-        }).catch(() => null);
-
-        try {
-          emitEvent("gateway-command", commandPayload, activeDevice.id);
-          emitEvent("command", commandPayload, activeDevice.id);
-          if (typeof emitGatewayCommand === "function") {
-            emitGatewayCommand(activeDevice.id, commandPayload);
-          }
-        } catch (socketErr) {
-          console.warn("Socket emission error:", socketErr.message);
+        let ussdCode = "";
+        if (resolvedNetwork === "MTN") {
+          ussdCode = `*321*1*${targetPhone}*${purchaseAmount}*${pin}#`;
+        } else if (resolvedNetwork === "AIRTEL") {
+          ussdCode = `*432*1*${targetPhone}*${purchaseAmount}*${pin}#`;
+        } else if (resolvedNetwork === "GLO") {
+          ussdCode = `*131*${targetPhone}*${purchaseAmount}*${pin}#`;
+        } else if (resolvedNetwork === "9MOBILE") {
+          ussdCode = `*223*${pin}*${purchaseAmount}*${targetPhone}#`;
         }
 
-        return res.status(200).json({
-          status: "success",
-          code: "TRANSACTION_QUEUED",
-          route: "GSM_GATEWAY",
-          message: `Airtime purchase queued on local modem for ${targetPhone}.`,
-          data: {
+        if (ussdCode) {
+          console.log(`✅ [PRIMARY ROUTE SUCCESS]: Gateway active (Device: ${activeDevice.id}, SIM Slot: ${slotIndex}). Dispensing via USSD...`);
+
+          const commandPayload = {
             reference: txReference,
+            commandId: txReference,
+            id: txReference,
+            deviceId: activeDevice.id,
+            type: "SEND_USSD",
+            action: "SEND_USSD",
+            service: "AIRTIME",
+            ussdCode: ussdCode,
+            code: ussdCode,
+            targetPhone,
+            slotIndex,
+            simSlot: slotIndex,
+            amount: purchaseAmount,
             network: resolvedNetwork,
-            phone: targetPhone,
-            amountCharged: purchaseAmount,
-            walletBalance: updatedWallet.balance,
-          },
-        });
+          };
+
+          await prisma.gsmCommand.create({
+            data: {
+              reference: txReference,
+              deviceId: activeDevice.id,
+              type: "SEND_USSD",
+              status: "PENDING",
+              payload: commandPayload,
+            },
+          }).catch(() => null);
+
+          try {
+            emitEvent("gateway-command", commandPayload, activeDevice.id);
+            emitEvent("command", commandPayload, activeDevice.id);
+            if (typeof emitGatewayCommand === "function") {
+              emitGatewayCommand(activeDevice.id, commandPayload);
+            }
+          } catch (socketErr) {
+            console.warn("Socket emission notice:", socketErr.message);
+          }
+
+          return res.status(200).json({
+            status: "success",
+            code: "TRANSACTION_QUEUED",
+            route: "OUR_GATEWAY",
+            message: `Airtime purchase successfully processed on your Gateway modem for ${targetPhone}.`,
+            data: {
+              reference: txReference,
+              network: resolvedNetwork,
+              phone: targetPhone,
+              amountCharged: purchaseAmount,
+              walletBalance: updatedWallet.balance,
+              deviceId: activeDevice.id,
+              simSlot: slotIndex,
+            },
+          });
+        }
+      } else {
+        console.warn(`⚠️ [PRIMARY ROUTE UNAVAILABLE]: No online Gateway device with active ${resolvedNetwork} SIM found. Cascading to Secondary API Gateways...`);
       }
+    } catch (gsmError) {
+      console.warn("⚠️ [PRIMARY GATEWAY ERROR]:", gsmError.message, "Switching to secondary external APIs...");
     }
 
-    // 5. ROUTE 2: SMART CASCADING API (ALIHSAN DA SAURAN PROVIDERS)
+    // =========================================================================
+    // MATAKI NA 2: FALLBACK CASCADING API (ALIHSAN DA SAURAN PROVIDERS)
+    // =========================================================================
+    console.log(`🌐 [SECONDARY ROUTE]: Attempting external partner APIs...`);
     const balances = await getProviderBalances();
     const providerErrors = [];
 
@@ -605,8 +628,10 @@ exports.purchaseAirtime = async (req, res) => {
       }
     }
 
-    // 6. AUTO-REFUND NAN TAKE IDAN DUKKAN PROVIDERS SUN GASA
-    console.error("Airtime purchase failed across all routes, refunding user...");
+    // =========================================================================
+    // MATAKI NA 3: AUTO-REFUND NAN TAKE IDAN DUKKAN HANYOYI SUN GASA
+    // =========================================================================
+    console.error("❌ Airtime purchase failed across your Gateway and external providers, refunding user...");
 
     await prisma.$transaction([
       prisma.wallet.update({
@@ -625,7 +650,7 @@ exports.purchaseAirtime = async (req, res) => {
     return res.status(502).json({
       status: "error",
       code: "VENDOR_ERROR",
-      message: `Airtime delivery failed. Gateways exhausted: ${providerErrors.join(" | ")}. ₦${purchaseAmount} has been refunded back to your wallet.`,
+      message: `Airtime delivery failed. Local gateway and external providers exhausted: ${providerErrors.join(" | ")}. ₦${purchaseAmount} has been refunded back to your wallet.`,
     });
   } catch (error) {
     console.error("Airtime purchase error:", error);

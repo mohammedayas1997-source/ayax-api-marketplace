@@ -9,7 +9,18 @@ const ALLOWED_PACKAGE_TYPES = [
   "REGULAR",
   "STANDARD",
   "PREMIUM",
+  "SME",
+  "CG",
+  "GIFTING",
+  "DIRECT",
 ];
+
+const NETWORK_MAP = {
+  "1": "MTN",
+  "2": "AIRTEL",
+  "3": "9MOBILE",
+  "4": "GLO",
+};
 
 const normalizeText = (value) =>
   typeof value === "string"
@@ -32,51 +43,65 @@ const parseMoney = (value) => {
   return amount;
 };
 
-const serializePlan = (plan) => ({
-  id: plan.id,
-  serviceId: plan.serviceId,
-  name: plan.name,
-  code: plan.code,
-  category: plan.category,
-  costPrice: plan.costPrice,
-  sellingPrice: plan.sellingPrice,
-  profit:
-    Number(plan.sellingPrice) -
-    Number(plan.costPrice),
-  status: plan.status,
-  description: plan.description,
-  features: plan.features,
-  metadata: plan.metadata,
-  packageType: plan.packageType,
-  createdAt: plan.createdAt,
-  updatedAt: plan.updatedAt,
+const serializePlan = (plan) => {
+  const metadata = plan.metadata && typeof plan.metadata === "object" ? plan.metadata : {};
+  const networkId = String(plan.networkId || metadata.networkId || "").trim();
+  const network = String(plan.network || metadata.network || NETWORK_MAP[networkId] || "").toUpperCase();
 
-  service: plan.service
-    ? {
-        id: plan.service.id,
-        name: plan.service.name,
-        slug: plan.service.slug,
-        code: plan.service.code,
-        category: plan.service.category,
-        status: plan.service.status,
-        endpoint: plan.service.endpoint,
-        method: plan.service.method,
+  return {
+    id: plan.id,
+    serviceId: plan.serviceId,
+    networkId: networkId || null,
+    network: network || null,
+    planId: plan.code,
+    name: plan.name,
+    code: plan.code,
+    category: plan.category,
+    volume: metadata.volume || null,
+    validity: metadata.validity || "30 Days",
+    costPrice: plan.costPrice,
+    sellingPrice: plan.sellingPrice,
+    apiPrice: plan.sellingPrice,
+    profit:
+      Number(plan.sellingPrice) -
+      Number(plan.costPrice),
+    status: plan.status,
+    description: plan.description,
+    features: plan.features,
+    metadata: plan.metadata,
+    packageType: plan.packageType,
+    ussdCode: metadata.ussdCode || null,
+    gatewayPlanId: metadata.gatewayPlanId || null,
+    createdAt: plan.createdAt,
+    updatedAt: plan.updatedAt,
 
-        provider: plan.service.provider
-          ? {
-              id: plan.service.provider.id,
-              name: plan.service.provider.name,
-              slug: plan.service.provider.slug,
-              code: plan.service.provider.code,
-              category:
-                plan.service.provider.category,
-              status:
-                plan.service.provider.status,
-            }
-          : null,
-      }
-    : null,
-});
+    service: plan.service
+      ? {
+          id: plan.service.id,
+          name: plan.service.name,
+          slug: plan.service.slug,
+          code: plan.service.code,
+          category: plan.service.category,
+          status: plan.service.status,
+          endpoint: plan.service.endpoint,
+          method: plan.service.method,
+
+          provider: plan.service.provider
+            ? {
+                id: plan.service.provider.id,
+                name: plan.service.provider.name,
+                slug: plan.service.provider.slug,
+                code: plan.service.provider.code,
+                category:
+                  plan.service.provider.category,
+                status:
+                  plan.service.provider.status,
+              }
+            : null,
+        }
+      : null,
+  };
+};
 
 const getPlanInclude = () => ({
   service: {
@@ -101,17 +126,19 @@ const createAuditLog = async ({
   description,
 }) => {
   try {
-    await prisma.auditLog.create({
-      data: {
-        userId: req.user?.id || null,
-        userEmail:
-          req.user?.email || null,
-        action,
-        module: "API_PLANS",
-        description,
-        ipAddress: req.ip || null,
-      },
-    });
+    if (prisma.auditLog) {
+      await prisma.auditLog.create({
+        data: {
+          userId: req.user?.id || null,
+          userEmail:
+            req.user?.email || null,
+          action,
+          module: "API_PLANS",
+          description,
+          ipAddress: req.ip || null,
+        },
+      });
+    }
   } catch (error) {
     console.error(
       "API plan audit log error:",
@@ -171,6 +198,8 @@ const handlePrismaError = (
  * status=ACTIVE
  * category=DATA
  * packageType=REGULAR
+ * networkId=1
+ * network=MTN
  * serviceId=...
  * search=MTN
  */
@@ -184,6 +213,8 @@ exports.getPlans = async (
       category,
       packageType,
       serviceId,
+      networkId,
+      network,
       search,
     } = req.query;
 
@@ -226,7 +257,7 @@ exports.getPlans = async (
         return res.status(400).json({
           success: false,
           message:
-            "Package type must be REGULAR, STANDARD or PREMIUM.",
+            "Package type must be REGULAR, STANDARD, PREMIUM, SME, CG, GIFTING or DIRECT.",
         });
       }
 
@@ -238,6 +269,9 @@ exports.getPlans = async (
       where.serviceId =
         normalizeText(serviceId);
     }
+
+    const cleanNetworkId = normalizeText(networkId);
+    const cleanNetwork = normalizeUppercase(network);
 
     if (search) {
       const searchText =
@@ -293,12 +327,24 @@ exports.getPlans = async (
         ],
       });
 
+    let serializedPlans = plans.map(serializePlan);
+
+    if (cleanNetworkId) {
+      serializedPlans = serializedPlans.filter(
+        (p) => String(p.networkId) === cleanNetworkId
+      );
+    }
+
+    if (cleanNetwork) {
+      serializedPlans = serializedPlans.filter(
+        (p) => String(p.network).toUpperCase() === cleanNetwork
+      );
+    }
+
     return res.status(200).json({
       success: true,
-      count: plans.length,
-      plans: plans.map(
-        serializePlan
-      ),
+      count: serializedPlans.length,
+      plans: serializedPlans,
     });
   } catch (error) {
     return handlePrismaError(
@@ -356,16 +402,24 @@ exports.createPlan = async (
   try {
     const {
       serviceId,
+      networkId,
+      network,
       name,
       code,
-      category,
+      planId,
+      category = "DATA",
+      volume,
+      validity = "30 Days",
       costPrice,
       sellingPrice,
+      apiPrice,
       status = "ACTIVE",
       description,
       features,
-      metadata,
-      packageType = "REGULAR",
+      metadata = {},
+      packageType = "SME",
+      ussdCode,
+      gatewayPlanId,
     } = req.body;
 
     const cleanServiceId =
@@ -375,7 +429,7 @@ exports.createPlan = async (
       normalizeText(name);
 
     const cleanCode =
-      normalizeUppercase(code);
+      normalizeUppercase(planId || code);
 
     const cleanCategory =
       normalizeUppercase(category);
@@ -387,18 +441,18 @@ exports.createPlan = async (
       normalizeUppercase(packageType);
 
     const parsedCostPrice =
-      parseMoney(costPrice);
+      parseMoney(costPrice ?? (apiPrice ?? sellingPrice));
 
     const parsedSellingPrice =
-      parseMoney(sellingPrice);
+      parseMoney(sellingPrice ?? apiPrice);
 
-    if (!cleanServiceId) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "serviceId is required.",
-      });
-    }
+    const cleanNetworkId = String(
+      networkId || (metadata && metadata.networkId) || ""
+    ).trim();
+
+    const cleanNetwork = String(
+      network || (metadata && metadata.network) || NETWORK_MAP[cleanNetworkId] || ""
+    ).toUpperCase().trim();
 
     if (!cleanName) {
       return res.status(400).json({
@@ -412,7 +466,7 @@ exports.createPlan = async (
       return res.status(400).json({
         success: false,
         message:
-          "Plan code is required.",
+          "Plan code/planId is required.",
       });
     }
 
@@ -440,7 +494,7 @@ exports.createPlan = async (
       return res.status(400).json({
         success: false,
         message:
-          "Selling price must be a valid non-negative number.",
+          "Selling price/apiPrice must be a valid non-negative number.",
       });
     }
 
@@ -475,29 +529,58 @@ exports.createPlan = async (
       return res.status(400).json({
         success: false,
         message:
-          "Package type must be REGULAR, STANDARD or PREMIUM.",
+          "Package type must be REGULAR, STANDARD, PREMIUM, SME, CG, GIFTING or DIRECT.",
       });
     }
 
-    const service =
-      await prisma.apiService.findUnique({
+    let targetServiceId = cleanServiceId;
+    if (!targetServiceId) {
+      const defaultService = await prisma.apiService.findFirst({
         where: {
-          id: cleanServiceId,
+          category: cleanCategory,
         },
         select: {
           id: true,
-          name: true,
-          category: true,
-          status: true,
         },
       });
 
-    if (!service) {
-      return res.status(404).json({
-        success: false,
-        message:
-          "Selected API service was not found.",
-      });
+      if (defaultService) {
+        targetServiceId = defaultService.id;
+      } else {
+        const anyService = await prisma.apiService.findFirst({
+          select: { id: true },
+        });
+        if (anyService) {
+          targetServiceId = anyService.id;
+        } else {
+          return res.status(400).json({
+            success: false,
+            message:
+              "serviceId is required as no default API service was found in database.",
+          });
+        }
+      }
+    } else {
+      const service =
+        await prisma.apiService.findUnique({
+          where: {
+            id: targetServiceId,
+          },
+          select: {
+            id: true,
+            name: true,
+            category: true,
+            status: true,
+          },
+        });
+
+      if (!service) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "Selected API service was not found.",
+        });
+      }
     }
 
     const existingCode =
@@ -518,11 +601,21 @@ exports.createPlan = async (
       });
     }
 
+    const mergedMetadata = {
+      ...(typeof metadata === "object" && metadata !== null ? metadata : {}),
+      networkId: cleanNetworkId || null,
+      network: cleanNetwork || null,
+      volume: volume ? normalizeText(volume) : null,
+      validity: validity ? normalizeText(validity) : "30 Days",
+      ussdCode: ussdCode ? normalizeText(ussdCode) : null,
+      gatewayPlanId: gatewayPlanId ? normalizeText(gatewayPlanId) : cleanCode,
+    };
+
     const plan =
       await prisma.apiPlan.create({
         data: {
           serviceId:
-            cleanServiceId,
+            targetServiceId,
           name: cleanName,
           code: cleanCode,
           category:
@@ -540,7 +633,7 @@ exports.createPlan = async (
           features:
             features ?? null,
           metadata:
-            metadata ?? null,
+            mergedMetadata,
           packageType:
             normalizedPackageType,
         },
@@ -550,7 +643,7 @@ exports.createPlan = async (
     await createAuditLog({
       req,
       action: "CREATE_API_PLAN",
-      description: `Created API plan ${plan.name} (${plan.code})`,
+      description: `Created API plan ${plan.name} (${plan.code}) for Network ${cleanNetwork || cleanNetworkId}`,
     });
 
     return res.status(201).json({
@@ -595,6 +688,9 @@ exports.updatePlan = async (
     }
 
     const data = {};
+    let existingMeta = existingPlan.metadata && typeof existingPlan.metadata === "object"
+      ? { ...existingPlan.metadata }
+      : {};
 
     if (
       req.body.serviceId !==
@@ -652,11 +748,12 @@ exports.updatePlan = async (
     }
 
     if (
-      req.body.code !== undefined
+      req.body.code !== undefined ||
+      req.body.planId !== undefined
     ) {
       const code =
         normalizeUppercase(
-          req.body.code
+          req.body.planId || req.body.code
         );
 
       if (!code) {
@@ -734,11 +831,13 @@ exports.updatePlan = async (
 
     if (
       req.body.sellingPrice !==
+      undefined ||
+      req.body.apiPrice !==
       undefined
     ) {
       const sellingPrice =
         parseMoney(
-          req.body.sellingPrice
+          req.body.sellingPrice ?? req.body.apiPrice
         );
 
       if (
@@ -747,7 +846,7 @@ exports.updatePlan = async (
         return res.status(400).json({
           success: false,
           message:
-            "Selling price must be a valid non-negative number.",
+            "Selling price/apiPrice must be a valid non-negative number.",
         });
       }
 
@@ -814,7 +913,7 @@ exports.updatePlan = async (
         return res.status(400).json({
           success: false,
           message:
-            "Package type must be REGULAR, STANDARD or PREMIUM.",
+            "Package type must be REGULAR, STANDARD, PREMIUM, SME, CG, GIFTING or DIRECT.",
         });
       }
 
@@ -840,24 +939,39 @@ exports.updatePlan = async (
         req.body.features;
     }
 
-    if (
-      req.body.metadata !==
-      undefined
-    ) {
-      data.metadata =
-        req.body.metadata;
+    // Network & Routing update
+    if (req.body.networkId !== undefined) {
+      existingMeta.networkId = normalizeText(req.body.networkId);
+      if (!req.body.network && NETWORK_MAP[existingMeta.networkId]) {
+        existingMeta.network = NETWORK_MAP[existingMeta.networkId];
+      }
     }
 
-    if (
-      Object.keys(data).length ===
-      0
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "No valid fields were provided for update.",
-      });
+    if (req.body.network !== undefined) {
+      existingMeta.network = normalizeUppercase(req.body.network);
     }
+
+    if (req.body.volume !== undefined) {
+      existingMeta.volume = normalizeText(req.body.volume);
+    }
+
+    if (req.body.validity !== undefined) {
+      existingMeta.validity = normalizeText(req.body.validity);
+    }
+
+    if (req.body.ussdCode !== undefined) {
+      existingMeta.ussdCode = normalizeText(req.body.ussdCode);
+    }
+
+    if (req.body.gatewayPlanId !== undefined) {
+      existingMeta.gatewayPlanId = normalizeText(req.body.gatewayPlanId);
+    }
+
+    if (req.body.metadata !== undefined && typeof req.body.metadata === "object") {
+      existingMeta = { ...existingMeta, ...req.body.metadata };
+    }
+
+    data.metadata = existingMeta;
 
     const plan =
       await prisma.apiPlan.update({

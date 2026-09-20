@@ -855,6 +855,22 @@ model ElectricityDisco {
   updatedAt     DateTime @updatedAt
 }
 
+model DataPlan {
+  id            String   @id @default(uuid())
+  networkId     String   // "1", "2", "3", "4"
+  network       String   // "MTN", "AIRTEL", "GLO", "9MOBILE"
+  planId        String   @unique // Misali "101", "102"
+  name          String   // "MTN 1GB SME"
+  volume        String   // "1GB"
+  type          String   @default("SME") // "SME", "CG", "GIFTING"
+  validity      String   @default("30 Days")
+  apiPrice      Float    // Farashin da za a cire wa Developer
+  ussdCode      String?  // Idan GSM USSD kake amfani da shi: e.g. "*461*1*{phone}*1000# "
+  gatewayPlanId String?  // Idan API kake tura wa (kamar Al-Ihsan)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
 
 enum PackageTier {
   REGULAR

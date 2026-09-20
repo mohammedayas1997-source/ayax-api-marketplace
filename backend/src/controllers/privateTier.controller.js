@@ -1,19 +1,38 @@
 const crypto = require("crypto");
-const { PrismaClient } = require("@prisma/client");
-const prisma = new PrismaClient();
+const prisma = require("../config/prisma");
+const { emitEvent } = require("../config/socket");
 
-// 1. Submit request for private activation
+const cleanLocalPhone = (phone = "") => {
+  const digits = String(phone).replace(/\D/g, "");
+  if (digits.startsWith("234") && digits.length === 13) {
+    return `0${digits.slice(3)}`;
+  }
+  if (digits.length === 10 && !digits.startsWith("0")) {
+    return `0${digits}`;
+  }
+  return digits;
+};
+
+/* ======================================================
+   1. SUBMIT REQUEST FOR PRIVATE ENTERPRISE ACTIVATION
+   POST /api/v1/private-tier/request
+====================================================== */
 exports.submitForPrivateActivation = async (req, res) => {
   try {
-    const userId = req.user.id || req.user._id;
+    const userId = req.user?.id || req.user?._id;
     const { apiKey, note } = req.body;
 
     if (!apiKey) {
-      return res.status(400).json({ success: false, message: "API Key is required" });
+      return res.status(400).json({
+        success: false,
+        message: "API Key is required to request dedicated VIP routing.",
+      });
     }
 
     const cleanKey = apiKey.trim();
     const keyHash = crypto.createHash("sha256").update(cleanKey).digest("hex");
+    const strippedPrefix = cleanKey.replace(/^ayax_live_/, "");
+    const strippedHash = crypto.createHash("sha256").update(strippedPrefix).digest("hex");
 
     // Verify key ownership either plain or hashed
     const verifiedKey = await prisma.apiKey.findFirst({
@@ -23,6 +42,8 @@ exports.submitForPrivateActivation = async (req, res) => {
         OR: [
           { key: cleanKey },
           { key: keyHash },
+          { key: strippedPrefix },
+          { key: strippedHash },
           ...(prisma.apiKey.fields?.hashedKey ? [{ hashedKey: keyHash }] : []),
         ],
       },
@@ -36,52 +57,90 @@ exports.submitForPrivateActivation = async (req, res) => {
       });
     }
 
+    const targetEmail = verifiedKey.user?.email || req.user?.email;
+
     const record = await prisma.privateTierWhitelist.upsert({
       where: { userId: userId },
       update: {
         apiKey: cleanKey,
-        userEmail: verifiedKey.user.email,
+        userEmail: targetEmail,
         status: "PENDING",
         isActive: false,
         note: note || "Custom wholesale rate requested",
+        requestedAt: new Date(),
       },
       create: {
         userId: userId,
-        userEmail: verifiedKey.user.email,
+        userEmail: targetEmail,
         apiKey: cleanKey,
         status: "PENDING",
         isActive: false,
         note: note || "Custom wholesale rate requested",
+        requestedAt: new Date(),
       },
+    });
+
+    emitEvent("admin-alert", {
+      type: "PRIVATE_TIER_REQUEST",
+      message: `User ${targetEmail} requested enterprise wholesale pricing.`,
+      userId,
     });
 
     return res.status(200).json({
       success: true,
       message: "Dedicated enterprise routing requested. Awaiting administrator activation.",
       status: record.status,
+      data: record,
     });
   } catch (error) {
+    console.error("Submit private activation error:", error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// 2. Fetch all pending and whitelisted accounts
+/* ======================================================
+   2. FETCH ALL PENDING AND WHITELISTED ACCOUNTS
+   GET /api/v1/private-tier/list
+====================================================== */
 exports.getPendingActivations = async (req, res) => {
   try {
     const list = await prisma.privateTierWhitelist.findMany({
       orderBy: { requestedAt: "desc" },
     });
 
-    return res.status(200).json({ success: true, count: list.length, data: list });
+    return res.status(200).json({
+      success: true,
+      count: list.length,
+      data: list,
+    });
   } catch (error) {
+    console.error("Get pending activations error:", error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// 3. Approve or Suspend user tier
+/* ======================================================
+   3. APPROVE OR SUSPEND USER TIER (ADMIN ACTION)
+   POST /api/v1/private-tier/manage
+====================================================== */
 exports.activateUserPrivateTier = async (req, res) => {
   try {
-    const { targetUserId, customMtnPrice, discountPerGb, action = "APPROVE" } = req.body;
+    const {
+      targetUserId,
+      customMtnPrice,
+      customAirtelPrice,
+      customGloPrice,
+      custom9mobilePrice,
+      discountPerGb,
+      action = "APPROVE",
+    } = req.body;
+
+    if (!targetUserId) {
+      return res.status(400).json({
+        success: false,
+        message: "targetUserId is required.",
+      });
+    }
 
     if (action === "APPROVE") {
       const activated = await prisma.privateTierWhitelist.update({
@@ -91,9 +150,18 @@ exports.activateUserPrivateTier = async (req, res) => {
           status: "APPROVED",
           activatedAt: new Date(),
           approvedBy: req.user?.email || "SuperAdmin",
-          customMtnPrice: customMtnPrice ? Number(customMtnPrice) : null,
-          discountPerGb: discountPerGb ? Number(discountPerGb) : 30.0,
+          customMtnPrice: customMtnPrice !== undefined ? Number(customMtnPrice) : null,
+          customAirtelPrice: customAirtelPrice !== undefined ? Number(customAirtelPrice) : null,
+          customGloPrice: customGloPrice !== undefined ? Number(customGloPrice) : null,
+          custom9mobilePrice: custom9mobilePrice !== undefined ? Number(custom9mobilePrice) : null,
+          discountPerGb: discountPerGb !== undefined ? Number(discountPerGb) : 30.0,
         },
+      });
+
+      emitEvent("tier-status-changed", {
+        userId: targetUserId,
+        status: "APPROVED",
+        isActive: true,
       });
 
       return res.status(200).json({
@@ -110,31 +178,52 @@ exports.activateUserPrivateTier = async (req, res) => {
         },
       });
 
+      emitEvent("tier-status-changed", {
+        userId: targetUserId,
+        status: "SUSPENDED",
+        isActive: false,
+      });
+
       return res.status(200).json({
         success: true,
-        message: "User private tier suspended.",
+        message: "User private tier has been suspended.",
         data: suspended,
       });
     }
   } catch (error) {
+    console.error("Activate user private tier error:", error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// 4. SuperAdmin Direct Terminal Activation
+/* ======================================================
+   4. SUPERADMIN DIRECT TERMINAL INSTANT ACTIVATION
+   POST /api/v1/private-tier/direct-activate
+====================================================== */
 exports.directAdminActivate = async (req, res) => {
   try {
-    const { apiKey, customMtnPrice, discountPerGb, note } = req.body;
+    const {
+      apiKey,
+      customMtnPrice,
+      customAirtelPrice,
+      customGloPrice,
+      custom9mobilePrice,
+      discountPerGb,
+      note,
+    } = req.body;
 
     if (!apiKey) {
-      return res.status(400).json({ success: false, message: "API Key or Customer Email is required." });
+      return res.status(400).json({
+        success: false,
+        message: "API Key, customer email, or registered phone number is required.",
+      });
     }
 
-    const cleanInput = apiKey.trim();
+    const cleanInput = String(apiKey).trim();
     let targetUserId = null;
     let targetEmail = null;
 
-    // A. Direct Email Search (SuperAdmin can paste user email directly)
+    // A. Direct Email Search
     if (cleanInput.includes("@")) {
       const userRecord = await prisma.user.findUnique({
         where: { email: cleanInput.toLowerCase() },
@@ -145,7 +234,27 @@ exports.directAdminActivate = async (req, res) => {
       }
     }
 
-    // B. Plain Text and SHA-256 Hash Matching
+    // B. Direct Phone Number Search
+    if (!targetUserId && /^\d+$/.test(cleanInput.replace(/\+/g, ""))) {
+      const formattedPhone = cleanLocalPhone(cleanInput);
+      const userByPhone = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { phone: formattedPhone },
+            { phone: cleanInput },
+            { phoneNumber: formattedPhone },
+            { phoneNumber: cleanInput },
+          ],
+        },
+      });
+
+      if (userByPhone) {
+        targetUserId = userByPhone.id;
+        targetEmail = userByPhone.email;
+      }
+    }
+
+    // C. Plain Text and SHA-256 Hash Matching on ApiKey table
     const keyHash = crypto.createHash("sha256").update(cleanInput).digest("hex");
     const strippedPrefix = cleanInput.replace(/^ayax_live_/, "");
     const strippedHash = crypto.createHash("sha256").update(strippedPrefix).digest("hex");
@@ -171,11 +280,11 @@ exports.directAdminActivate = async (req, res) => {
           targetEmail = matchedKey.user?.email || matchedKey.email;
         }
       } catch (err) {
-        console.warn("ApiKey lookup fallback triggered:", err.message);
+        console.warn("ApiKey lookup fallback notice:", err.message);
       }
     }
 
-    // C. User Table Relation Search
+    // D. User Table Relation Search
     if (!targetUserId) {
       try {
         const userRelation = await prisma.user.findFirst({
@@ -199,7 +308,7 @@ exports.directAdminActivate = async (req, res) => {
       } catch (_) {}
     }
 
-    // D. Direct Raw SQL Fallback (In case of table/column casing differences)
+    // E. Direct Raw SQL Fallback (Database table casing compatibility)
     if (!targetUserId) {
       try {
         const rawResults = await prisma.$queryRaw`
@@ -218,7 +327,7 @@ exports.directAdminActivate = async (req, res) => {
     if (!targetUserId) {
       return res.status(404).json({
         success: false,
-        message: `Account not found for (${cleanInput.slice(0, 16)}...). You can paste the customer's registered email directly into this input field to activate them instantly.`,
+        message: `Account not found for (${cleanInput.slice(0, 16)}...). You can paste the customer's registered email or phone number directly into this field to activate them instantly.`,
       });
     }
 
@@ -232,8 +341,11 @@ exports.directAdminActivate = async (req, res) => {
         status: "APPROVED",
         activatedAt: new Date(),
         approvedBy: req.user?.email || "SuperAdmin",
-        customMtnPrice: customMtnPrice ? Number(customMtnPrice) : null,
-        discountPerGb: discountPerGb ? Number(discountPerGb) : 30.0,
+        customMtnPrice: customMtnPrice !== undefined ? Number(customMtnPrice) : null,
+        customAirtelPrice: customAirtelPrice !== undefined ? Number(customAirtelPrice) : null,
+        customGloPrice: customGloPrice !== undefined ? Number(customGloPrice) : null,
+        custom9mobilePrice: custom9mobilePrice !== undefined ? Number(custom9mobilePrice) : null,
+        discountPerGb: discountPerGb !== undefined ? Number(discountPerGb) : 30.0,
         note: note || "Manual SuperAdmin activation",
       },
       create: {
@@ -244,10 +356,20 @@ exports.directAdminActivate = async (req, res) => {
         status: "APPROVED",
         activatedAt: new Date(),
         approvedBy: req.user?.email || "SuperAdmin",
-        customMtnPrice: customMtnPrice ? Number(customMtnPrice) : null,
-        discountPerGb: discountPerGb ? Number(discountPerGb) : 30.0,
+        customMtnPrice: customMtnPrice !== undefined ? Number(customMtnPrice) : null,
+        customAirtelPrice: customAirtelPrice !== undefined ? Number(customAirtelPrice) : null,
+        customGloPrice: customGloPrice !== undefined ? Number(customGloPrice) : null,
+        custom9mobilePrice: custom9mobilePrice !== undefined ? Number(custom9mobilePrice) : null,
+        discountPerGb: discountPerGb !== undefined ? Number(discountPerGb) : 30.0,
         note: note || "Manual SuperAdmin activation",
       },
+    });
+
+    emitEvent("whitelist-activated", {
+      userId: targetUserId,
+      email: targetEmail,
+      status: "APPROVED",
+      isActive: true,
     });
 
     return res.status(200).json({

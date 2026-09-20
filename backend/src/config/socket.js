@@ -34,10 +34,8 @@ exports.initSocket = (server) => {
       }
 
       socket.deviceId = targetDeviceId;
-      // Shigar da socket din a dukkan rooms da wayar za ta iya bukata
+      // Room guda daya tak mai suna targetDeviceId
       socket.join(targetDeviceId);
-      socket.join(`device_${targetDeviceId}`);
-      socket.join(`gateway_${targetDeviceId}`);
 
       try {
         await prisma.gsmDevice.updateMany({
@@ -48,7 +46,7 @@ exports.initSocket = (server) => {
             lastSeen: new Date(),
           },
         });
-        console.log(`📱 [GSM BOUND (${source})]: ${targetDeviceId} -> Joined Rooms`);
+        console.log(`📱 [GSM BOUND (${source})]: ${targetDeviceId} -> Joined Room: ${targetDeviceId}`);
         socket.emit("registered", { status: "OK", deviceId: targetDeviceId });
       } catch (err) {
         console.log("DB Bind Error:", err.message);
@@ -173,7 +171,6 @@ const normalizeCommandPayload = (payload) => {
   return {
     ...inner,
     ...payload,
-    // Filaye a bayyane a saman JSON don Android app ya gani kai tsaye
     id: payload?.id || payload?.commandId || inner?.id || inner?.commandId,
     commandId: payload?.commandId || payload?.id || inner?.commandId || inner?.id,
     reference: payload?.reference || inner?.reference,
@@ -198,15 +195,14 @@ exports.emitEvent = (event, payload, room = null) => {
   const safePayload = normalizeCommandPayload(payload);
 
   if (room) {
-    // Tura a dukkan dakunan da ke da alaka da wayar
+    // Tura a ainihin dakin kadai ba tare da maimaitawa ba
     io.to(room).emit(event, safePayload);
-    io.to(`device_${room}`).emit(event, safePayload);
-    io.to(`gateway_${room}`).emit(event, safePayload);
     return;
   }
   io.emit(event, safePayload);
 };
 
+// GYARAN WANNAN BANGAN: Tura umarni sau 1 tak a ainihin dakin wayar
 exports.emitGatewayCommand = (deviceId, command) => {
   if (!io) {
     console.error("[EMIT ERROR]: Socket.io is not initialized.");
@@ -214,15 +210,10 @@ exports.emitGatewayCommand = (deviceId, command) => {
   }
 
   const safeCommand = normalizeCommandPayload(command);
-  console.log(`🚀 [DISPATCHING TO GATEWAY]: Ref: ${safeCommand.reference} -> Code: ${safeCommand.code} Steps: ${JSON.stringify(safeCommand.steps)}`);
+  console.log(`🚀 [DISPATCHING TO GATEWAY]: Ref: ${safeCommand.reference} -> Code: ${safeCommand.code}`);
 
-  // Tura wa dukkan sunayen events da Android ke saurare a cikin dakunan wayar
-  const targetRooms = [deviceId, `device_${deviceId}`, `gateway_${deviceId}`];
-
-  targetRooms.forEach((r) => {
-    io.to(r).emit("gateway-command", safeCommand);
-    io.to(r).emit("command", safeCommand);
-  });
+  // Tura umarni SAU DAYA TAK zuwa room din deviceId
+  io.to(deviceId).emit("gateway-command", safeCommand);
 
   return true;
 };

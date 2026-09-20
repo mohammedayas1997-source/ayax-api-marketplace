@@ -1,6 +1,6 @@
 const prisma = require("../config/prisma");
 const generateReference = require("../utils/generateReference");
-const { emitEvent, emitGatewayCommand } = require("../config/socket");
+const { emitGatewayCommand, emitEvent } = require("../config/socket");
 const axios = require("axios");
 
 const NETWORK_MAP = {
@@ -162,23 +162,17 @@ exports.buyApiPlan = async (req, res) => {
     // 3. Extract Bundle Size for USSD Delivery
     let raw = String(meta.dataSize || meta.volume || plan.volume || lookupPlanCode).toUpperCase();
     let numericSize = "1000";
-    let mtnSmeCode = "SMEB";
 
     if (raw.includes("500")) {
       numericSize = "500";
-      mtnSmeCode = "SMEA";
     } else if (raw.includes("2GB") || raw.includes("2000")) {
       numericSize = "2000";
-      mtnSmeCode = "SMEC";
     } else if (raw.includes("3GB") || raw.includes("3000")) {
       numericSize = "3000";
-      mtnSmeCode = "SMED";
     } else if (raw.includes("5GB") || raw.includes("5000")) {
       numericSize = "5000";
-      mtnSmeCode = "SMEE";
     } else if (raw.includes("10GB") || raw.includes("10000")) {
       numericSize = "10000";
-      mtnSmeCode = "SMEF";
     } else {
       numericSize = raw.replace(/[^0-9]/g, "") || "1000";
     }
@@ -269,6 +263,11 @@ exports.buyApiPlan = async (req, res) => {
           const simCarrier = String(sim.carrierName || sim.displayName || "").toUpperCase();
           if (!simCarrier.includes(planNetwork)) continue;
 
+          // Check batch validity / Expiry check
+          if (sim.expiryDate && new Date() > new Date(sim.expiryDate)) {
+            continue;
+          }
+
           // Check if SIM supports the specific plan_id
           const hasPlan = Array.isArray(sim.supportedPlans) && sim.supportedPlans.includes(lookupPlanCode);
           if (!hasPlan) continue;
@@ -320,6 +319,7 @@ exports.buyApiPlan = async (req, res) => {
           planId: lookupPlanCode,
         };
 
+        // Ajiye umarni a database
         await prisma.gsmCommand.create({
           data: {
             reference,
@@ -330,7 +330,7 @@ exports.buyApiPlan = async (req, res) => {
           },
         }).catch(() => null);
 
-        // Decrement stock for this exact plan on the selected SIM
+        // Rage adadin wannan plan din a SIM
         const balances = targetSim.planBalances && typeof targetSim.planBalances === "object" ? { ...targetSim.planBalances } : {};
         const currentStock = balances[lookupPlanCode] !== undefined ? Number(balances[lookupPlanCode]) : 1;
         balances[lookupPlanCode] = Math.max(0, currentStock - 1);
@@ -340,12 +340,13 @@ exports.buyApiPlan = async (req, res) => {
           data: { planBalances: balances },
         }).catch(() => null);
 
-        emitEvent("gateway-command", commandPayload, activeDevice.id);
-        emitEvent("command", commandPayload, activeDevice.id);
-        emitEvent(`gateway-command-${activeDevice.id}`, commandPayload);
-
+        // =========================================================================
+        // GYARA: TURA UMARNI SAU DAYA TAK TA SOCKET GUDA DAYA
+        // =========================================================================
         if (typeof emitGatewayCommand === "function") {
           emitGatewayCommand(activeDevice.id, commandPayload);
+        } else {
+          emitEvent("gateway-command", commandPayload, activeDevice.id);
         }
 
         return res.status(200).json({

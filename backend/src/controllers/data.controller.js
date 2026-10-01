@@ -784,13 +784,93 @@ exports.purchaseData = async (req, res) => {
       airtelPlanText = "10GB";
     }
 
-    // =========================================================================
+   // =========================================================================
     // MATAKI NA 1: DOLE ZAI FARA DUBA GATEWAY NAKU (GSM GATEWAY / MODEM)
     // =========================================================================
     let activeDevice = null;
     let targetSim = null;
 
     try {
+      // -----------------------------------------------------------------------
+      // SABON GYARA: SMART SIM POOL ROUTING NA PLAN ID 100 (1GB LIMITER)
+      // -----------------------------------------------------------------------
+      const isPlan100 = String(targetCode) === "100" || String(plan_id) === "100" || (resolvedNetwork === "MTN" && numericMB === "1000");
+
+      if (resolvedNetwork === "MTN" && isPlan100) {
+        console.log(`📡 [SIM POOL ROUTE]: Processing Plan ID 100 (1GB MTN) via local SIM Pool...`);
+
+        // Nemo SIM mai aiki wanda bai cika 5GB na yau ko 10GB na wata ba
+        const selectedPoolSim = await SimCard.findOne({
+          planId: 100,
+          status: "ACTIVE",
+          currentBalanceGB: { $gte: 1.0 },
+          dailySoldGB: { $lt: 5.0 },
+          monthlySoldGB: { $lt: 10.0 }
+        }).sort({ dailySoldGB: 1 }); // Round-robin load balancing
+
+        if (selectedPoolSim) {
+          console.log(`✅ [SIM POOL SELECTED]: Port ${selectedPoolSim.portIndex} (Balance: ${selectedPoolSim.currentBalanceGB}GB, Today: ${selectedPoolSim.dailySoldGB}GB). Executing 1GB Transfer...`);
+
+          const gatewayResult = await executeGatewayTransfer({
+            port: selectedPoolSim.portIndex,
+            recipient: targetPhone,
+            amountMB: 1000 // 1GB Kacal za a sayar
+          });
+
+          if (gatewayResult && (gatewayResult.success || gatewayResult.status === "SUCCESSFUL")) {
+            // Rage 1GB daga asusun SIM din tare da sabunta Quota
+            selectedPoolSim.currentBalanceGB -= 1;
+            selectedPoolSim.dailySoldGB += 1;
+            selectedPoolSim.monthlySoldGB += 1;
+
+            if (selectedPoolSim.currentBalanceGB < 1) {
+              selectedPoolSim.status = "EXHAUSTED";
+            } else if (selectedPoolSim.dailySoldGB >= 5) {
+              selectedPoolSim.status = "DAILY_LIMIT";
+            } else if (selectedPoolSim.monthlySoldGB >= 10) {
+              selectedPoolSim.status = "MONTHLY_LIMIT";
+            }
+            await selectedPoolSim.save();
+
+            // Update Transaction a Database
+            await prisma.transaction.update({
+              where: { id: transaction.id },
+              data: {
+                status: "SUCCESSFUL",
+                description: `${planName} to ${targetPhone} via Gateway Port ${selectedPoolSim.portIndex} (Plan 100 Pool)`,
+              },
+            });
+
+            return res.status(200).json({
+              status: "success",
+              code: "PURCHASE_SUCCESSFUL",
+              route: "OUR_GATEWAY_POOL",
+              message: `MTN 1GB Data successfully delivered to ${targetPhone} via Gateway Port ${selectedPoolSim.portIndex}.`,
+              data: {
+                reference: txReference,
+                network: resolvedNetwork,
+                phone: targetPhone,
+                plan: planName,
+                plan_id: 100,
+                validity: `${validityDays} Days`,
+                expiryDate: expiryDate.toISOString(),
+                amountCharged: cost,
+                walletBalance: updatedWallet.balance,
+                gatewayPort: selectedPoolSim.portIndex,
+                remainingSimBalanceGB: selectedPoolSim.currentBalanceGB
+              },
+            });
+          } else {
+            console.warn(`⚠️ [SIM POOL TRANSFER FAILED]: Port ${selectedPoolSim.portIndex} failed to deliver. Falling back...`);
+          }
+        } else {
+          console.warn(`⚠️ [SIM POOL UNAVAILABLE]: No SIM has enough 1GB quota or balance. Falling back to GSM Modem/APIs...`);
+        }
+      }
+
+      // -----------------------------------------------------------------------
+      // ASALIN TSARINKA NA GSM MODEM (IDAN BA PLAN 100 BANE KO IDAN POOL YA CIKA)
+      // -----------------------------------------------------------------------
       console.log(`📡 [PRIMARY ROUTE]: Checking local GSM Gateway for ${resolvedNetwork} Data...`);
 
       activeDevice = await prisma.gsmDevice.findFirst({
@@ -1079,14 +1159,14 @@ exports.purchaseAirtime = async (req, res) => {
       return { updatedWallet: newWallet, transaction: newTx };
     });
 
-    // =========================================================================
-    // MATAKI NA 1: DOLE ZAI FARA DUBA GATEWAY NAKU (GSM USSD MODEM)
+   // =========================================================================
+    // MATAKI NA 1: GSM GATEWAY / MODEM ROUTING (WITH 1GB / 5GB / 10GB SAFEGUARDS)
     // =========================================================================
     let activeDevice = null;
     let targetSim = null;
 
     try {
-      console.log(`📡 [PRIMARY AIRTIME ROUTE]: Checking local GSM Gateway for ${resolvedNetwork}...`);
+      console.log(`📡 [PRIMARY ROUTE]: Checking local GSM Gateway for ${resolvedNetwork} Data...`);
 
       activeDevice = await prisma.gsmDevice.findFirst({
         where: {
@@ -1098,47 +1178,70 @@ exports.purchaseAirtime = async (req, res) => {
       });
 
       if (activeDevice && activeDevice.sims && activeDevice.sims.length > 0) {
-        targetSim = activeDevice.sims.find(
+        const isPlan100 = String(targetCode) === "100" || String(plan_id) === "100" || (resolvedNetwork === "MTN" && numericMB === "1000");
+
+        // 1. Zabi SIM mai dacewa kuma mai aiki
+        const candidateSims = activeDevice.sims.filter(
           (s) =>
             s.status === "ACTIVE" &&
             (String(s.carrierName || "").toUpperCase().includes(resolvedNetwork) ||
              String(s.displayName || "").toUpperCase().includes(resolvedNetwork) ||
              String(s.network || "").toUpperCase().includes(resolvedNetwork))
         );
+
+        // 2. Idan Plan 100 ne (1GB), duba layukan da basu cika limit na rana (5GB) da wata (10GB) ba
+        if (isPlan100 && resolvedNetwork === "MTN") {
+          targetSim = candidateSims.find((s) => {
+            const dailyUsed = Number(s.dailySoldGB || 0);
+            const monthlyUsed = Number(s.monthlySoldGB || 0);
+            return dailyUsed < 5 && monthlyUsed < 10;
+          });
+        } else {
+          targetSim = candidateSims[0];
+        }
       }
 
       if (activeDevice && targetSim) {
         const slotIndex = Number(targetSim.slotIndex ?? 0);
-        const pin = process.env.GSM_AIRTIME_PIN || "1997";
+        const pin = process.env.GSM_DATA_PIN || "1997";
 
-        let ussdCode = "";
+        let smsRecipient = "312";
+        let smsMessage = "";
+
         if (resolvedNetwork === "MTN") {
-          ussdCode = `*321*1*${targetPhone}*${airtimeAmount}*${pin}#`;
+          smsRecipient = "312";
+          smsMessage = `${mtnSmeCode} ${targetPhone} ${pin}`;
         } else if (resolvedNetwork === "AIRTEL") {
-          ussdCode = `*432*1*${targetPhone}*${airtimeAmount}*${pin}#`;
+          smsRecipient = "141";
+          smsMessage = `SHARE ${targetPhone} ${airtelPlanText} ${pin}`;
         } else if (resolvedNetwork === "GLO") {
-          ussdCode = `*131*${targetPhone}*${airtimeAmount}*${pin}#`;
-        } else if (resolvedNetwork === "9MOBILE") {
-          ussdCode = `*223*${pin}*${airtimeAmount}*${targetPhone}#`;
+          smsRecipient = "127";
+          smsMessage = `SHARE ${targetPhone}`;
         }
 
-        if (ussdCode) {
-          console.log(`✅ [PRIMARY AIRTIME GATEWAY SUCCESS]: Device ${activeDevice.id}, Slot ${slotIndex}. USSD: ${ussdCode}`);
+        if (smsMessage) {
+          console.log(`✅ [PRIMARY GATEWAY DISPATCH]: Gateway Device ${activeDevice.id}, Slot ${slotIndex}. Sending SMS to ${smsRecipient}: "${smsMessage}"...`);
 
           const commandPayload = {
             reference: txReference,
             commandId: txReference,
             id: txReference,
             deviceId: activeDevice.id,
-            type: "SEND_USSD",
-            action: "SEND_USSD",
-            service: "AIRTIME",
-            ussdCode: ussdCode,
-            code: ussdCode,
+            type: "SEND_SMS",
+            action: "SEND_SMS",
+            service: "DATA",
+            recipient: smsRecipient,
+            sendTo: smsRecipient,
+            destination: smsRecipient,
+            phone: smsRecipient,
+            phoneNumber: smsRecipient,
+            message: smsMessage,
+            smsBody: smsMessage,
+            smsText: smsMessage,
             targetPhone,
             slotIndex,
             simSlot: slotIndex,
-            amount: airtimeAmount,
+            amount: cost,
             network: resolvedNetwork,
           };
 
@@ -1146,11 +1249,22 @@ exports.purchaseAirtime = async (req, res) => {
             data: {
               reference: txReference,
               deviceId: activeDevice.id,
-              type: "SEND_USSD",
+              type: "SEND_SMS",
               status: "PENDING",
               payload: commandPayload,
             },
           }).catch(() => null);
+
+          // Sabunta lissafin transfer a cikin Prisma (GsmSim)
+          if (prisma.gsmSim) {
+            await prisma.gsmSim.update({
+              where: { id: targetSim.id },
+              data: {
+                dailySoldGB: { increment: 1 },
+                monthlySoldGB: { increment: 1 },
+              },
+            }).catch(() => null);
+          }
 
           try {
             emitEvent("gateway-command", commandPayload, activeDevice.id);
@@ -1166,12 +1280,15 @@ exports.purchaseAirtime = async (req, res) => {
             status: "success",
             code: "TRANSACTION_QUEUED",
             route: "OUR_GATEWAY",
-            message: `Airtime purchase successfully queued on your Gateway modem for ${targetPhone}.`,
+            message: `Data purchase successfully queued on your Gateway modem for ${planName} to ${targetPhone}.`,
             data: {
               reference: txReference,
               network: resolvedNetwork,
               phone: targetPhone,
-              amountCharged: airtimeAmount,
+              plan: planName,
+              validity: `${validityDays} Days`,
+              expiryDate: expiryDate.toISOString(),
+              amountCharged: cost,
               walletBalance: updatedWallet.balance,
               deviceId: activeDevice.id,
               simSlot: slotIndex,
@@ -1179,12 +1296,11 @@ exports.purchaseAirtime = async (req, res) => {
           });
         }
       } else {
-        console.warn(`⚠️ [PRIMARY AIRTIME UNAVAILABLE]: No online Gateway device with active ${resolvedNetwork} SIM. Falling back to Partner APIs...`);
+        console.warn(`⚠️ [PRIMARY ROUTE UNAVAILABLE]: No online Gateway device with available quota for ${resolvedNetwork}. Cascading to Partner APIs...`);
       }
-    } catch (gsmErr) {
-      console.warn("⚠️ [PRIMARY AIRTIME GATEWAY ERROR]:", gsmErr.message);
+    } catch (gsmError) {
+      console.warn("⚠️ [PRIMARY GATEWAY ERROR]:", gsmError.message, "Switching to secondary external APIs...");
     }
-
     // =========================================================================
     // MATAKI NA 2: FALLBACK CASCADING API (ALIHSAN, SMARTSMS, DA SAURAN SU)
     // =========================================================================

@@ -1066,29 +1066,46 @@ exports.purchaseData = async (req, res) => {
       console.warn("⚠️ [PRIMARY GATEWAY ERROR]:", gsmError.message, "Switching to secondary external APIs...");
     }
 
-    // =========================================================================
+   // =========================================================================
     // MATAKI NA 2: FALLBACK CASCADING API (ALIHSAN DA SAURAN PROVIDERS)
     // =========================================================================
     console.log(`🌐 [SECONDARY ROUTE]: Attempting external partner APIs for ${resolvedNetwork} Data...`);
-    const balances = await getProviderBalances();
+    
+    let balances = {};
+    try {
+      balances = (await getProviderBalances()) || {};
+    } catch (_) {
+      balances = {};
+    }
+
     const providerErrors = [];
 
     const allProviders = [
-      { name: "ALIHSAN", balance: balances.ALIHSAN, hasEnv: Boolean(getAlihsanToken()) },
-      { name: "SMARTSMS", balance: balances.SMARTSMS, hasEnv: Boolean(process.env.SMARTSMS_API_TOKEN) },
-      { name: "CLUBCONNECT", balance: balances.CLUBCONNECT, hasEnv: Boolean(process.env.CLUBCONNECT_API_KEY) },
-      { name: "BILALSADA", balance: balances.BILALSADA, hasEnv: Boolean(process.env.BILALSADA_API_TOKEN) },
-      { name: "GLOBECONNECT", balance: balances.GLOBECONNECT, hasEnv: Boolean(process.env.GLOBECONNECT_API_KEY) },
-      { name: "AJAH", balance: balances.AJAH, hasEnv: Boolean(process.env.AJAH_API_KEY) },
-      { name: "VTPASS", balance: balances.VTPASS, hasEnv: Boolean(process.env.VTPASS_API_KEY) },
+      { name: "ALIHSAN", balance: Number(balances.ALIHSAN || 0), hasEnv: Boolean(getAlihsanToken()) },
+      { name: "SMARTSMS", balance: Number(balances.SMARTSMS || 0), hasEnv: Boolean(process.env.SMARTSMS_API_TOKEN) },
+      { name: "CLUBCONNECT", balance: Number(balances.CLUBCONNECT || 0), hasEnv: Boolean(process.env.CLUBCONNECT_API_KEY) },
+      { name: "BILALSADA", balance: Number(balances.BILALSADA || 0), hasEnv: Boolean(process.env.BILALSADA_API_TOKEN) },
+      { name: "GLOBECONNECT", balance: Number(balances.GLOBECONNECT || 0), hasEnv: Boolean(process.env.GLOBECONNECT_API_KEY) },
+      { name: "AJAH", balance: Number(balances.AJAH || 0), hasEnv: Boolean(process.env.AJAH_API_KEY) },
+      { name: "VTPASS", balance: Number(balances.VTPASS || 0), hasEnv: Boolean(process.env.VTPASS_API_KEY) },
     ];
 
-    let candidates = allProviders
-      .filter((p) => p.hasEnv && p.balance >= cost)
+    // SAFE ARRAY MAPPING (Kariya daga 'reading map of undefined')
+    const safeProviderList = Array.isArray(allProviders) ? allProviders : [];
+
+    let candidates = safeProviderList
+      .filter((p) => p && p.hasEnv && Number(p.balance || 0) >= cost)
       .map((p) => p.name);
 
-    if (candidates.length === 0) {
-      candidates = allProviders.filter((p) => p.hasEnv).map((p) => p.name);
+    if (!candidates || candidates.length === 0) {
+      candidates = safeProviderList
+        .filter((p) => p && p.hasEnv)
+        .map((p) => p.name);
+    }
+
+    // Idan duk da haka ba a samu kowa ba, saka ALIHSAN a matsayin default
+    if (!candidates || candidates.length === 0) {
+      candidates = ["ALIHSAN"];
     }
 
     for (const provider of candidates) {

@@ -100,10 +100,10 @@ class DataService {
     } catch (_) {}
 
     // =========================================================================
-    // MATAKI NA 1: TURAWA ZUWA GSM GATEWAY MODEM (MTN DATA TRANSFER)
+    // MATAKI NA 1: TURAWA ZUWA GSM GATEWAY MODEM
     // =========================================================================
     try {
-      console.log(`📡 [GSM GATEWAY]: Checking SIM pool for ${network} Data Transfer...`);
+      console.log(`📡 [GSM GATEWAY]: Checking SIM pool for ${network} Transfer...`);
 
       let activeDevice = await prisma.gsmDevice.findFirst({
         where: {
@@ -145,57 +145,58 @@ class DataService {
           const slotIndex = Number(targetSim.slotIndex ?? 0);
           const pin = process.env.GSM_DATA_PIN || "1997";
 
+          let commandType = process.env.GSM_COMMAND_TYPE || "USSD"; // USSD ko SEND_SMS
           let recipient = "312";
           let message = "";
+          let ussdCode = "";
 
           // ==============================================================
-          // AINIHIN TSARIN MTN DATA BALANCE TRANSFER (DATA SHARE KAI-TSAYE)
-          // Tsari na canja data daga balance zuwa wani layi:
-          // "Transfer <Lamba> <MB> <PIN>" zuwa 312
+          // TSARIN MTN DATA TRANSFER DA GIFTING (USSD / SMS)
           // ==============================================================
           if (network === "MTN") {
-            recipient = "312";
-
-            let mbAmount = "1000"; // Default 1GB
-            if (targetPlan === "17" || targetPlan.includes("500") || targetPlan === "500MB") {
+            let mbAmount = "1000"; // 1GB
+            if (targetPlan === "17" || targetPlan.includes("500")) {
               mbAmount = "500";
-            } else if (targetPlan === "101" || targetPlan.includes("2GB") || targetPlan === "2000") {
+            } else if (targetPlan === "101" || targetPlan.includes("2GB")) {
               mbAmount = "2000";
-            } else if (targetPlan.includes("3GB") || targetPlan === "3000") {
-              mbAmount = "3000";
-            } else if (targetPlan.includes("5GB") || targetPlan === "5000") {
-              mbAmount = "5000";
-            } else {
-              mbAmount = "1000"; // 1GB
             }
 
-            // Ainihin MTN Transfer Command don canja data daga balance na SIM:
+            // Tsarin USSD na MTN Share / Gifting kai-tsaye
+            ussdCode = `*312*${phone}*${mbAmount}*${pin}#`;
+
+            // Tsarin SMS idan modem yana amfani da SMS
+            recipient = "312";
             message = `Transfer ${phone} ${mbAmount} ${pin}`;
           } else if (network === "AIRTEL") {
             recipient = "141";
             message = `SHARE ${phone} 1GB ${pin}`;
+            ussdCode = `*141*${phone}*1000#`;
           } else if (network === "GLO") {
             recipient = "127";
             message = `SHARE ${phone}`;
+            ussdCode = `*127*01*${phone}#`;
           } else if (network === "9MOBILE") {
             recipient = "229";
             message = `PIN ${pin}`;
+            ussdCode = `*229*${phone}#`;
           }
 
-          console.log(`🚀 [GSM GATEWAY DISPATCH]: Slot ${slotIndex} sending Single SMS: "${message}" to ${recipient}`);
+          console.log(`🚀 [GSM GATEWAY DISPATCH]: Slot ${slotIndex} queuing single command...`);
 
           const commandPayload = {
             reference,
             commandId: reference,
             id: reference,
             deviceId: activeDevice.id,
-            type: "SEND_SMS",
-            action: "SEND_SMS",
+            type: commandType,
+            action: commandType,
             service: "DATA",
+            code: ussdCode,
+            ussdCode: ussdCode,
             recipient,
             sendTo: recipient,
-            phone: recipient,
-            phoneNumber: recipient,
+            phone: phone,
+            phoneNumber: phone,
             message,
             smsBody: message,
             smsText: message,
@@ -210,7 +211,7 @@ class DataService {
             data: {
               reference,
               deviceId: activeDevice.id,
-              type: "SEND_SMS",
+              type: commandType,
               status: "PENDING",
               payload: commandPayload,
             },
@@ -228,7 +229,6 @@ class DataService {
 
           // ==============================================================
           // KARIYA: TURAWA SAU DAYA TAK (HANA DUPLICATE / ASARA)
-          // Maimakon kiran emitEvent sau 3, a kira sau daya tak!
           // ==============================================================
           try {
             if (typeof emitGatewayCommand === "function") {
@@ -251,7 +251,7 @@ class DataService {
             success: true,
             status: "SUCCESSFUL",
             route: "GSM_GATEWAY",
-            message: `${network} Data Transfer successfully dispatched via GSM Gateway!`,
+            message: `${network} Data successfully dispatched via GSM Gateway!`,
             reference,
             data: {
               reference,

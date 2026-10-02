@@ -93,17 +93,17 @@ class DataService {
             amount: purchaseAmount,
             reference,
             status: "PROCESSING",
-            description: `${network} Data (${targetPlan}) to ${phone}`,
+            description: `${network} SME Data (${targetPlan}) to ${phone}`,
           },
         });
       }
     } catch (_) {}
 
     // =========================================================================
-    // MATAKI NA 1: TURAWA ZUWA GSM GATEWAY MODEM (MTN, AIRTEL, GLO, 9MOBILE)
+    // MATAKI NA 1: TURAWA ZUWA GSM GATEWAY MODEM (MTN SME TRANSFER KAI-TSAYE)
     // =========================================================================
     try {
-      console.log(`📡 [GSM GATEWAY]: Checking SIM pool for ${network}...`);
+      console.log(`📡 [GSM GATEWAY]: Checking SIM pool for ${network} SME Data...`);
 
       const activeDevice = await prisma.gsmDevice.findFirst({
         where: {
@@ -137,9 +137,29 @@ class DataService {
           const pin = process.env.GSM_DATA_PIN || "1997";
 
           let recipient = "312";
-          let message = `SMEB ${phone} ${pin}`;
+          let message = "";
 
-          if (network === "AIRTEL") {
+          // ==============================================================
+          // AINIHIN TSARIN MTN SME DATA TRANSFER KAI-TSAYE (SMS ZUWA 312)
+          // SMEA: 500MB | SMEB: 1GB | SMEC: 2GB | SMED: 3GB | SMEE: 5GB | SMEF: 10GB
+          // ==============================================================
+          if (network === "MTN") {
+            recipient = "312";
+            if (targetPlan === "17" || targetPlan.includes("500") || targetPlan === "500MB") {
+              message = `SMEA ${phone} ${pin}`; // 500MB
+            } else if (targetPlan === "101" || targetPlan.includes("2GB") || targetPlan === "2000") {
+              message = `SMEC ${phone} ${pin}`; // 2GB
+            } else if (targetPlan.includes("3GB") || targetPlan === "3000") {
+              message = `SMED ${phone} ${pin}`; // 3GB
+            } else if (targetPlan.includes("5GB") || targetPlan === "5000") {
+              message = `SMEE ${phone} ${pin}`; // 5GB
+            } else if (targetPlan.includes("10GB") || targetPlan === "10000") {
+              message = `SMEF ${phone} ${pin}`; // 10GB
+            } else {
+              // Standard 1GB SME (Plan 100 / Plan 27)
+              message = `SMEB ${phone} ${pin}`; // 1GB
+            }
+          } else if (network === "AIRTEL") {
             recipient = "141";
             message = `SHARE ${phone} 1GB ${pin}`;
           } else if (network === "GLO") {
@@ -149,6 +169,8 @@ class DataService {
             recipient = "229";
             message = `PIN ${pin}`;
           }
+
+          console.log(`🚀 [GSM SME DISPATCH]: Port ${slotIndex} sending: "${message}" to ${recipient}`);
 
           const commandPayload = {
             reference,
@@ -213,7 +235,7 @@ class DataService {
             success: true,
             status: "SUCCESSFUL",
             route: "GSM_GATEWAY",
-            message: `${network} Data successfully dispatched via GSM Gateway!`,
+            message: `${network} SME Data successfully dispatched via GSM Gateway!`,
             reference,
             data: {
               reference,
@@ -285,7 +307,6 @@ class DataService {
     } catch (externalErr) {
       console.error("External delivery failed:", externalErr.message);
 
-      // Refund idan duk hanyoyin biyu sun gaza
       if (purchaseAmount > 0) {
         if (wallet && prisma.wallet) {
           await prisma.wallet.update({

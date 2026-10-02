@@ -93,24 +93,23 @@ class DataService {
             amount: purchaseAmount,
             reference,
             status: "PROCESSING",
-            description: `${network} SME Data (${targetPlan}) to ${phone}`,
+            description: `${network} Data Transfer (${targetPlan}) to ${phone}`,
           },
         });
       }
     } catch (_) {}
 
     // =========================================================================
-    // MATAKI NA 1: TURAWA ZUWA GSM GATEWAY MODEM (MTN SME TRANSFER KAI-TSAYE)
+    // MATAKI NA 1: TURAWA ZUWA GSM GATEWAY MODEM (MTN DATA TRANSFER)
     // =========================================================================
     try {
-      console.log(`📡 [GSM GATEWAY]: Checking SIM pool for ${network} SME Data...`);
+      console.log(`📡 [GSM GATEWAY]: Checking SIM pool for ${network} Data Transfer...`);
 
-      // Nemo device mai aiki (ONLINE ko kowane device da ke akwai a database)
       let activeDevice = await prisma.gsmDevice.findFirst({
         where: {
           OR: [
             { status: "ONLINE" },
-            { lastSeen: { gte: new Date(Date.now() - 30 * 60 * 1000) } }, // cikin minti 30
+            { lastSeen: { gte: new Date(Date.now() - 30 * 60 * 1000) } },
           ],
         },
         include: { sims: true },
@@ -118,7 +117,6 @@ class DataService {
       });
 
       if (!activeDevice) {
-        // Fallback: Dauki device din da ke akwai idan ba a tantance ONLINE ba
         activeDevice = await prisma.gsmDevice.findFirst({
           include: { sims: true },
           orderBy: { createdAt: "desc" },
@@ -151,25 +149,28 @@ class DataService {
           let message = "";
 
           // ==============================================================
-          // AINIHIN TSARIN MTN SME DATA TRANSFER (SMS ZUWA 312)
-          // SMEA: 500MB | SMEB: 1GB | SMEC: 2GB | SMED: 3GB | SMEE: 5GB | SMEF: 10GB
+          // AINIHIN TSARIN MTN DATA BALANCE TRANSFER (DATA SHARE KAI-TSAYE)
+          // Tsari na canja data daga balance zuwa wani layi:
+          // "Transfer <Lamba> <MB> <PIN>" zuwa 312
           // ==============================================================
           if (network === "MTN") {
             recipient = "312";
+
+            let mbAmount = "1000"; // Default 1GB
             if (targetPlan === "17" || targetPlan.includes("500") || targetPlan === "500MB") {
-              message = `SMEA ${phone} ${pin}`; // 500MB
+              mbAmount = "500";
             } else if (targetPlan === "101" || targetPlan.includes("2GB") || targetPlan === "2000") {
-              message = `SMEC ${phone} ${pin}`; // 2GB
+              mbAmount = "2000";
             } else if (targetPlan.includes("3GB") || targetPlan === "3000") {
-              message = `SMED ${phone} ${pin}`; // 3GB
+              mbAmount = "3000";
             } else if (targetPlan.includes("5GB") || targetPlan === "5000") {
-              message = `SMEE ${phone} ${pin}`; // 5GB
-            } else if (targetPlan.includes("10GB") || targetPlan === "10000") {
-              message = `SMEF ${phone} ${pin}`; // 10GB
+              mbAmount = "5000";
             } else {
-              // Default 1GB SME (Plan 100 / Plan 27)
-              message = `SMEB ${phone} ${pin}`; // 1GB
+              mbAmount = "1000"; // 1GB
             }
+
+            // Ainihin MTN Transfer Command don canja data daga balance na SIM:
+            message = `Transfer ${phone} ${mbAmount} ${pin}`;
           } else if (network === "AIRTEL") {
             recipient = "141";
             message = `SHARE ${phone} 1GB ${pin}`;
@@ -181,7 +182,7 @@ class DataService {
             message = `PIN ${pin}`;
           }
 
-          console.log(`🚀 [GSM GATEWAY DISPATCH]: Slot ${slotIndex} sending SMS: "${message}" to ${recipient}`);
+          console.log(`🚀 [GSM GATEWAY DISPATCH]: Slot ${slotIndex} sending Single SMS: "${message}" to ${recipient}`);
 
           const commandPayload = {
             reference,
@@ -225,11 +226,15 @@ class DataService {
             }).catch(() => null);
           }
 
+          // ==============================================================
+          // KARIYA: TURAWA SAU DAYA TAK (HANA DUPLICATE / ASARA)
+          // Maimakon kiran emitEvent sau 3, a kira sau daya tak!
+          // ==============================================================
           try {
-            emitEvent("gateway-command", commandPayload, activeDevice.id);
-            emitEvent("command", commandPayload, activeDevice.id);
             if (typeof emitGatewayCommand === "function") {
               emitGatewayCommand(activeDevice.id, commandPayload);
+            } else {
+              emitEvent("gateway-command", commandPayload, activeDevice.id);
             }
           } catch (socketErr) {
             console.warn("Socket notice:", socketErr.message);
@@ -246,7 +251,7 @@ class DataService {
             success: true,
             status: "SUCCESSFUL",
             route: "GSM_GATEWAY",
-            message: `${network} SME Data successfully dispatched to GSM Gateway!`,
+            message: `${network} Data Transfer successfully dispatched via GSM Gateway!`,
             reference,
             data: {
               reference,
@@ -260,7 +265,7 @@ class DataService {
         }
       }
     } catch (gsmErr) {
-      console.warn("⚠️ [GSM GATEWAY NOTICE]:", gsmErr.message, "Switching to Al-Ihsan Fallback...");
+      console.warn("⚠️ [GSM GATEWAY NOTICE]:", gsmErr.message, "Switching to Fallback...");
     }
 
     // =========================================================================
@@ -283,7 +288,6 @@ class DataService {
 
       const netMap = { MTN: "1", AIRTEL: "2", "9MOBILE": "3", GLO: "4" };
 
-      // Daidaita Plan ID na Al-Ihsan (Default 1GB MTN = 140 ko 27)
       let alihsanPlanId = targetPlan;
       if (network === "MTN" && (targetPlan === "100" || targetPlan === "27")) {
         alihsanPlanId = "140";
@@ -351,7 +355,6 @@ class DataService {
       const errMsg = errRes?.desc || errRes?.message || errRes?.msg || externalErr.message;
       console.error("External delivery failed:", errMsg);
 
-      // Refund idan duk hanyoyin sun gaza
       if (purchaseAmount > 0) {
         if (wallet && prisma.wallet) {
           await prisma.wallet.update({
@@ -361,7 +364,7 @@ class DataService {
         } else {
           await prisma.user.update({
             where: { id: user.id },
-            data: { walletBalance: { increment: purchaseAmount } },
+          data: { walletBalance: { increment: purchaseAmount } },
           });
         }
       }

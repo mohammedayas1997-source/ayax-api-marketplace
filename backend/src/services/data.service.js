@@ -3,14 +3,22 @@ const axios = require("axios");
 
 const prisma = new PrismaClient();
 
-class DataService {
-  /**
-   * Sayar da Data Bundle ta hanyar Prisma ORM
-   */
-  async purchaseData(params) {
-    const { phone, network, planId, amount, pin } = params;
+const NETWORK_LOOKUP = {
+  "1": "MTN",
+  "2": "AIRTEL",
+  "3": "9MOBILE",
+  "4": "GLO",
+};
 
-    // 1. Tattara ID ko bayanan mai amfani ta kowace hanya
+class DataService {
+  async purchaseData(params) {
+    const { phone, planCode, planId, amount } = params;
+
+    const rawNet = String(params.network || "MTN").toUpperCase().trim();
+    const network = NETWORK_LOOKUP[rawNet] || rawNet;
+    const targetPlan = String(planCode || planId || "100").trim();
+
+    // 1. Tattara ID ko bayanan mai amfani
     const targetId = params.userId || params.id || params.user?.id || params.user?._id;
     const targetEmail = params.email || params.user?.email;
     const targetPhone = params.userPhone || params.user?.phone;
@@ -18,43 +26,39 @@ class DataService {
     let user = null;
 
     if (targetId) {
-      user = await prisma.user.findUnique({
-        where: { id: targetId },
-      });
+      user = await prisma.user.findUnique({ where: { id: targetId } });
     } else if (targetEmail) {
-      user = await prisma.user.findUnique({
-        where: { email: targetEmail },
-      });
+      user = await prisma.user.findUnique({ where: { email: targetEmail } });
     } else if (targetPhone) {
-      user = await prisma.user.findFirst({
-        where: { phone: targetPhone },
-      });
+      user = await prisma.user.findFirst({ where: { phone: targetPhone } });
     }
 
     if (!user) {
-      throw new Error("User session expired or user account not found. Please log in again.");
+      throw new Error("User account not found. Please verify API credentials.");
     }
 
-    // 3. Duba Ma'aunin Kuɗi (Wallet Balance)
-    const purchaseAmount = Number(amount);
+    // 2. Duba Ma'aunin Kudi
+    const purchaseAmount = Number(amount || 0);
     const userBalance = Number(user.walletBalance || user.balance || 0);
 
-    if (userBalance < purchaseAmount) {
+    if (purchaseAmount > 0 && userBalance < purchaseAmount) {
       throw new Error(
         `Insufficient balance. You have ₦${userBalance.toLocaleString()}, but ₦${purchaseAmount.toLocaleString()} is required.`
       );
     }
 
-    // 4. Rage kuɗin a wallet kafin aika buƙata (Atomic Transaction)
-    const updatedUser = await prisma.user.update({
-      where: { id: userId },
-      data: {
-        walletBalance: userBalance - purchaseAmount,
-      },
-    });
+    // 3. Rage kudi a wallet (Atomic Transaction ta amfani da user.id)
+    if (purchaseAmount > 0) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          walletBalance: { decrement: purchaseAmount },
+        },
+      });
+    }
 
-    // 5. Ƙirƙiri rikodin ciniki (Transaction record)
-    const reference = `DATA_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+    // 4. Kirkiri rikodin ciniki
+    const reference = params.reference || `DATA_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
 
     let transactionRecord = null;
     try {
@@ -62,20 +66,18 @@ class DataService {
         data: {
           userId: user.id,
           type: "DATA",
-          network: String(network).toUpperCase(),
+          network,
           phone: String(phone),
           amount: purchaseAmount,
-          planId: String(planId),
-          reference: reference,
+          planId: targetPlan,
+          reference,
           status: "PROCESSING",
-          description: `${String(network).toUpperCase()} Data Purchase (${phone})`,
+          description: `${network} Data Purchase (${phone})`,
         },
       });
-    } catch (_) {
-      // Idan babu teburin transaction a schema, a ci gaba
-    }
+    } catch (_) {}
 
-    // 6. Aika oda zuwa VTU Gateway / API Provider
+    // 5. Aika oda zuwa Gateway / Provider
     let deliverySuccess = false;
     let failureErrors = [];
     let providerData = null;
@@ -87,9 +89,9 @@ class DataService {
       const providerRes = await axios.post(
         primaryApiUrl,
         {
-          network: String(network).toUpperCase(),
+          network,
           mobile_number: phone,
-          plan: planId,
+          plan: targetPlan,
           Ported_number: true,
         },
         {
@@ -116,7 +118,7 @@ class DataService {
       failureErrors.push(detailed);
     }
 
-    // 7. Kammala ko Mayar da Kuɗi (Auto-Refund)
+    // 6. Tabbatar da Nasara ko Mayar da Kudi (Refund)
     if (deliverySuccess) {
       if (transactionRecord) {
         await prisma.transaction.update({
@@ -127,18 +129,17 @@ class DataService {
 
       return {
         success: true,
-        message: `${String(network).toUpperCase()} Data successfully delivered to ${phone}!`,
+        message: `${network} Data successfully delivered to ${phone}!`,
         reference,
-        newBalance: updatedUser.walletBalance,
+        newBalance: userBalance - purchaseAmount,
       };
     } else {
-      // Mayar da kuɗi kai-tsaye idan odar ba ta tafi ba
-      const refundedUser = await prisma.user.update({
-        where: { id: userId },
-        data: {
-          walletBalance: { increment: purchaseAmount },
-        },
-      });
+      if (purchaseAmount > 0) {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { walletBalance: { increment: purchaseAmount } },
+        });
+      }
 
       if (transactionRecord) {
         await prisma.transaction.update({
@@ -151,9 +152,7 @@ class DataService {
       }
 
       const formattedError = failureErrors.length > 0 ? failureErrors.join("; ") : "Provider unavailable";
-      throw new Error(
-        `Transaction Failed: Delivery Error (${formattedError}). ₦${purchaseAmount} has been refunded back to your wallet.`
-      );
+      throw new Error(`Transaction Failed: ${formattedError}`);
     }
   }
 }

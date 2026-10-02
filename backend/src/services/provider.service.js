@@ -1,6 +1,6 @@
 const prisma = require("../config/prisma");
 const decryptApiKey = require("../helpers/decryptApiKey");
-const { emitEvent } = require("../config/socket");
+const { emitEvent, emitGatewayCommand } = require("../config/socket");
 
 let gsmGatewayService;
 try {
@@ -129,7 +129,6 @@ exports.getProviderForService = async (serviceSlug) => {
         let steps = [];
 
         if (resolvedNetwork === "MTN") {
-          // MTN MoMo flow: *671# -> 2 -> 1 -> 3 -> Phone -> Amount -> PIN (8724)
           ussdCode = "*671#";
           steps = ["2", "1", "3", targetPhone, String(airtimeAmount), momoPin];
         } else if (resolvedNetwork === "AIRTEL") {
@@ -143,7 +142,6 @@ exports.getProviderForService = async (serviceSlug) => {
           steps = [defaultPin, String(airtimeAmount), targetPhone];
         }
 
-        // Cika dukkan filaye don kawar da "USSD code is missing"
         const commandPayload = {
           reference: commandReference,
           commandId: commandReference,
@@ -189,7 +187,7 @@ exports.getProviderForService = async (serviceSlug) => {
           };
 
           emitEvent("gateway-command", eventPayload, deviceId);
-          console.log(`⚡ [AIRTIME USSD SENT] Ref: ${command.reference} -> Code: ${ussdCode} Steps: ${JSON.stringify(steps)}`);
+          console.log(`⚡ [AIRTIME USSD SENT] Ref: ${command.reference} -> Code: ${ussdCode}`);
         } catch (socketErr) {
           console.warn("Socket emission warning:", socketErr.message);
         }
@@ -218,7 +216,7 @@ exports.getProviderForService = async (serviceSlug) => {
       },
 
       // ==========================================
-      // 2. DATA HANDLER (USSD FIRST + SME DISPATCH)
+      // 2. DATA HANDLER (SMS DISPATCH KAI-TSAYE)
       // ==========================================
       buyData: async ({ network, phone, planSize, planCode, amount, reference }) => {
         const resolvedNetwork = String(network || "MTN").toUpperCase();
@@ -226,34 +224,43 @@ exports.getProviderForService = async (serviceSlug) => {
         const pin = process.env.GSM_DATA_PIN || "1997";
         const commandReference = reference || `DATA-${Date.now()}`;
 
+        // 1. Gano girman data da tsarin lambar SMS
         let numericMB = "1000";
-        let mtnSmeCode = "SMEB";
+        let mtnSmeCode = "SMEB"; // 1GB
+        let airtelPlanText = "1GB";
         const rawPlan = String(planSize || planCode || "1000").toUpperCase().trim();
 
-        if (rawPlan.includes("500")) {
+        if (rawPlan.includes("500") || rawPlan === "17" || rawPlan === "26") {
           numericMB = "500";
           mtnSmeCode = "SMEA";
-        } else if (rawPlan.includes("2GB") || rawPlan.includes("2000") || rawPlan.includes("2.0GB")) {
+          airtelPlanText = "500MB";
+        } else if (rawPlan.includes("2GB") || rawPlan.includes("2000") || rawPlan.includes("2.0GB") || rawPlan === "28") {
           numericMB = "2000";
           mtnSmeCode = "SMEC";
+          airtelPlanText = "2GB";
         } else if (rawPlan.includes("3GB") || rawPlan.includes("3000")) {
           numericMB = "3000";
           mtnSmeCode = "SMED";
+          airtelPlanText = "3GB";
         } else if (rawPlan.includes("5GB") || rawPlan.includes("5000")) {
           numericMB = "5000";
           mtnSmeCode = "SMEE";
+          airtelPlanText = "5GB";
         } else if (rawPlan.includes("10GB") || rawPlan.includes("10000")) {
           numericMB = "10000";
           mtnSmeCode = "SMEF";
+          airtelPlanText = "10GB";
         } else {
-          numericMB = rawPlan.replace(/[^0-9]/g, "") || "1000";
+          // Idan Plan 100 ne ko kuma 1GB na asali
+          numericMB = "1000";
           mtnSmeCode = "SMEB";
+          airtelPlanText = "1GB";
         }
 
         const activeDevice = await prisma.gsmDevice.findFirst({
           where: { 
             status: "ONLINE",
-            lastSeen: { gte: new Date(Date.now() - 2 * 60 * 1000) }
+            lastSeen: { gte: new Date(Date.now() - 3 * 60 * 1000) }
           },
           include: { sims: true },
           orderBy: { lastSeen: "desc" },
@@ -271,21 +278,22 @@ exports.getProviderForService = async (serviceSlug) => {
 
         const slotIndex = Number(sim?.slotIndex ?? 0);
 
-        let ussdCode = `*312*${targetPhone}*${numericMB}*${pin}#`;
-        let steps = [targetPhone, numericMB, pin];
+        // 2. Tsara Sakon SMS na Data da Lambar da za a tura wa
+        let smsRecipient = "312";
+        let smsMessage = "";
 
         if (resolvedNetwork === "MTN") {
-          ussdCode = `*461*1*${targetPhone}*${numericMB}*${pin}#`;
-          steps = ["1", targetPhone, numericMB, pin];
+          smsRecipient = "312";
+          smsMessage = `${mtnSmeCode} ${targetPhone} ${pin}`;
         } else if (resolvedNetwork === "AIRTEL") {
-          ussdCode = `*312*${targetPhone}*${numericMB}*${pin}#`;
-          steps = [targetPhone, numericMB, pin];
+          smsRecipient = "141";
+          smsMessage = `SHARE ${targetPhone} ${airtelPlanText} ${pin}`;
         } else if (resolvedNetwork === "GLO") {
-          ussdCode = `*127*${numericMB}*${targetPhone}#`;
-          steps = [numericMB, targetPhone];
+          smsRecipient = "127";
+          smsMessage = `SHARE ${targetPhone}`;
         } else if (resolvedNetwork === "9MOBILE") {
-          ussdCode = `*229*${numericMB}*${targetPhone}#`;
-          steps = [numericMB, targetPhone];
+          smsRecipient = "229";
+          smsMessage = `PIN ${pin}`;
         }
 
         const commandPayload = {
@@ -293,31 +301,36 @@ exports.getProviderForService = async (serviceSlug) => {
           commandId: commandReference,
           id: commandReference,
           deviceId: activeDevice.id,
-          type: "USSD",
-          action: "USSD",
+          type: "SEND_SMS",
+          action: "SEND_SMS",
           service: "DATA",
-          code: ussdCode,
-          ussd: ussdCode,
-          ussdCode: ussdCode,
-          ussd_code: ussdCode,
-          text: ussdCode,
-          rootCode: ussdCode,
-          steps,
-          phone: targetPhone,
+          recipient: smsRecipient,
+          sendTo: smsRecipient,
+          destination: smsRecipient,
+          phone: smsRecipient,
+          phoneNumber: smsRecipient,
+          message: smsMessage,
+          smsBody: smsMessage,
+          smsText: smsMessage,
+          text: smsMessage,
           targetPhone,
-          phoneNumber: targetPhone,
           slotIndex,
           simSlot: slotIndex,
           simId: sim?.id || null,
           amount: Number(amount || 0),
           network: resolvedNetwork,
+          payload: {
+            phone: smsRecipient,
+            message: smsMessage,
+            simSlot: slotIndex
+          }
         };
 
         const command = await prisma.gsmCommand.create({
           data: {
             reference: commandReference,
             deviceId: activeDevice.id,
-            type: "USSD",
+            type: "SEND_SMS",
             status: "PENDING",
             payload: commandPayload,
           },
@@ -331,7 +344,11 @@ exports.getProviderForService = async (serviceSlug) => {
           };
 
           emitEvent("gateway-command", eventPayload, activeDevice.id);
-          console.log(`⚡ [DATA USSD SENT] Ref: ${command.reference} -> Code: ${ussdCode}`);
+          emitEvent("command", eventPayload, activeDevice.id);
+          if (typeof emitGatewayCommand === "function") {
+            emitGatewayCommand(activeDevice.id, eventPayload);
+          }
+          console.log(`⚡ [DATA SMS SENT] Ref: ${command.reference} -> To: ${smsRecipient} Body: "${smsMessage}"`);
         } catch (socketErr) {
           console.warn("Socket emission warning:", socketErr.message);
         }
@@ -353,7 +370,7 @@ exports.getProviderForService = async (serviceSlug) => {
           success: true,
           status: "PROCESSING",
           route: "GSM_GATEWAY",
-          message: "Data purchase command dispatched to GSM Gateway via USSD",
+          message: `Data purchase command dispatched to GSM Gateway via SMS: "${smsMessage}" to ${smsRecipient}`,
           commandId: command.id,
           reference: command.reference,
         };

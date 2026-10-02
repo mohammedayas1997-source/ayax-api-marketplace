@@ -105,22 +105,33 @@ class DataService {
     try {
       console.log(`📡 [GSM GATEWAY]: Checking SIM pool for ${network} SME Data...`);
 
-      const activeDevice = await prisma.gsmDevice.findFirst({
+      // Nemo device mai aiki (ONLINE ko kowane device da ke akwai a database)
+      let activeDevice = await prisma.gsmDevice.findFirst({
         where: {
-          status: "ONLINE",
-          lastSeen: { gte: new Date(Date.now() - 3 * 60 * 1000) },
+          OR: [
+            { status: "ONLINE" },
+            { lastSeen: { gte: new Date(Date.now() - 30 * 60 * 1000) } }, // cikin minti 30
+          ],
         },
         include: { sims: true },
         orderBy: { lastSeen: "desc" },
       });
 
+      if (!activeDevice) {
+        // Fallback: Dauki device din da ke akwai idan ba a tantance ONLINE ba
+        activeDevice = await prisma.gsmDevice.findFirst({
+          include: { sims: true },
+          orderBy: { createdAt: "desc" },
+        });
+      }
+
       if (activeDevice && Array.isArray(activeDevice.sims) && activeDevice.sims.length > 0) {
         const matchingSims = activeDevice.sims.filter((s) => {
           const simNet = String(s.carrierName || s.displayName || s.network || "").toUpperCase();
-          return s.status === "ACTIVE" && simNet.includes(network);
+          return simNet.includes(network);
         });
 
-        // Duba Quota: 5GB a rana, 10GB a wata
+        // Duba Quota: 5GB a rana, 10GB a wata (MTN)
         let targetSim = matchingSims.find((s) => {
           const daily = Number(s.dailySoldGB || 0);
           const monthly = Number(s.monthlySoldGB || 0);
@@ -140,7 +151,7 @@ class DataService {
           let message = "";
 
           // ==============================================================
-          // AINIHIN TSARIN MTN SME DATA TRANSFER KAI-TSAYE (SMS ZUWA 312)
+          // AINIHIN TSARIN MTN SME DATA TRANSFER (SMS ZUWA 312)
           // SMEA: 500MB | SMEB: 1GB | SMEC: 2GB | SMED: 3GB | SMEE: 5GB | SMEF: 10GB
           // ==============================================================
           if (network === "MTN") {
@@ -156,7 +167,7 @@ class DataService {
             } else if (targetPlan.includes("10GB") || targetPlan === "10000") {
               message = `SMEF ${phone} ${pin}`; // 10GB
             } else {
-              // Standard 1GB SME (Plan 100 / Plan 27)
+              // Default 1GB SME (Plan 100 / Plan 27)
               message = `SMEB ${phone} ${pin}`; // 1GB
             }
           } else if (network === "AIRTEL") {
@@ -170,7 +181,7 @@ class DataService {
             message = `PIN ${pin}`;
           }
 
-          console.log(`🚀 [GSM SME DISPATCH]: Port ${slotIndex} sending: "${message}" to ${recipient}`);
+          console.log(`🚀 [GSM GATEWAY DISPATCH]: Slot ${slotIndex} sending SMS: "${message}" to ${recipient}`);
 
           const commandPayload = {
             reference,
@@ -235,7 +246,7 @@ class DataService {
             success: true,
             status: "SUCCESSFUL",
             route: "GSM_GATEWAY",
-            message: `${network} SME Data successfully dispatched via GSM Gateway!`,
+            message: `${network} SME Data successfully dispatched to GSM Gateway!`,
             reference,
             data: {
               reference,
@@ -249,34 +260,48 @@ class DataService {
         }
       }
     } catch (gsmErr) {
-      console.warn("GSM Gateway unavailable, cascading to external API:", gsmErr.message);
+      console.warn("⚠️ [GSM GATEWAY NOTICE]:", gsmErr.message, "Switching to Al-Ihsan Fallback...");
     }
 
     // =========================================================================
-    // MATAKI NA 2: FALLBACK ZUWA EXTERNAL API (AL-IHSAN)
+    // MATAKI NA 2: FALLBACK ZUWA EXTERNAL API (AL-IHSAN DATASUB)
     // =========================================================================
     try {
+      console.log(`🌐 [FALLBACK]: Attempting Al-Ihsan API for ${network} Data...`);
+
       const rawToken =
         process.env.ALIHSAN_AUTH_TOKEN ||
         process.env.ALIHSAN_TOKEN ||
         process.env.ALIHSAN_API_KEY ||
+        process.env.VTU_API_KEY ||
         "BvpQJPXh5zmSnmUtL096qWV6BXYbhltOud2H2YPGjJnxINhm6x";
 
-      const token = rawToken.startsWith("Token ") ? rawToken : `Token ${rawToken.trim()}`;
-      const netMap = { MTN: 1, AIRTEL: 2, "9MOBILE": 3, GLO: 4 };
+      const cleanToken = String(rawToken)
+        .replace(/^Token\s+/i, "")
+        .replace(/^Bearer\s+/i, "")
+        .trim();
+
+      const netMap = { MTN: "1", AIRTEL: "2", "9MOBILE": "3", GLO: "4" };
+
+      // Daidaita Plan ID na Al-Ihsan (Default 1GB MTN = 140 ko 27)
+      let alihsanPlanId = targetPlan;
+      if (network === "MTN" && (targetPlan === "100" || targetPlan === "27")) {
+        alihsanPlanId = "140";
+      }
+
+      const payload = {
+        network: String(netMap[network] || "1"),
+        plan_id: String(alihsanPlanId),
+        mobile_number: String(phone),
+        request_id: String(reference),
+      };
 
       const res = await axios.post(
-        "https://alihsandatasub.com.ng/api/data/",
-        {
-          network: netMap[network] || 1,
-          plan: Number(targetPlan === "100" ? 140 : targetPlan),
-          mobile_number: phone,
-          Ported_number: true,
-          reference,
-        },
+        "https://alihsandatasub.com.ng/api/v1/data.php",
+        payload,
         {
           headers: {
-            Authorization: token,
+            Authorization: cleanToken,
             "Content-Type": "application/json",
             Accept: "application/json",
           },
@@ -284,8 +309,25 @@ class DataService {
         }
       );
 
-      const statusText = String(res.data?.status || res.data?.Status || "").toLowerCase();
-      if (statusText === "success" || statusText === "successful" || statusText === "true") {
+      const resData = res.data || {};
+      const statusText = String(
+        resData.status || resData.Status || resData.success || ""
+      ).toLowerCase();
+      const messageText = String(
+        resData.message || resData.msg || resData.desc || ""
+      ).toLowerCase();
+
+      const isSuccess =
+        statusText === "success" ||
+        statusText === "successful" ||
+        statusText === "true" ||
+        resData.success === true ||
+        resData.code === 200 ||
+        resData.code === "200" ||
+        messageText.includes("success") ||
+        messageText.includes("successful");
+
+      if (isSuccess) {
         if (transactionRecord && prisma.transaction) {
           await prisma.transaction.update({
             where: { id: transactionRecord.id },
@@ -297,16 +339,19 @@ class DataService {
           success: true,
           status: "SUCCESSFUL",
           route: "ALIHSAN",
-          message: `${network} Data successfully sent to ${phone}!`,
+          message: `${network} Data successfully sent to ${phone} via Al-Ihsan!`,
           reference,
-          data: res.data,
+          data: resData,
         };
       }
 
-      throw new Error(res.data?.message || res.data?.desc || "Vendor rejected order");
+      throw new Error(resData.desc || resData.message || resData.msg || "Vendor rejected order");
     } catch (externalErr) {
-      console.error("External delivery failed:", externalErr.message);
+      const errRes = externalErr.response?.data;
+      const errMsg = errRes?.desc || errRes?.message || errRes?.msg || externalErr.message;
+      console.error("External delivery failed:", errMsg);
 
+      // Refund idan duk hanyoyin sun gaza
       if (purchaseAmount > 0) {
         if (wallet && prisma.wallet) {
           await prisma.wallet.update({
@@ -326,12 +371,12 @@ class DataService {
           where: { id: transactionRecord.id },
           data: {
             status: "FAILED",
-            description: `Refunded: ${externalErr.message}`,
+            description: `Refunded: ${errMsg}`,
           },
         }).catch(() => {});
       }
 
-      throw new Error(`Data delivery failed: ${externalErr.message}`);
+      throw new Error(`Data delivery failed: ${errMsg}`);
     }
   }
 }

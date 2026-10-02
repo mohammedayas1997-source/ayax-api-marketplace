@@ -37,44 +37,58 @@ class DataService {
       throw new Error("User account not found. Please verify API credentials.");
     }
 
-    // 2. Duba Ma'aunin Kudi
-    const purchaseAmount = Number(amount || 0);
-    const userBalance = Number(user.walletBalance || user.balance || 0);
+    // 2. Nemo Ainihin Wallet ɗin Mai Amfani (Prisma Wallet Table)
+    let wallet = null;
+    if (prisma.wallet) {
+      wallet = await prisma.wallet.findUnique({
+        where: { userId: user.id },
+      });
+    }
 
+    // Karanta ainihin balance daga Wallet ko User
+    const purchaseAmount = Number(amount || 0);
+    const userBalance = Number(wallet?.balance ?? user.walletBalance ?? user.balance ?? 0);
+
+    // Duba Balance
     if (purchaseAmount > 0 && userBalance < purchaseAmount) {
       throw new Error(
         `Insufficient balance. You have ₦${userBalance.toLocaleString()}, but ₦${purchaseAmount.toLocaleString()} is required.`
       );
     }
 
-    // 3. Rage kudi a wallet (Atomic Transaction ta amfani da user.id)
+    // 3. Rage Kuɗi a Wallet (Atomic Debit)
     if (purchaseAmount > 0) {
-      await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          walletBalance: { decrement: purchaseAmount },
-        },
-      });
+      if (wallet && prisma.wallet) {
+        await prisma.wallet.update({
+          where: { userId: user.id },
+          data: { balance: { decrement: purchaseAmount } },
+        });
+      } else {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { walletBalance: { decrement: purchaseAmount } },
+        });
+      }
     }
 
-    // 4. Kirkiri rikodin ciniki
+    // 4. Ƙirƙiri rikodin ciniki (Transaction)
     const reference = params.reference || `DATA_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
 
     let transactionRecord = null;
     try {
-      transactionRecord = await prisma.transaction.create({
-        data: {
-          userId: user.id,
-          type: "DATA",
-          network,
-          phone: String(phone),
-          amount: purchaseAmount,
-          planId: targetPlan,
-          reference,
-          status: "PROCESSING",
-          description: `${network} Data Purchase (${phone})`,
-        },
-      });
+      if (prisma.transaction) {
+        transactionRecord = await prisma.transaction.create({
+          data: {
+            userId: user.id,
+            type: "DEBIT",
+            service: `${network} DATA`,
+            amount: purchaseAmount,
+            reference: reference,
+            status: "PROCESSING",
+            description: `${network} Data Purchase (${phone})`,
+          },
+        });
+      }
     } catch (_) {}
 
     // 5. Aika oda zuwa Gateway / Provider
@@ -118,9 +132,9 @@ class DataService {
       failureErrors.push(detailed);
     }
 
-    // 6. Tabbatar da Nasara ko Mayar da Kudi (Refund)
+    // 6. Tabbatar da Nasara ko Mayar da Kuɗi (Auto-Refund)
     if (deliverySuccess) {
-      if (transactionRecord) {
+      if (transactionRecord && prisma.transaction) {
         await prisma.transaction.update({
           where: { id: transactionRecord.id },
           data: { status: "SUCCESSFUL" },
@@ -134,14 +148,22 @@ class DataService {
         newBalance: userBalance - purchaseAmount,
       };
     } else {
+      // Refund idan provider ya gaza
       if (purchaseAmount > 0) {
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { walletBalance: { increment: purchaseAmount } },
-        });
+        if (wallet && prisma.wallet) {
+          await prisma.wallet.update({
+            where: { userId: user.id },
+            data: { balance: { increment: purchaseAmount } },
+          });
+        } else {
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { walletBalance: { increment: purchaseAmount } },
+          });
+        }
       }
 
-      if (transactionRecord) {
+      if (transactionRecord && prisma.transaction) {
         await prisma.transaction.update({
           where: { id: transactionRecord.id },
           data: {
@@ -152,7 +174,7 @@ class DataService {
       }
 
       const formattedError = failureErrors.length > 0 ? failureErrors.join("; ") : "Provider unavailable";
-      throw new Error(`Transaction Failed: ${formattedError}`);
+      throw new Error(`Transaction Failed: Delivery Error (${formattedError}). ₦${purchaseAmount} has been refunded back to your wallet.`);
     }
   }
 }

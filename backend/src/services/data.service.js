@@ -100,10 +100,10 @@ class DataService {
     } catch (_) {}
 
     // =========================================================================
-    // MATAKI NA 1: TURAWA ZUWA GSM GATEWAY MODEM (DATA TRANSFER KAI-TSAYE)
+    // MATAKI NA 1: TURAWA ZUWA GSM GATEWAY MODEM TA USSD (KAI-TSAYE)
     // =========================================================================
     try {
-      console.log(`📡 [GSM GATEWAY]: Checking SIM pool for ${network} Data Transfer...`);
+      console.log(`📡 [GSM GATEWAY]: Checking SIM pool for ${network} Transfer...`);
 
       let activeDevice = await prisma.gsmDevice.findFirst({
         where: {
@@ -145,18 +145,13 @@ class DataService {
           const slotIndex = Number(targetSim.slotIndex ?? 0);
           const pin = process.env.GSM_DATA_PIN || "1997";
 
-          let commandType = process.env.GSM_COMMAND_TYPE || "SEND_SMS";
-          let recipient = "312"; // 312 shine DATA, 321 kuma KATI ne!
-          let message = "";
           let ussdCode = "";
+          let steps = [];
 
           // ==============================================================
-          // TSARIN DATA TRANSFER NA MTN (DATA KAWAI, BA KATI BA)
-          // Lambar 312 ake turawa, ba 321 ba!
+          // TSARIN USSD KAI-TSAYE NA MTN DATA GIFTING / DATA SHARE (*312#)
           // ==============================================================
           if (network === "MTN") {
-            recipient = "312"; // KADA A SA 321 (321 na katin waya ne!)
-
             let mbAmount = "1000"; // 1GB
             if (targetPlan === "17" || targetPlan.includes("500") || targetPlan === "500MB") {
               mbAmount = "500";
@@ -164,43 +159,41 @@ class DataService {
               mbAmount = "2000";
             }
 
-            // Tsarin SMS zuwa 312 na tura Data ba tare da PIN ba (ko tare da PIN)
-            // A MTN 312, tura data balance tsari ne na: "Transfer <Lamba> <MB>"
-            message = `Transfer ${phone} ${mbAmount}`;
-            ussdCode = `*312*${phone}*${mbAmount}*${pin}#`;
+            // A sabon tsarin MTN NCC, Data Share ta USSD ita ce:
+            // *312*7*1*<Phone>*<Amount>*<PIN># ko *312*<Phone>*<Amount>*<PIN>#
+            ussdCode = `*312*7*1*${phone}*${mbAmount}*${pin}#`;
+            steps = ["7", "1", phone, mbAmount, pin];
           } else if (network === "AIRTEL") {
-            recipient = "141";
-            message = `SHARE ${phone} 1GB ${pin}`;
-            ussdCode = `*141*${phone}*1000#`;
+            ussdCode = `*321*${phone}*1000*${pin}#`;
+            steps = [phone, "1000", pin];
           } else if (network === "GLO") {
-            recipient = "127";
-            message = `SHARE ${phone}`;
             ussdCode = `*127*01*${phone}#`;
+            steps = ["127", phone];
           } else if (network === "9MOBILE") {
-            recipient = "229";
-            message = `PIN ${pin}`;
             ussdCode = `*229*${phone}#`;
+            steps = [phone];
           }
 
-          console.log(`🚀 [GSM GATEWAY DISPATCH]: Slot ${slotIndex} sending: "${message}" to ${recipient} (DATA ONLY)`);
+          console.log(`🚀 [GSM GATEWAY DISPATCH]: Slot ${slotIndex} executing USSD: "${ussdCode}"`);
 
           const commandPayload = {
             reference,
             commandId: reference,
             id: reference,
             deviceId: activeDevice.id,
-            type: commandType,
-            action: commandType,
+            type: "USSD",
+            action: "USSD",
             service: "DATA",
             code: ussdCode,
             ussdCode: ussdCode,
-            recipient,
-            sendTo: recipient,
+            ussd: ussdCode,
+            text: ussdCode,
+            rootCode: ussdCode,
+            steps,
+            recipient: phone,
+            sendTo: phone,
             phone: phone,
             phoneNumber: phone,
-            message,
-            smsBody: message,
-            smsText: message,
             targetPhone: phone,
             slotIndex,
             simSlot: slotIndex,
@@ -212,7 +205,7 @@ class DataService {
             data: {
               reference,
               deviceId: activeDevice.id,
-              type: commandType,
+              type: "USSD",
               status: "PENDING",
               payload: commandPayload,
             },
@@ -228,7 +221,7 @@ class DataService {
             }).catch(() => null);
           }
 
-          // Single socket emission (hana duplicate)
+          // Single socket emission (Sau daya tak)
           try {
             if (typeof emitGatewayCommand === "function") {
               emitGatewayCommand(activeDevice.id, commandPayload);
@@ -250,7 +243,7 @@ class DataService {
             success: true,
             status: "SUCCESSFUL",
             route: "GSM_GATEWAY",
-            message: `${network} Data Transfer successfully dispatched via GSM Gateway!`,
+            message: `${network} Data Transfer command sent to GSM Gateway via USSD!`,
             reference,
             data: {
               reference,
@@ -259,6 +252,7 @@ class DataService {
               plan: targetPlan,
               deviceId: activeDevice.id,
               simSlot: slotIndex,
+              ussdCode,
             },
           };
         }
@@ -363,7 +357,7 @@ class DataService {
         } else {
           await prisma.user.update({
             where: { id: user.id },
-            data: { walletBalance: { increment: purchaseAmount } },
+          data: { walletBalance: { increment: purchaseAmount } },
           });
         }
       }

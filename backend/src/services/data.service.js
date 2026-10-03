@@ -100,7 +100,7 @@ class DataService {
     } catch (_) {}
 
     // =========================================================================
-    // MATAKI NA 1: TURAWA ZUWA GSM GATEWAY MODEM TA USSD (KAI-TSAYE)
+    // MATAKI NA 1: TURAWA ZUWA GSM GATEWAY MODEM TA STEP-BY-STEP USSD
     // =========================================================================
     try {
       console.log(`📡 [GSM GATEWAY]: Checking SIM pool for ${network} Transfer...`);
@@ -145,11 +145,17 @@ class DataService {
           const slotIndex = Number(targetSim.slotIndex ?? 0);
           const pin = process.env.GSM_DATA_PIN || "1997";
 
-          let ussdCode = "";
+          let ussdCode = "*312*7#";
           let steps = [];
 
           // ==============================================================
-          // TSARIN USSD KAI-TSAYE NA MTN DATA GIFTING / DATA SHARE (*312#)
+          // TSARIN STEP-BY-STEP USSD DON KAUCEWA "SERVICE UNAVAILABLE"
+          // A MTN 312:
+          // Mataki 1: Danna *312*7# (Share / Transfer Data)
+          // Mataki 2: Zabi 1 (Transfer Data)
+          // Mataki 3: Shigar da lambar waya
+          // Mataki 4: Shigar da adadin data (1000MB)
+          // Mataki 5: Shigar da PIN
           // ==============================================================
           if (network === "MTN") {
             let mbAmount = "1000"; // 1GB
@@ -159,22 +165,21 @@ class DataService {
               mbAmount = "2000";
             }
 
-            // A sabon tsarin MTN NCC, Data Share ta USSD ita ce:
-            // *312*7*1*<Phone>*<Amount>*<PIN># ko *312*<Phone>*<Amount>*<PIN>#
-            ussdCode = `*312*7*1*${phone}*${mbAmount}*${pin}#`;
-            steps = ["7", "1", phone, mbAmount, pin];
+            // Maimakon dogon lamba mai dunkule (*312*7*1*...), yi amfani da steps:
+            ussdCode = "*312*7#";
+            steps = ["1", phone, mbAmount, pin];
           } else if (network === "AIRTEL") {
-            ussdCode = `*321*${phone}*1000*${pin}#`;
-            steps = [phone, "1000", pin];
+            ussdCode = "*321#";
+            steps = ["2", phone, "1000", pin];
           } else if (network === "GLO") {
-            ussdCode = `*127*01*${phone}#`;
-            steps = ["127", phone];
+            ussdCode = "*127*01*" + phone + "#";
+            steps = [];
           } else if (network === "9MOBILE") {
-            ussdCode = `*229*${phone}#`;
+            ussdCode = "*229#"
             steps = [phone];
           }
 
-          console.log(`🚀 [GSM GATEWAY DISPATCH]: Slot ${slotIndex} executing USSD: "${ussdCode}"`);
+          console.log(`🚀 [GSM GATEWAY DISPATCH]: Slot ${slotIndex} executing USSD: "${ussdCode}" with steps:`, steps);
 
           const commandPayload = {
             reference,
@@ -189,7 +194,7 @@ class DataService {
             ussd: ussdCode,
             text: ussdCode,
             rootCode: ussdCode,
-            steps,
+            steps: steps,
             recipient: phone,
             sendTo: phone,
             phone: phone,
@@ -221,7 +226,7 @@ class DataService {
             }).catch(() => null);
           }
 
-          // Single socket emission (Sau daya tak)
+          // Single socket emission
           try {
             if (typeof emitGatewayCommand === "function") {
               emitGatewayCommand(activeDevice.id, commandPayload);
@@ -253,6 +258,7 @@ class DataService {
               deviceId: activeDevice.id,
               simSlot: slotIndex,
               ussdCode,
+              steps,
             },
           };
         }

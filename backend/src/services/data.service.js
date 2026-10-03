@@ -100,10 +100,10 @@ class DataService {
     } catch (_) {}
 
     // =========================================================================
-    // MATAKI NA 1: TURAWA ZUWA GSM GATEWAY MODEM
+    // MATAKI NA 1: TURAWA ZUWA GSM GATEWAY MODEM (DATA TRANSFER KAI-TSAYE)
     // =========================================================================
     try {
-      console.log(`📡 [GSM GATEWAY]: Checking SIM pool for ${network} Transfer...`);
+      console.log(`📡 [GSM GATEWAY]: Checking SIM pool for ${network} Data Transfer...`);
 
       let activeDevice = await prisma.gsmDevice.findFirst({
         where: {
@@ -145,28 +145,29 @@ class DataService {
           const slotIndex = Number(targetSim.slotIndex ?? 0);
           const pin = process.env.GSM_DATA_PIN || "1997";
 
-          let commandType = process.env.GSM_COMMAND_TYPE || "USSD"; // USSD ko SEND_SMS
-          let recipient = "312";
+          let commandType = process.env.GSM_COMMAND_TYPE || "SEND_SMS";
+          let recipient = "312"; // 312 shine DATA, 321 kuma KATI ne!
           let message = "";
           let ussdCode = "";
 
           // ==============================================================
-          // TSARIN MTN DATA TRANSFER DA GIFTING (USSD / SMS)
+          // TSARIN DATA TRANSFER NA MTN (DATA KAWAI, BA KATI BA)
+          // Lambar 312 ake turawa, ba 321 ba!
           // ==============================================================
           if (network === "MTN") {
+            recipient = "312"; // KADA A SA 321 (321 na katin waya ne!)
+
             let mbAmount = "1000"; // 1GB
-            if (targetPlan === "17" || targetPlan.includes("500")) {
+            if (targetPlan === "17" || targetPlan.includes("500") || targetPlan === "500MB") {
               mbAmount = "500";
             } else if (targetPlan === "101" || targetPlan.includes("2GB")) {
               mbAmount = "2000";
             }
 
-            // Tsarin USSD na MTN Share / Gifting kai-tsaye
+            // Tsarin SMS zuwa 312 na tura Data ba tare da PIN ba (ko tare da PIN)
+            // A MTN 312, tura data balance tsari ne na: "Transfer <Lamba> <MB>"
+            message = `Transfer ${phone} ${mbAmount}`;
             ussdCode = `*312*${phone}*${mbAmount}*${pin}#`;
-
-            // Tsarin SMS idan modem yana amfani da SMS
-            recipient = "312";
-            message = `Transfer ${phone} ${mbAmount} ${pin}`;
           } else if (network === "AIRTEL") {
             recipient = "141";
             message = `SHARE ${phone} 1GB ${pin}`;
@@ -181,7 +182,7 @@ class DataService {
             ussdCode = `*229*${phone}#`;
           }
 
-          console.log(`🚀 [GSM GATEWAY DISPATCH]: Slot ${slotIndex} queuing single command...`);
+          console.log(`🚀 [GSM GATEWAY DISPATCH]: Slot ${slotIndex} sending: "${message}" to ${recipient} (DATA ONLY)`);
 
           const commandPayload = {
             reference,
@@ -227,9 +228,7 @@ class DataService {
             }).catch(() => null);
           }
 
-          // ==============================================================
-          // KARIYA: TURAWA SAU DAYA TAK (HANA DUPLICATE / ASARA)
-          // ==============================================================
+          // Single socket emission (hana duplicate)
           try {
             if (typeof emitGatewayCommand === "function") {
               emitGatewayCommand(activeDevice.id, commandPayload);
@@ -251,7 +250,7 @@ class DataService {
             success: true,
             status: "SUCCESSFUL",
             route: "GSM_GATEWAY",
-            message: `${network} Data successfully dispatched via GSM Gateway!`,
+            message: `${network} Data Transfer successfully dispatched via GSM Gateway!`,
             reference,
             data: {
               reference,
@@ -364,7 +363,7 @@ class DataService {
         } else {
           await prisma.user.update({
             where: { id: user.id },
-          data: { walletBalance: { increment: purchaseAmount } },
+            data: { walletBalance: { increment: purchaseAmount } },
           });
         }
       }

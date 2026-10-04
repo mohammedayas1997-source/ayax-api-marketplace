@@ -8,12 +8,9 @@ import {
   Trash2,
   CheckCircle2,
   AlertCircle,
-  KeyRound,
-  ShieldCheck,
-  Wifi,
-  Radio,
   X,
-  ExternalLink,
+  Server,
+  Zap,
 } from "lucide-react";
 
 export default function SimConnectionManager({ apiBase = "/api/v1" }) {
@@ -56,10 +53,10 @@ export default function SimConnectionManager({ apiBase = "/api/v1" }) {
         method: "POST",
       });
       const data = await res.json();
-      alert(data.message || "An sabunta kudin da datan dukkan layuka!");
+      alert(data.message || "All SIM balances successfully synchronized!");
       fetchSims();
     } catch (err) {
-      alert("Kuskure wajen sabunta balances: " + err.message);
+      alert("Balance sync error: " + err.message);
     } finally {
       setRefreshing(false);
     }
@@ -68,7 +65,7 @@ export default function SimConnectionManager({ apiBase = "/api/v1" }) {
   const handleRequestOtp = async (e) => {
     e.preventDefault();
     if (!phoneNumber.trim()) {
-      setErrorMessage("Da fatan za a saka lambar wayar MTN.");
+      setErrorMessage("Please provide a valid MTN phone number.");
       return;
     }
 
@@ -85,12 +82,12 @@ export default function SimConnectionManager({ apiBase = "/api/v1" }) {
       if (data.success) {
         setSessionId(data.sessionId || "");
         setStep(2);
-        setSuccessMessage(`An tura lambar OTP zuwa ${data.phone || phoneNumber}. Duba SMS dinka.`);
+        setSuccessMessage(`OTP has been dispatched to ${data.phone || phoneNumber}. Please check your SMS.`);
       } else {
-        setErrorMessage(data.message || "An gaza tura OTP daga MTN.");
+        setErrorMessage(data.message || "Unable to request OTP from the network gateway.");
       }
     } catch (err) {
-      setErrorMessage("Network Error: " + err.message);
+      setErrorMessage("Connection Error: " + err.message);
     } finally {
       setRequestingOtp(false);
     }
@@ -99,7 +96,7 @@ export default function SimConnectionManager({ apiBase = "/api/v1" }) {
   const handleVerifyOtp = async (e) => {
     e.preventDefault();
     if (!otpCode.trim()) {
-      setErrorMessage("Da fatan za a shigar da lambobin OTP da aka turo.");
+      setErrorMessage("Please enter the verification code sent via SMS.");
       return;
     }
 
@@ -118,12 +115,12 @@ export default function SimConnectionManager({ apiBase = "/api/v1" }) {
       const data = await res.json();
 
       if (data.success) {
-        alert("An yi nasarar hada layin SIM! 🚀");
+        alert("SIM card linked and authenticated successfully!");
         setIsModalOpen(false);
         resetModal();
         fetchSims();
       } else {
-        setErrorMessage(data.message || "Lambar OTP ba daidai ba ce.");
+        setErrorMessage(data.message || "Invalid or expired OTP code.");
       }
     } catch (err) {
       setErrorMessage("Verification Error: " + err.message);
@@ -133,13 +130,13 @@ export default function SimConnectionManager({ apiBase = "/api/v1" }) {
   };
 
   const handleDeleteSim = async (phone) => {
-    if (!confirm(`Kana da tabbacin cire layin ${phone} daga tsarin?`)) return;
+    if (!confirm(`Are you sure you want to disconnect SIM ${phone}?`)) return;
     try {
       const res = await fetch(`${apiBase}/gateway/sims/${phone}`, {
         method: "DELETE",
       });
       const data = await res.json();
-      alert(data.message || "An cire layin cikin nasara.");
+      alert(data.message || "SIM connection removed.");
       fetchSims();
     } catch (err) {
       alert("Error: " + err.message);
@@ -162,14 +159,14 @@ export default function SimConnectionManager({ apiBase = "/api/v1" }) {
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-black text-slate-900">
-              MTN Gateway Web2 Connections
+              MyMTN Cloud Gateway Connections
             </h2>
-            <span className="bg-emerald-50 text-emerald-700 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border border-emerald-100">
-              AutoSync Engine
+            <span className="bg-emerald-50 text-emerald-700 text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full border border-emerald-100 flex items-center gap-1">
+              <Zap className="h-3 w-3" /> Zero-Fee Vending
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Hada layukan MTN ta hanyar OTP don fitar da data kai-tsaye ba tare da charges ba.
+            Connect and authenticate unlimited MTN SIMs via OTP to dispense automated data bundles.
           </p>
         </div>
 
@@ -180,7 +177,7 @@ export default function SimConnectionManager({ apiBase = "/api/v1" }) {
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs font-bold text-slate-700 transition disabled:opacity-50"
           >
             <RotateCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
-            <span>Refresh All Balance</span>
+            <span>Sync All Balances</span>
           </button>
 
           <button
@@ -191,25 +188,25 @@ export default function SimConnectionManager({ apiBase = "/api/v1" }) {
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black shadow-md shadow-indigo-600/20 transition"
           >
             <Plus className="h-4 w-4" />
-            <span>Add Connection +</span>
+            <span>Add Connection</span>
           </button>
         </div>
       </div>
 
-      {/* Grid of Connected SIM Cards (AutoSyncNG Style) */}
+      {/* Grid of Connected SIM Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {loading ? (
           <div className="col-span-full py-16 text-center text-xs text-slate-400">
-            Ana duba layukan da ke kan layi...
+            Scanning active gateway connections...
           </div>
         ) : sims.length === 0 ? (
           <div className="col-span-full bg-white rounded-2xl border border-dashed border-slate-300 p-12 text-center space-y-3">
             <div className="mx-auto w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600">
               <Smartphone className="h-6 w-6" />
             </div>
-            <h3 className="text-sm font-bold text-slate-800">Babu layin SIM da aka hada</h3>
+            <h3 className="text-sm font-bold text-slate-800">No SIM Cards Linked Yet</h3>
             <p className="text-xs text-slate-500 max-w-sm mx-auto">
-              Danna maɓallin <strong>"Add Connection +"</strong> don shigar da layin MTN da karbar OTP na MyMTN.
+              Click <strong>"Add Connection"</strong> to connect an MTN line using the official MyMTN Web OTP protocol.
             </p>
             <button
               onClick={() => {
@@ -218,7 +215,7 @@ export default function SimConnectionManager({ apiBase = "/api/v1" }) {
               }}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold"
             >
-              <Plus className="h-4 w-4" /> Add SIM Yanzu
+              <Plus className="h-4 w-4" /> Add SIM Now
             </button>
           </div>
         ) : (
@@ -227,9 +224,9 @@ export default function SimConnectionManager({ apiBase = "/api/v1" }) {
               key={sim.phone}
               className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between"
             >
-              {/* Header Tab */}
-              <div className="bg-indigo-900 text-white text-[10px] font-black tracking-wider uppercase text-center py-1">
-                pinned
+              {/* Header Badge */}
+              <div className="bg-indigo-950 text-white text-[10px] font-black tracking-wider uppercase text-center py-1">
+                Active Gateway
               </div>
 
               {/* Card Body */}
@@ -261,7 +258,7 @@ export default function SimConnectionManager({ apiBase = "/api/v1" }) {
 
                   <div className="bg-slate-50 rounded-xl p-2 text-center border border-slate-100">
                     <span className="text-[9px] uppercase font-bold text-slate-400 block">Tariff</span>
-                    <span className="text-xs font-black text-indigo-600 block mt-0.5">
+                    <span className="text-xs font-black text-indigo-600 block mt-0.5 truncate">
                       {sim.tariff || "MTN X"}
                     </span>
                   </div>
@@ -275,7 +272,7 @@ export default function SimConnectionManager({ apiBase = "/api/v1" }) {
 
                   <button
                     onClick={() => handleDeleteSim(sim.phone)}
-                    title="Cire wannan SIM din"
+                    title="Disconnect SIM"
                     className="p-1 text-slate-400 hover:text-rose-600 transition"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -299,7 +296,7 @@ export default function SimConnectionManager({ apiBase = "/api/v1" }) {
                 </div>
                 <div>
                   <h3 className="text-sm font-black text-slate-900">Add MTN Gateway Connection</h3>
-                  <p className="text-[11px] text-slate-500">Shigar da lambar MTN don karbar OTP</p>
+                  <p className="text-[11px] text-slate-500">Enter your MTN number to authenticate via OTP</p>
                 </div>
               </div>
               <button
@@ -313,9 +310,9 @@ export default function SimConnectionManager({ apiBase = "/api/v1" }) {
             {/* Modal Form */}
             <div className="p-6 space-y-4">
               {errorMessage && (
-                <div className="flex items-center gap-2 p-3 rounded-xl bg-rose-50 border border-rose-100 text-xs text-rose-700 font-medium">
-                  <AlertCircle className="h-4 w-4 shrink-0" />
-                  <span>{errorMessage}</span>
+                <div className="flex items-start gap-2 p-3 rounded-xl bg-rose-50 border border-rose-100 text-xs text-rose-700 font-medium">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span className="break-all">{errorMessage}</span>
                 </div>
               )}
 
@@ -331,27 +328,27 @@ export default function SimConnectionManager({ apiBase = "/api/v1" }) {
                 <form onSubmit={handleRequestOtp} className="space-y-4">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                      Lambar Waya (MTN Phone Number)
+                      MTN Phone Number
                     </label>
                     <input
                       type="tel"
                       value={phoneNumber}
                       onChange={(e) => setPhoneNumber(e.target.value)}
-                      placeholder="08161444444 ko 09033738409"
-                      className="w-full px-3.5 py-2.5 text-xs border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-600"
+                      placeholder="e.g. 08161444444 or 09033738409"
+                      className="w-full px-3.5 py-2.5 text-xs border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-600 text-slate-900 font-medium"
                       autoFocus
                     />
                     <p className="text-[11px] text-slate-400 mt-1">
-                      Tabbatar cewa layin yana dauke da katin kira ko data.
+                      Ensure the SIM card is active and can receive inbound SMS.
                     </p>
                   </div>
 
                   <button
                     type="submit"
                     disabled={requestingOtp}
-                    className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black shadow-md shadow-indigo-600/20 disabled:opacity-50"
+                    className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black shadow-md shadow-indigo-600/20 transition disabled:opacity-50"
                   >
-                    {requestingOtp ? "Ana Tura OTP..." : "REQUEST OTP VIA SMS"}
+                    {requestingOtp ? "Dispatching OTP..." : "REQUEST OTP VIA SMS"}
                   </button>
                 </form>
               ) : (
@@ -360,22 +357,23 @@ export default function SimConnectionManager({ apiBase = "/api/v1" }) {
                   <div>
                     <div className="flex justify-between items-center mb-1.5">
                       <label className="block text-xs font-bold text-slate-700">
-                        Shigar da Lambobin OTP
+                        Enter 6-Digit OTP Code
                       </label>
                       <button
                         type="button"
                         onClick={() => setStep(1)}
                         className="text-[11px] text-indigo-600 font-bold hover:underline"
                       >
-                        Canza Lamba
+                        Change Number
                       </button>
                     </div>
                     <input
                       type="text"
                       value={otpCode}
                       onChange={(e) => setOtpCode(e.target.value)}
-                      placeholder="Misali: 849201"
-                      className="w-full px-3.5 py-2.5 text-xs text-center font-mono tracking-widest text-base font-bold border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-600"
+                      placeholder="e.g. 849201"
+                      maxLength={8}
+                      className="w-full px-3.5 py-2.5 text-center font-mono tracking-widest text-base font-bold border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-600 text-slate-900"
                       autoFocus
                     />
                   </div>
@@ -383,9 +381,9 @@ export default function SimConnectionManager({ apiBase = "/api/v1" }) {
                   <button
                     type="submit"
                     disabled={verifyingOtp}
-                    className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-md shadow-emerald-600/20 disabled:opacity-50"
+                    className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-md shadow-emerald-600/20 transition disabled:opacity-50"
                   >
-                    {verifyingOtp ? "Ana Tabbatarwa..." : "VERIFY & LINK SIM"}
+                    {verifyingOtp ? "Authenticating Session..." : "VERIFY & LINK SIM"}
                   </button>
                 </form>
               )}

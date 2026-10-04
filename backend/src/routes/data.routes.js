@@ -7,6 +7,11 @@ const apiKeyMiddleware = require("../middlewares/apiKey.middleware");
 const authMiddleware = require("../middlewares/auth.middleware");
 const validate = require("../middlewares/validate.middleware");
 const dataService = require("../services/data.service");
+// Shigo da dukkan Controllers na v2
+const dataV2Controller = require("../controllers/dataV2.controller");
+const dataSmeController = require("../controllers/dataSme.controller");
+const dataTransferController = require("../controllers/dataTransfer.controller");
+const dataCorporateController = require("../controllers/dataCorporate.controller");
 
 /* ======================================================
    FLEXIBLE AUTH MIDDLEWARE
@@ -121,6 +126,34 @@ router.get("/plans", flexibleAuth, async (req, res) => {
     });
   }
 });
+
+// ==========================================
+// 1. DATA GIFTING (v2)
+// GET /v2/data
+// ==========================================
+router.get("/v2/data", (req, res) => dataV2Controller.getDataPlansGrouped(req, res));
+
+// ==========================================
+// 2. DATA SME (v2)
+// GET /v2/data/sme
+// ==========================================
+router.get("/v2/data/sme", (req, res) => dataSmeController.getSmePlansGrouped(req, res));
+
+// ==========================================
+// 3. DATA TRANSFER (v2)
+// GET /v2/data/transfer
+// ==========================================
+router.get("/v2/data/transfer", (req, res) =>
+  dataTransferController.getTransferPlansGrouped(req, res)
+);
+
+// ==========================================
+// 4. DATA CORPORATE (v2)
+// GET /v2/data/corporate
+// ==========================================
+router.get("/v2/data/corporate", (req, res) =>
+  dataCorporateController.getCorporatePlansGrouped(req, res)
+);
 
 // 2. BUY DATA (DEVELOPER B2B API)
 router.post("/buy", apiKeyMiddleware("DATA"), validate(buyDataSchema), handleBuyData);

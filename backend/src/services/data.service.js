@@ -1,11 +1,12 @@
 const { PrismaClient } = require("@prisma/client");
 const axios = require("axios");
+const autoSyncService = require("./autosync.service");
 
 const prisma = new PrismaClient();
 
 class DataService {
   /**
-   * Sayar da Data Bundle ta hanyar Prisma ORM
+   * Sayar da Data Bundle ta hanyar Prisma ORM tare da AutoSyncNG Gateway
    */
   async purchaseData(params) {
     const { phone, network, planId, amount, pin } = params;
@@ -47,7 +48,7 @@ class DataService {
 
     // 4. Rage kuɗin a wallet kafin aika buƙata (Atomic Transaction)
     const updatedUser = await prisma.user.update({
-      where: { id: userId },
+      where: { id: user.id },
       data: {
         walletBalance: userBalance - purchaseAmount,
       },
@@ -75,41 +76,25 @@ class DataService {
       // Idan babu teburin transaction a schema, a ci gaba
     }
 
-    // 6. Aika oda zuwa VTU Gateway / API Provider
+    // 6. Aika oda zuwa AutoSyncNG API Provider
     let deliverySuccess = false;
     let failureErrors = [];
     let providerData = null;
 
     try {
-      const primaryApiUrl = process.env.VTU_API_URL || "https://api.gateway.com/data";
-      const primaryApiKey = process.env.VTU_API_KEY || process.env.DATA_API_KEY;
+      const autoSyncRes = await autoSyncService.purchaseData({
+        phone: String(phone),
+        network: String(network).toUpperCase(),
+        planCode: String(planId),
+        amount: purchaseAmount,
+        reference: reference,
+      });
 
-      const providerRes = await axios.post(
-        primaryApiUrl,
-        {
-          network: String(network).toUpperCase(),
-          mobile_number: phone,
-          plan: planId,
-          Ported_number: true,
-        },
-        {
-          headers: {
-            Authorization: `Token ${primaryApiKey}`,
-            "Content-Type": "application/json",
-          },
-          timeout: 45000,
-        }
-      );
-
-      if (
-        providerRes.status === 200 ||
-        providerRes.data?.status === "success" ||
-        providerRes.data?.Status === "successful"
-      ) {
+      if (autoSyncRes.success) {
         deliverySuccess = true;
-        providerData = providerRes.data;
+        providerData = autoSyncRes.data;
       } else {
-        failureErrors.push(providerRes.data?.message || "Gateway dispatch rejected");
+        failureErrors.push(autoSyncRes.message || "AutoSyncNG dispatch rejected");
       }
     } catch (apiErr) {
       const detailed = apiErr.response?.data?.message || apiErr.message || "Network timeout";
@@ -130,11 +115,12 @@ class DataService {
         message: `${String(network).toUpperCase()} Data successfully delivered to ${phone}!`,
         reference,
         newBalance: updatedUser.walletBalance,
+        data: providerData,
       };
     } else {
       // Mayar da kuɗi kai-tsaye idan odar ba ta tafi ba
       const refundedUser = await prisma.user.update({
-        where: { id: userId },
+        where: { id: user.id },
         data: {
           walletBalance: { increment: purchaseAmount },
         },

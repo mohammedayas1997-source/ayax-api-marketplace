@@ -1,50 +1,57 @@
 /**
- * MyMTN NG Gateway Engine
- * Path: backend/src/services/mymtn.gateway.js
+ * AYAX MTN Gateway
+ * Production MTN Nigeria MADAPI Integration
+ *
+ * Supported:
+ * - MTN OAuth 2.0 / Client Credentials
+ * - MTN Customer Profiles V2
+ * - MTN Customer Data Transfer
+ * - MTN Data Gifting
  *
  * IMPORTANT:
- * - Do not use undocumented/dead MTN hostnames.
- * - Configure your authorized MTN API endpoint through environment variables.
- * - TEST MODE can be enabled with ALLOW_TEST_SIM_LINK=true.
+ * Customer Authorization / MyMTN SMS OTP is NOT implemented here
+ * because the official MTN Nigeria Customer Authorization product is
+ * currently marked "COMING SOON".
  */
 
 const axios = require("axios");
-const https = require("https");
+const crypto = require("crypto");
 const prisma = require("../config/prisma");
 
-const httpsAgent = new https.Agent({
-  rejectUnauthorized: false,
-  keepAlive: true,
-});
-
-class MyMTNAutomationEngine {
+class MyMTNGateway {
   constructor() {
-    this.proxyUrl =
-      process.env.MYMTN_PROXY_URL ||
-      process.env.HTTPS_PROXY ||
+    this.oauthUrl =
+      process.env.MTN_OAUTH_URL ||
+      "https://api.mtn.com/v1/oauth/access_token";
+
+    this.apiBaseUrl =
+      process.env.MTN_API_BASE_URL ||
+      "https://api.mtn.com";
+
+    this.consumerKey = process.env.MTN_CONSUMER_KEY;
+    this.consumerSecret = process.env.MTN_CONSUMER_SECRET;
+
+    /*
+     * MTN products such as Profiles V2 require X-API-Key
+     * according to the official Swagger specification.
+     */
+    this.apiKey =
+      process.env.MTN_API_KEY ||
+      process.env.MTN_CONSUMER_KEY ||
       null;
 
-    // Configure these only if you have an authorized MTN integration.
-    this.otpRequestUrl =
-      process.env.MYMTN_OTP_REQUEST_URL || null;
+    this.dataGiftingApiKey =
+      process.env.MTN_DATA_GIFTING_API_KEY ||
+      this.apiKey;
 
-    this.otpVerifyUrl =
-      process.env.MYMTN_OTP_VERIFY_URL || null;
-
-    this.balanceUrl =
-      process.env.MYMTN_BALANCE_URL || null;
-
-    this.transferUrl =
-      process.env.MYMTN_TRANSFER_URL || null;
+    this.token = null;
+    this.tokenExpiresAt = 0;
   }
 
-  /**
-   * Normalize Nigerian phone numbers.
-   *
-   * 09033738409 -> 2349033738409
-   * 09033738409 -> 09033738409
-   * 9033738409  -> 2349033738409
-   */
+  // ============================================================
+  // PHONE FORMAT
+  // ============================================================
+
   formatPhone(phone, format = "234") {
     let clean = String(phone || "").replace(/\D/g, "");
 
@@ -69,549 +76,231 @@ class MyMTNAutomationEngine {
     return clean;
   }
 
-  /**
-   * Basic Nigerian phone validation.
-   */
-  isValidNigerianPhone(phone) {
-    const local = this.formatPhone(phone, "0");
+  // ============================================================
+  // VALIDATION
+  // ============================================================
 
-    return /^0\d{10}$/.test(local);
+  validateConfig() {
+    const missing = [];
+
+    if (!this.consumerKey) {
+      missing.push("MTN_CONSUMER_KEY");
+    }
+
+    if (!this.consumerSecret) {
+      missing.push("MTN_CONSUMER_SECRET");
+    }
+
+    if (missing.length) {
+      throw new Error(
+        `MTN Gateway configuration missing: ${missing.join(", ")}`
+      );
+    }
   }
 
-  /**
-   * Axios configuration.
-   */
-  getAxiosConfig(extraHeaders = {}) {
-    const config = {
-      timeout: Number(process.env.MYMTN_TIMEOUT || 15000),
+  // ============================================================
+  // TRANSACTION ID
+  // ============================================================
 
-      httpsAgent,
+  transactionId(prefix = "AYAX") {
+    const random = crypto
+      .randomBytes(8)
+      .toString("hex")
+      .toUpperCase();
 
-      headers: {
-        Accept: "application/json, text/plain, */*",
-        "Content-Type": "application/json",
-
-        "User-Agent":
-          process.env.MYMTN_USER_AGENT ||
-          "MyMTN-NG-Gateway/1.0",
-
-        ...extraHeaders,
-      },
-
-      validateStatus: () => true,
-    };
-
-    if (this.proxyUrl) {
-      try {
-        const url = new URL(this.proxyUrl);
-
-        config.proxy = {
-          protocol: url.protocol.replace(":", ""),
-          host: url.hostname,
-          port: Number(url.port) || 80,
-
-          auth: url.username
-            ? {
-                username: decodeURIComponent(url.username),
-                password: decodeURIComponent(url.password),
-              }
-            : undefined,
-        };
-      } catch (error) {
-        console.warn(
-          "⚠️ Invalid MYMTN_PROXY_URL:",
-          error.message
-        );
-      }
-    }
-
-    return config;
+    return `${prefix}${Date.now().toString().slice(-8)}${random.slice(
+      0,
+      4
+    )}`.slice(0, 20);
   }
 
-  /**
-   * Convert API errors to readable messages.
-   */
-  getReadableError(error, fallback = "MTN Gateway request failed.") {
-    if (!error) {
-      return fallback;
+  // ============================================================
+  // AXIOS ERROR PARSER
+  // ============================================================
+
+  getErrorMessage(error, fallback = "MTN API request failed") {
+    const data = error?.response?.data;
+
+    if (!data) {
+      return error?.message || fallback;
     }
 
-    if (error.code === "ENOTFOUND") {
-      return `MTN Gateway hostname could not be resolved. Check your configured MTN API URL.`;
-    }
-
-    if (error.code === "ECONNABORTED") {
-      return "MTN Gateway request timed out.";
-    }
-
-    if (error.code === "ETIMEDOUT") {
-      return "MTN Gateway connection timed out.";
-    }
-
-    if (error.code === "ECONNREFUSED") {
-      return "MTN Gateway connection was refused.";
-    }
-
-    if (error.response) {
-      const data = error.response.data;
-
-      if (typeof data === "string" && data.trim()) {
-        return data;
-      }
-
-      if (data?.message) {
-        return data.message;
-      }
-
-      if (data?.error) {
-        return typeof data.error === "string"
-          ? data.error
-          : JSON.stringify(data.error);
-      }
-
-      return `MTN Gateway returned HTTP ${error.response.status}.`;
-    }
-
-    return error.message || fallback;
-  }
-
-  /**
-   * Check whether test mode is enabled.
-   */
-  isTestMode() {
     return (
-      process.env.NODE_ENV !== "production" &&
-      String(process.env.ALLOW_TEST_SIM_LINK).toLowerCase() === "true"
+      data.statusMessage ||
+      data.message ||
+      data.error_description ||
+      data.error ||
+      data.supportMessage ||
+      fallback
     );
   }
 
-  /**
-   * ============================================================
-   * 1. REQUEST OTP
-   * ============================================================
-   */
-  async requestOtp(phone) {
-    if (!this.isValidNigerianPhone(phone)) {
-      return {
-        success: false,
-        message: "Invalid Nigerian MTN phone number.",
-      };
-    }
+  // ============================================================
+  // 1. MTN OAUTH TOKEN
+  // ============================================================
 
-    const formatted234 = this.formatPhone(phone, "234");
-    const formattedLocal = this.formatPhone(phone, "0");
+  async getAccessToken(forceRefresh = false) {
+    this.validateConfig();
 
-    /**
-     * TEST MODE
-     *
-     * Enable:
-     *
-     * ALLOW_TEST_SIM_LINK=true
-     *
-     * OTP:
-     * 123456
+    const now = Date.now();
+
+    /*
+     * Reuse token until shortly before expiration.
+     * MTN recommends token reuse instead of requesting one
+     * for every API call.
      */
-    if (this.isTestMode()) {
-      const sessionId = `TEST_SESS_${Date.now()}`;
-
-      console.log(
-        `⚡ [TEST OTP] Simulated OTP for ${formattedLocal}`
-      );
-
-      return {
-        success: true,
-        testMode: true,
-        message:
-          `Test OTP generated for ${formattedLocal}. ` +
-          `Use OTP 123456.`,
-        sessionId,
-        phone: formattedLocal,
-        msisdn: formatted234,
-      };
-    }
-
-    /**
-     * REAL MODE
-     *
-     * We intentionally DO NOT call:
-     *
-     * https://mymtn-ng.mtn.ng/...
-     *
-     * because that hostname caused:
-     *
-     * getaddrinfo ENOTFOUND mymtn-ng.mtn.ng
-     *
-     * Instead, configure your authorized MTN API endpoint:
-     *
-     * MYMTN_OTP_REQUEST_URL=https://your-authorized-endpoint/...
-     */
-    if (!this.otpRequestUrl) {
-      return {
-        success: false,
-        code: "MTN_OTP_ENDPOINT_NOT_CONFIGURED",
-        message:
-          "MTN OTP endpoint is not configured. " +
-          "Set MYMTN_OTP_REQUEST_URL in your environment " +
-          "to your authorized MTN API endpoint.",
-      };
+    if (
+      !forceRefresh &&
+      this.token &&
+      this.tokenExpiresAt > now + 60 * 1000
+    ) {
+      return this.token;
     }
 
     try {
-      console.log(
-        `📡 [MTN OTP] Requesting OTP for ${formatted234}`
-      );
-
       const response = await axios.post(
-        this.otpRequestUrl,
+        this.oauthUrl,
+        new URLSearchParams({
+          grant_type: "client_credentials",
+        }).toString(),
         {
-          msisdn: formatted234,
-          phone: formattedLocal,
-          channel: "WEB",
-        },
-        this.getAxiosConfig()
+          timeout: 15000,
+          headers: {
+            "Content-Type":
+              "application/x-www-form-urlencoded",
+            Accept: "application/json",
+          },
+
+          /*
+           * MTN OAuth client credentials.
+           */
+          auth: {
+            username: this.consumerKey,
+            password: this.consumerSecret,
+          },
+        }
       );
 
       const data = response.data || {};
 
-      if (response.status < 200 || response.status >= 300) {
-        return {
-          success: false,
-          message:
-            data.message ||
-            data.error ||
-            `MTN API returned HTTP ${response.status}.`,
-        };
-      }
-
-      const sessionId =
-        data.sessionId ||
-        data.data?.sessionId ||
-        data.transactionId ||
-        data.data?.transactionId;
-
-      if (!sessionId) {
-        console.warn(
-          "⚠️ MTN OTP response did not contain sessionId."
-        );
-      }
-
-      return {
-        success: true,
-        message: `OTP request submitted for ${formattedLocal}.`,
-        sessionId: sessionId || null,
-        phone: formattedLocal,
-        msisdn: formatted234,
-        data,
-      };
-    } catch (error) {
-      console.error(
-        "❌ [MTN OTP REQUEST ERROR]",
-        error
-      );
-
-      return {
-        success: false,
-        message: this.getReadableError(
-          error,
-          "Unable to request MTN OTP."
-        ),
-      };
-    }
-  }
-
-  /**
-   * ============================================================
-   * 2. VERIFY OTP & REGISTER SIM
-   * ============================================================
-   */
-  async verifyOtpAndRegisterSim(
-    phone,
-    otp,
-    sessionId
-  ) {
-    const formatted234 = this.formatPhone(phone, "234");
-    const formattedLocal = this.formatPhone(phone, "0");
-
-    if (!this.isValidNigerianPhone(phone)) {
-      return {
-        success: false,
-        message: "Invalid Nigerian MTN phone number.",
-      };
-    }
-
-    const cleanOtp = String(otp || "").trim();
-
-    if (!cleanOtp) {
-      return {
-        success: false,
-        message: "OTP is required.",
-      };
-    }
-
-    /**
-     * TEST MODE
-     */
-    if (
-      this.isTestMode() &&
-      (
-        String(sessionId || "").startsWith("TEST_SESS_") ||
-        cleanOtp === "123456"
-      )
-    ) {
-      const simId =
-        Math.floor(
-          100000 + Math.random() * 900000
-        );
-
-      const testToken =
-        `MYMTN_TOKEN_${Date.now()}_${formattedLocal}`;
-
-      const simRecord =
-        await prisma.gatewaySim.upsert({
-          where: {
-            phone: formattedLocal,
-          },
-
-          update: {
-            token: testToken,
-            refreshToken: null,
-
-            airtimeBalance:
-              "NGN 1,450.00",
-
-            dataBalance:
-              "15.50GB",
-
-            tariff:
-              "MTN Pulse",
-
-            status:
-              "ACTIVE",
-
-            lastSync:
-              new Date(),
-          },
-
-          create: {
-            simId,
-
-            phone:
-              formattedLocal,
-
-            network:
-              "MTN",
-
-            gatewayName:
-              `MTN Gateway Web2 - ${formattedLocal}`,
-
-            token:
-              testToken,
-
-            refreshToken:
-              null,
-
-            airtimeBalance:
-              "NGN 1,450.00",
-
-            dataBalance:
-              "15.50GB",
-
-            tariff:
-              "MTN Pulse",
-
-            status:
-              "ACTIVE",
-          },
-        });
-
-      return {
-        success: true,
-
-        testMode: true,
-
-        message:
-          `SIM ${formattedLocal} verified and connected successfully in TEST MODE.`,
-
-        sim: simRecord,
-      };
-    }
-
-    /**
-     * REAL MODE
-     */
-    if (!this.otpVerifyUrl) {
-      return {
-        success: false,
-        code: "MTN_OTP_VERIFY_ENDPOINT_NOT_CONFIGURED",
-        message:
-          "MTN OTP verification endpoint is not configured. " +
-          "Set MYMTN_OTP_VERIFY_URL in your environment.",
-      };
-    }
-
-    try {
-      console.log(
-        `🔐 [MTN OTP VERIFY] Verifying ${formatted234}`
-      );
-
-      const response = await axios.post(
-        this.otpVerifyUrl,
-
-        {
-          msisdn:
-            formatted234,
-
-          phone:
-            formattedLocal,
-
-          otp:
-            cleanOtp,
-
-          sessionId:
-            sessionId || null,
-        },
-
-        this.getAxiosConfig()
-      );
-
-      const data =
-        response.data || {};
-
-      if (
-        response.status < 200 ||
-        response.status >= 300
-      ) {
-        return {
-          success: false,
-
-          message:
-            data.message ||
-            data.error ||
-            `MTN API returned HTTP ${response.status}.`,
-        };
-      }
-
-      const token =
-        data.token ||
-        data.data?.token ||
+      const accessToken =
+        data.access_token ||
         data.accessToken ||
-        data.data?.accessToken;
+        data.token;
 
-      const refreshToken =
-        data.refreshToken ||
-        data.data?.refreshToken ||
-        null;
-
-      if (!token) {
-        return {
-          success: false,
-          message:
-            data.message ||
-            "OTP verification succeeded but MTN did not return an access token.",
-        };
+      if (!accessToken) {
+        throw new Error(
+          "MTN OAuth response did not contain an access token."
+        );
       }
 
-      const balances =
-        await this.fetchSimBalances(
-          token,
-          formatted234
-        );
-
-      const simId =
-        Math.floor(
-          100000 + Math.random() * 900000
-        );
-
-      const simRecord =
-        await prisma.gatewaySim.upsert({
-          where: {
-            phone:
-              formattedLocal,
-          },
-
-          update: {
-            token,
-
-            refreshToken,
-
-            airtimeBalance:
-              balances.airtime,
-
-            dataBalance:
-              balances.data,
-
-            tariff:
-              balances.tariff ||
-              "MTN Pulse",
-
-            status:
-              "ACTIVE",
-
-            lastSync:
-              new Date(),
-          },
-
-          create: {
-            simId,
-
-            phone:
-              formattedLocal,
-
-            network:
-              "MTN",
-
-            gatewayName:
-              `MTN Gateway Web2 - ${formattedLocal}`,
-
-            token,
-
-            refreshToken,
-
-            airtimeBalance:
-              balances.airtime,
-
-            dataBalance:
-              balances.data,
-
-            tariff:
-              balances.tariff ||
-              "MTN Pulse",
-
-            status:
-              "ACTIVE",
-          },
-        });
-
-      return {
-        success: true,
-
-        message:
-          `SIM ${formattedLocal} authenticated and linked!`,
-
-        sim:
-          simRecord,
-      };
-    } catch (error) {
-      console.error(
-        "❌ [MTN OTP VERIFY ERROR]",
-        error
+      const expiresIn = Number(
+        data.expires_in ||
+        data.expiresIn ||
+        3600
       );
 
-      return {
-        success: false,
+      this.token = accessToken;
 
-        message:
-          this.getReadableError(
-            error,
-            "Invalid or expired OTP code."
-          ),
-      };
+      this.tokenExpiresAt =
+        Date.now() +
+        Math.max(expiresIn - 60, 60) * 1000;
+
+      return accessToken;
+    } catch (error) {
+      console.error(
+        "❌ MTN OAuth error:",
+        this.getErrorMessage(
+          error,
+          "Unable to authenticate with MTN"
+        )
+      );
+
+      throw new Error(
+        this.getErrorMessage(
+          error,
+          "MTN OAuth authentication failed."
+        )
+      );
     }
   }
 
-  /**
-   * Backward compatibility.
-   */
+  // ============================================================
+  // COMMON HEADERS
+  // ============================================================
+
+  async getHeaders(options = {}) {
+    const token = await this.getAccessToken();
+
+    const headers = {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    };
+
+    if (this.apiKey) {
+      headers["X-API-Key"] = this.apiKey;
+    }
+
+    if (options.transactionId) {
+      headers.transactionId = options.transactionId;
+    }
+
+    if (options.originChannelId) {
+      headers["x-origin-channelid"] =
+        options.originChannelId;
+    }
+
+    if (options.countryCode) {
+      headers["x-country-code"] =
+        options.countryCode;
+    }
+
+    return headers;
+  }
+
+  // ============================================================
+  // 2. CUSTOMER OTP
+  // ============================================================
+
+  async requestOtp(phone) {
+    const formattedPhone = this.formatPhone(phone, "0");
+
+    /*
+     * DO NOT fake this.
+     *
+     * MTN Customer Authorization NG is currently listed as
+     * COMING SOON in the official developer portal.
+     *
+     * Therefore there is no verified public production endpoint
+     * that we can safely use here for MyMTN SMS OTP.
+     */
+
+    return {
+      success: false,
+      supported: false,
+      code: "MTN_CUSTOMER_AUTHORIZATION_UNAVAILABLE",
+      message:
+        "MTN Customer Authorization / MyMTN SMS OTP is not currently available through the published MTN Nigeria API specification.",
+      phone: formattedPhone,
+    };
+  }
+
+  // ============================================================
+  // 3. VERIFY OTP
+  // ============================================================
+
+  async verifyOtpAndRegisterSim(phone, otp, sessionId) {
+    return {
+      success: false,
+      supported: false,
+      code: "MTN_CUSTOMER_AUTHORIZATION_UNAVAILABLE",
+      message:
+        "SIM OTP verification cannot be completed through the current public MTN API. No fake OTP or test token is generated.",
+      phone: this.formatPhone(phone, "0"),
+    };
+  }
+
   async verifyOtpAndSaveSession(
     phone,
     otp,
@@ -624,145 +313,266 @@ class MyMTNAutomationEngine {
     );
   }
 
-  /**
-   * ============================================================
-   * 3. FETCH AIRTIME & DATA BALANCES
-   * ============================================================
-   */
-  async fetchSimBalances(
-    token,
-    phone
-  ) {
-    const formatted234 =
-      this.formatPhone(phone, "234");
+  // ============================================================
+  // 4. CUSTOMER PROFILE + BALANCE
+  // ============================================================
 
-    /**
-     * TEST TOKEN
-     */
-    if (
-      String(token).startsWith(
-        "MYMTN_TOKEN_"
-      )
-    ) {
-      return {
-        airtime:
-          "NGN 1,450.00",
+  async fetchCustomerProfile(phone) {
+    const msisdn = this.formatPhone(phone, "234");
 
-        data:
-          "15.50GB",
-
-        tariff:
-          "MTN Pulse",
-      };
-    }
-
-    if (!this.balanceUrl) {
-      return {
-        airtime:
-          "NGN 0.00",
-
-        data:
-          "0MB",
-
-        tariff:
-          "MTN Pulse",
-      };
+    if (!msisdn || msisdn.length !== 13) {
+      throw new Error("Invalid MTN phone number.");
     }
 
     try {
-      const separator =
-        this.balanceUrl.includes("?")
-          ? "&"
-          : "?";
+      const headers = await this.getHeaders();
 
-      const url =
-        `${this.balanceUrl}` +
-        `${separator}msisdn=${encodeURIComponent(
-          formatted234
-        )}`;
-
-      const response =
-        await axios.get(
-          url,
-
-          this.getAxiosConfig({
-            Authorization:
-              `Bearer ${token}`,
-          })
-        );
-
-      const bData =
-        response.data?.data ||
-        response.data ||
-        {};
-
-      const airtimeVal =
-        Number(
-          bData.airtimeBalance ??
-          bData.airtime ??
-          0
-        );
-
-      const dataValMB =
-        Number(
-          bData.dataBalanceMB ??
-          bData.data ??
-          0
-        );
-
-      const dataFormatted =
-        dataValMB >= 1024
-          ? `${(
-              dataValMB / 1024
-            ).toFixed(2)}GB`
-          : `${dataValMB}MB`;
-
-      return {
-        airtime:
-          `NGN ${airtimeVal.toFixed(2)}`,
-
-        data:
-          dataFormatted,
-
-        tariff:
-          bData.tariffPlan ||
-          "MTN Pulse",
-      };
-    } catch (error) {
-      console.warn(
-        "⚠️ Unable to fetch MTN balances:",
-        this.getReadableError(
-          error
-        )
+      const response = await axios.get(
+        `${this.apiBaseUrl}/v2/customers/${encodeURIComponent(
+          msisdn
+        )}`,
+        {
+          timeout: 20000,
+          headers,
+          params: {
+            propset: "full",
+          },
+        }
       );
 
-      return {
-        airtime:
-          "NGN 0.00",
+      return response.data;
+    } catch (error) {
+      const message = this.getErrorMessage(
+        error,
+        "Unable to fetch MTN customer profile."
+      );
 
-        data:
-          "0MB",
+      console.error(
+        `❌ MTN Profile ${msisdn}:`,
+        message
+      );
 
-        tariff:
-          "MTN Pulse",
-      };
+      throw new Error(message);
     }
   }
 
-  /**
-   * ============================================================
-   * 4. TRANSFER DATA
-   * ============================================================
-   */
+  // ============================================================
+  // 5. EXTRACT BALANCE FROM CUSTOMER PROFILE
+  // ============================================================
+
+  extractBalances(profile) {
+    const balances = [];
+
+    const plans = Array.isArray(profile?.plans)
+      ? profile.plans
+      : [];
+
+    for (const plan of plans) {
+      const planBalances = Array.isArray(plan?.balance)
+        ? plan.balance
+        : [];
+
+      for (const balance of planBalances) {
+        const data = balance?.data || balance;
+
+        if (!data) continue;
+
+        balances.push({
+          balanceType:
+            data.balanceType ||
+            data.type ||
+            "UNKNOWN",
+
+          amount:
+            data.amount ??
+            data.value ??
+            "0",
+
+          currency:
+            data.currency ||
+            "NGN",
+
+          expiryDate:
+            data.expiryDate ||
+            null,
+        });
+      }
+    }
+
+    return balances;
+  }
+
+  // ============================================================
+  // 6. FETCH SIM BALANCES
+  // ============================================================
+
+  async fetchSimBalances(tokenOrPhone, phone = null) {
+    /*
+     * Backward compatibility:
+     *
+     * Old code called:
+     * fetchSimBalances(token, phone)
+     *
+     * New code can call:
+     * fetchSimBalances(phone)
+     */
+
+    const targetPhone =
+      phone || tokenOrPhone;
+
+    const formatted234 =
+      this.formatPhone(targetPhone, "234");
+
+    const profile =
+      await this.fetchCustomerProfile(
+        formatted234
+      );
+
+    const balances =
+      this.extractBalances(profile);
+
+    let airtime = null;
+    let data = null;
+    let tariff = null;
+
+    for (const balance of balances) {
+      const type =
+        String(balance.balanceType || "")
+          .toUpperCase();
+
+      const amount = Number(balance.amount || 0);
+
+      if (
+        type.includes("VOICE") ||
+        type.includes("AIRTIME") ||
+        type.includes("MAIN")
+      ) {
+        airtime = `NGN ${amount.toFixed(2)}`;
+      }
+
+      if (
+        type.includes("DATA") ||
+        type.includes("INTERNET")
+      ) {
+        const gb = amount / 1024;
+
+        data =
+          amount >= 1024
+            ? `${gb.toFixed(2)}GB`
+            : `${amount}MB`;
+      }
+    }
+
+    /*
+     * Try to extract billing/tariff plan.
+     */
+    if (Array.isArray(profile?.plans)) {
+      const activePlan =
+        profile.plans.find(
+          (p) =>
+            String(p?.status || "").toLowerCase() ===
+            "active"
+        );
+
+      tariff =
+        activePlan?.id ||
+        activePlan?.name ||
+        null;
+    }
+
+    return {
+      airtime:
+        airtime || "NGN 0.00",
+
+      data:
+        data || "0MB",
+
+      tariff:
+        tariff || "Unknown",
+
+      balances,
+      profile,
+    };
+  }
+
+  // ============================================================
+  // 7. SYNC EXISTING GATEWAY SIM
+  // ============================================================
+
+  async syncGatewaySim(phone) {
+    const formattedLocal =
+      this.formatPhone(phone, "0");
+
+    const formatted234 =
+      this.formatPhone(phone, "234");
+
+    const balances =
+      await this.fetchSimBalances(
+        formatted234
+      );
+
+    const existing =
+      await prisma.gatewaySim.findUnique({
+        where: {
+          phone: formattedLocal,
+        },
+      });
+
+    if (!existing) {
+      throw new Error(
+        `Gateway SIM ${formattedLocal} is not registered in the database.`
+      );
+    }
+
+    const updated =
+      await prisma.gatewaySim.update({
+        where: {
+          phone: formattedLocal,
+        },
+        data: {
+          airtimeBalance:
+            balances.airtime,
+
+          dataBalance:
+            balances.data,
+
+          tariff:
+            balances.tariff,
+
+          status: "ACTIVE",
+
+          lastSync: new Date(),
+        },
+      });
+
+    return {
+      success: true,
+      sim: updated,
+      balances,
+    };
+  }
+
+  // ============================================================
+  // 8. CUSTOMER DATA TRANSFER
+  // ============================================================
+
   async transferData({
     recipientPhone,
     volumeMB,
-    pin = "2026",
+    pin = null,
     gatewayPhone = null,
+    productCode = null,
+    callbackUrl = null,
   }) {
-    const formattedRecipient =
+    const recipientMsisdn =
       this.formatPhone(
         recipientPhone,
+        "234"
+      );
+
+    const senderMsisdn =
+      this.formatPhone(
+        gatewayPhone,
         "234"
       );
 
@@ -772,179 +582,337 @@ class MyMTNAutomationEngine {
         "0"
       );
 
-    const amount =
+    if (!recipientMsisdn) {
+      throw new Error(
+        "Recipient MTN number is required."
+      );
+    }
+
+    if (!senderMsisdn) {
+      throw new Error(
+        "Gateway/sender MTN number is required."
+      );
+    }
+
+    const amountMB =
       Number(volumeMB);
 
     if (
-      !Number.isFinite(amount) ||
-      amount <= 0
+      !Number.isFinite(amountMB) ||
+      amountMB <= 0
     ) {
       throw new Error(
-        "Invalid data volume."
+        "Invalid data transfer volume."
       );
     }
 
-    const where = {
-      network: "MTN",
-      status: "ACTIVE",
+    /*
+     * The official Customer Transfer API expects
+     * transferAmount as a string and also requires:
+     *
+     * receiverMsisdn
+     * targetSystem
+     * type
+     *
+     * The exact productCode/productId must come from
+     * MTN's configured charging/catalog setup.
+     */
+
+    const transactionId =
+      this.transactionId("AYAX");
+
+    const body = {
+      receiverMsisdn:
+        recipientMsisdn,
+
+      type:
+        "DATA",
+
+      transferAmount:
+        String(amountMB),
+
+      targetSystem:
+        process.env.MTN_TARGET_SYSTEM ||
+        "AYAX",
+
+      ...(productCode
+        ? { productCode }
+        : {}),
+
+      ...(pin
+        ? { pin: String(pin) }
+        : {}),
+
+      ...(callbackUrl
+        ? { callbackUrl }
+        : {}),
+
+      additionalInformation: [
+        {
+          name: "partner",
+          description:
+            process.env.MTN_PARTNER_NAME ||
+            "AYAX GLOBAL VENTURES LTD",
+        },
+      ],
     };
 
-    if (gatewayPhone) {
-      where.phone =
-        this.formatPhone(
-          gatewayPhone,
-          "0"
-        );
-    }
+    try {
+      const headers =
+        await this.getHeaders({
+          transactionId,
 
-    const activeSim =
-      await prisma.gatewaySim.findFirst({
-        where,
-        orderBy: {
-          lastSync: "desc",
-        },
-      });
+          countryCode:
+            process.env.MTN_COUNTRY_CODE ||
+            "NG",
 
-    if (
-      !activeSim ||
-      !activeSim.token
-    ) {
-      throw new Error(
-        "No active MTN Gateway SIM online. Please link an MTN line via OTP first."
+          originChannelId:
+            process.env.MTN_ORIGIN_CHANNEL_ID ||
+            "AYAX",
+        });
+
+      const url =
+        `${this.apiBaseUrl}/v1/customers/${encodeURIComponent(
+          senderMsisdn
+        )}`;
+
+      console.log(
+        `📡 MTN DATA TRANSFER ${senderMsisdn} -> ${recipientMsisdn} (${amountMB}MB)`
       );
-    }
 
-    /**
-     * TEST MODE TRANSFER
-     */
-    if (
-      this.isTestMode() &&
-      String(
-        activeSim.token
-      ).startsWith(
-        "MYMTN_TOKEN_"
-      )
-    ) {
+      const response =
+        await axios.post(
+          url,
+          body,
+          {
+            timeout: 30000,
+            headers,
+          }
+        );
+
+      const result =
+        response.data || {};
+
       return {
         success: true,
 
-        testMode: true,
-
         message:
-          `${amount}MB transferred successfully to ${localRecipient} via MTN Data Share (TEST MODE)`,
+          result.statusMessage ||
+          `${amountMB}MB transferred successfully to ${localRecipient}`,
 
         reference:
-          `TR_TEST_${Date.now()}`,
+          result.transactionId ||
+          transactionId,
+
+        transactionId:
+          result.transactionId ||
+          transactionId,
 
         simUsed:
-          activeSim.phone,
+          this.formatPhone(
+            gatewayPhone,
+            "0"
+          ),
 
-        data: {
-          status:
-            "SUCCESSFUL",
-        },
+        data:
+          result,
       };
+    } catch (error) {
+      const status =
+        error?.response?.status;
+
+      const message =
+        this.getErrorMessage(
+          error,
+          "MTN data transfer failed."
+        );
+
+      console.error(
+        "❌ MTN DATA TRANSFER:",
+        status || "",
+        message
+      );
+
+      throw new Error(
+        message
+      );
+    }
+  }
+
+  // ============================================================
+  // 9. DATA GIFTING
+  // ============================================================
+
+  async giftData({
+    senderPhone,
+    recipientPhone,
+    productCode,
+    sendSms = true,
+  }) {
+    const senderMsisdn =
+      this.formatPhone(
+        senderPhone,
+        "234"
+      );
+
+    const receiverMsisdn =
+      this.formatPhone(
+        recipientPhone,
+        "234"
+      );
+
+    if (!senderMsisdn) {
+      throw new Error(
+        "Sender MTN number is required."
+      );
     }
 
-    /**
-     * REAL TRANSFER
-     */
-    if (!this.transferUrl) {
+    if (!receiverMsisdn) {
       throw new Error(
-        "MTN transfer endpoint is not configured. Set MYMTN_TRANSFER_URL in your environment."
+        "Recipient MTN number is required."
+      );
+    }
+
+    if (!productCode) {
+      throw new Error(
+        "MTN Data Gifting productCode is required."
+      );
+    }
+
+    if (!this.dataGiftingApiKey) {
+      throw new Error(
+        "MTN_DATA_GIFTING_API_KEY is not configured."
+      );
+    }
+
+    const transactionId =
+      this.transactionId("GIFT");
+
+    const url =
+      `${this.apiBaseUrl}/v1/datagifting/customers/${encodeURIComponent(
+        senderMsisdn
+      )}/dataGifting`;
+
+    const body = {
+      receiverMsisdn,
+      productCode,
+      sendSms: Boolean(sendSms),
+    };
+
+    try {
+      const response =
+        await axios.post(
+          url,
+          body,
+          {
+            timeout: 30000,
+
+            headers: {
+              Accept:
+                "application/json",
+
+              "Content-Type":
+                "application/json",
+
+              "X-API-Key":
+                this.dataGiftingApiKey,
+
+              transactionId,
+            },
+          }
+        );
+
+      const result =
+        response.data || {};
+
+      return {
+        success: true,
+
+        message:
+          result.statusMessage ||
+          "Data gifting request successful.",
+
+        reference:
+          result.transactionId ||
+          transactionId,
+
+        transactionId:
+          result.transactionId ||
+          transactionId,
+
+        data:
+          result,
+      };
+    } catch (error) {
+      const message =
+        this.getErrorMessage(
+          error,
+          "MTN Data Gifting failed."
+        );
+
+      console.error(
+        "❌ MTN DATA GIFTING:",
+        message
+      );
+
+      throw new Error(message);
+    }
+  }
+
+  // ============================================================
+  // 10. CHECK TRANSFER STATUS
+  // ============================================================
+
+  async getTransferStatus(transactionId) {
+    if (!transactionId) {
+      throw new Error(
+        "Transaction ID is required."
       );
     }
 
     try {
-      const transferRes =
-        await axios.post(
-          this.transferUrl,
+      const headers =
+        await this.getHeaders({
+          transactionId,
+          countryCode:
+            process.env.MTN_COUNTRY_CODE ||
+            "NG",
+        });
 
+      const response =
+        await axios.get(
+          `${this.apiBaseUrl}/v1/customers/transactionStatus`,
           {
-            senderMsisdn:
-              this.formatPhone(
-                activeSim.phone,
-                "234"
-              ),
+            timeout: 20000,
 
-            receiverMsisdn:
-              formattedRecipient,
+            headers,
 
-            volume:
-              amount,
+            params: {
+              transactionId,
 
-            pin:
-              String(pin),
-          },
+              network:
+                process.env.MTN_NETWORK ||
+                "MTN",
 
-          this.getAxiosConfig({
-            Authorization:
-              `Bearer ${activeSim.token}`,
-          })
+              operation:
+                "DATA_TRANSFER",
+            },
+          }
         );
-
-      const responseData =
-        transferRes.data || {};
-
-      if (
-        transferRes.status < 200 ||
-        transferRes.status >= 300
-      ) {
-        throw new Error(
-          responseData.message ||
-          responseData.error ||
-          `MTN transfer failed with HTTP ${transferRes.status}.`
-        );
-      }
 
       return {
         success: true,
-
-        message:
-          `${amount}MB transferred successfully to ${localRecipient}`,
-
-        reference:
-          responseData.reference ||
-          responseData.data?.reference ||
-          `TR_${Date.now()}`,
-
-        simUsed:
-          activeSim.phone,
-
-        data:
-          responseData,
+        data: response.data,
       };
     } catch (error) {
-      const errMsg =
-        this.getReadableError(
-          error,
-          "MTN Transfer failed."
-        );
-
-      if (
-        error.response?.status === 401
-      ) {
-        await prisma.gatewaySim
-          .update({
-            where: {
-              phone:
-                activeSim.phone,
-            },
-
-            data: {
-              status:
-                "EXPIRED",
-            },
-          })
-          .catch(() => {});
-      }
-
       throw new Error(
-        errMsg
+        this.getErrorMessage(
+          error,
+          "Unable to retrieve MTN transaction status."
+        )
       );
     }
   }
 }
 
-module.exports =
-  new MyMTNAutomationEngine();
+module.exports = new MyMTNGateway();

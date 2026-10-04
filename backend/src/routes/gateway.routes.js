@@ -38,6 +38,9 @@ router.patch("/devices/:id/rename", renameDevice);
 router.patch("/devices/:id/disconnect", disconnectDevice);
 router.delete("/devices/:id", deleteDevice);
 
+router.post("/mtn/request-otp", gatewayController.requestSimOtp);
+router.post("/mtn/verify-otp", gatewayController.verifySimOtp);
+
 // =========================
 // SIM Management
 // =========================

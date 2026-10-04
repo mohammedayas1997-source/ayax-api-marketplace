@@ -17,6 +17,7 @@ const {
   sendBalanceCheckCommand,
   sendNumberCheckCommand,
 } = require("../services/balanceCheck.service");
+const mymtnGateway = require("../services/mymtn.gateway");
 
 const MONTHS = {
   jan: 0, january: 0,
@@ -1412,5 +1413,29 @@ exports.getGsmAnalytics = async (req, res) => {
       success: false,
       message: error.message,
     });
+  }
+};
+
+
+
+exports.requestSimOtp = async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json({ success: false, message: "SIM phone number is required" });
+    const result = await mymtnGateway.requestOtp(phone);
+    return res.status(200).json(result);
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.verifySimOtp = async (req, res) => {
+  try {
+    const { phone, otp, sessionId } = req.body;
+    if (!phone || !otp) return res.status(400).json({ success: false, message: "Phone and OTP are required" });
+    const result = await mymtnGateway.verifyOtpAndSaveSession(phone, otp, sessionId);
+    return res.status(200).json(result);
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
   }
 };

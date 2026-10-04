@@ -11,24 +11,33 @@ class DataService {
   async purchaseData(params) {
     const { phone, network, planId, amount, pin } = params;
 
-    // 1. Tattara ID ko bayanan mai amfani ta kowace hanya
-    const targetId = params.userId || params.id || params.user?.id || params.user?._id;
-    const targetEmail = params.email || params.user?.email;
-    const targetPhone = params.userPhone || params.user?.phone;
+    // 1. Tattara ID ko bayanan mai amfani ta kowace hanya (Session ko API Key)
+    const targetId =
+      params.userId ||
+      params.id ||
+      params.user?.id ||
+      params.user?._id ||
+      params.apiKeyUser?.id ||
+      params.apiKeyUser?.userId;
+    const targetEmail = params.email || params.user?.email || params.apiKeyUser?.email;
+    const targetPhone = params.userPhone || params.user?.phone || params.apiKeyUser?.phone;
 
     let user = null;
 
     if (targetId) {
       user = await prisma.user.findUnique({
         where: { id: targetId },
+        include: { wallet: true },
       });
     } else if (targetEmail) {
       user = await prisma.user.findUnique({
         where: { email: targetEmail },
+        include: { wallet: true },
       });
     } else if (targetPhone) {
       user = await prisma.user.findFirst({
         where: { phone: targetPhone },
+        include: { wallet: true },
       });
     }
 
@@ -36,25 +45,50 @@ class DataService {
       throw new Error("User session expired or user account not found. Please log in again.");
     }
 
-    // 3. Duba Ma'aunin Kuɗi (Wallet Balance)
-    const purchaseAmount = Number(amount);
-    const userBalance = Number(user.walletBalance || user.balance || 0);
+    // 2. Duba Ma'aunin Kuɗi (Wallet Balance) - Daga Wallet table ko User table
+    let userWalletRecord = user.wallet || null;
+    if (!userWalletRecord && prisma.wallet) {
+      try {
+        userWalletRecord = await prisma.wallet.findUnique({
+          where: { userId: user.id },
+        });
+      } catch (_) {}
+    }
 
-    if (userBalance < purchaseAmount) {
+    const purchaseAmount = Number(amount);
+
+    // Bincika ko kudin yana cikin Wallet table ko User table
+    const walletBalanceNum = userWalletRecord ? Number(userWalletRecord.balance || 0) : 0;
+    const userBalanceNum = Number(user.walletBalance || user.balance || 0);
+    const availableBalance = walletBalanceNum > 0 ? walletBalanceNum : userBalanceNum;
+
+    if (availableBalance < purchaseAmount) {
       throw new Error(
-        `Insufficient balance. You have ₦${userBalance.toLocaleString()}, but ₦${purchaseAmount.toLocaleString()} is required.`
+        `Insufficient balance. You have ₦${availableBalance.toLocaleString()}, but ₦${purchaseAmount.toLocaleString()} is required.`
       );
     }
 
-    // 4. Rage kuɗin a wallet kafin aika buƙata (Atomic Transaction)
-    const updatedUser = await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        walletBalance: userBalance - purchaseAmount,
-      },
+    // 3. Rage kuɗin a wallet kafin aika buƙata (Atomic Transaction)
+    const isWalletTableActive = Boolean(userWalletRecord);
+
+    await prisma.$transaction(async (tx) => {
+      if (isWalletTableActive && tx.wallet) {
+        await tx.wallet.update({
+          where: { userId: user.id },
+          data: { balance: { decrement: purchaseAmount } },
+        });
+      }
+      if (tx.user) {
+        await tx.user.update({
+          where: { id: user.id },
+          data: {
+            walletBalance: { decrement: purchaseAmount },
+          },
+        }).catch(() => {});
+      }
     });
 
-    // 5. Ƙirƙiri rikodin ciniki (Transaction record)
+    // 4. Ƙirƙiri rikodin ciniki (Transaction record)
     const reference = `DATA_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
 
     let transactionRecord = null;
@@ -76,7 +110,7 @@ class DataService {
       // Idan babu teburin transaction a schema, a ci gaba
     }
 
-    // 6. Aika oda zuwa AutoSyncNG API Provider
+    // 5. Aika oda zuwa AutoSyncNG API Provider
     let deliverySuccess = false;
     let failureErrors = [];
     let providerData = null;
@@ -101,7 +135,7 @@ class DataService {
       failureErrors.push(detailed);
     }
 
-    // 7. Kammala ko Mayar da Kuɗi (Auto-Refund)
+    // 6. Kammala ko Mayar da Kuɗi (Auto-Refund)
     if (deliverySuccess) {
       if (transactionRecord) {
         await prisma.transaction.update({
@@ -110,20 +144,29 @@ class DataService {
         }).catch(() => {});
       }
 
+      const finalBalance = availableBalance - purchaseAmount;
       return {
         success: true,
         message: `${String(network).toUpperCase()} Data successfully delivered to ${phone}!`,
         reference,
-        newBalance: updatedUser.walletBalance,
+        newBalance: finalBalance,
         data: providerData,
       };
     } else {
-      // Mayar da kuɗi kai-tsaye idan odar ba ta tafi ba
-      const refundedUser = await prisma.user.update({
-        where: { id: user.id },
-        data: {
-          walletBalance: { increment: purchaseAmount },
-        },
+      // Mayar da kuɗi kai-tsaye idan odar ba ta tafi ba (Refund)
+      await prisma.$transaction(async (tx) => {
+        if (isWalletTableActive && tx.wallet) {
+          await tx.wallet.update({
+            where: { userId: user.id },
+            data: { balance: { increment: purchaseAmount } },
+          });
+        }
+        if (tx.user) {
+          await tx.user.update({
+            where: { id: user.id },
+            data: { walletBalance: { increment: purchaseAmount } },
+          }).catch(() => {});
+        }
       });
 
       if (transactionRecord) {

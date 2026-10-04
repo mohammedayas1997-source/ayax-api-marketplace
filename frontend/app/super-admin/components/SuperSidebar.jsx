@@ -20,6 +20,7 @@ import {
   ClipboardList,
   Activity,
   LogOut,
+  Zap,
 } from "lucide-react";
 
 const menu = [

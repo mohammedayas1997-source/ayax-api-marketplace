@@ -13,6 +13,8 @@ const dataSmeController = require("../controllers/dataSme.controller");
 const dataTransferController = require("../controllers/dataTransfer.controller");
 const dataCorporateController = require("../controllers/dataCorporate.controller");
 
+const autosyncWebhookController = require("../controllers/autosyncWebhook.controller");
+
 /* ======================================================
    FLEXIBLE AUTH MIDDLEWARE
    Yana karbar JWT Token (Dashboard) ko API Key (Developers)
@@ -160,6 +162,11 @@ router.post("/buy", apiKeyMiddleware("DATA"), validate(buyDataSchema), handleBuy
 
 // 3. PURCHASE DATA (DASHBOARD JWT OR API KEY)
 router.post("/purchase", flexibleAuth, validate(buyDataSchema), handleBuyData);
+
+// Webhook endpoint da AutoSyncNG ke turo rahoto
+router.post("/webhook/autosync", (req, res) =>
+  autosyncWebhookController.handleWebhook(req, res)
+);
 
 // 4. GET DATA TRANSACTIONS
 router.get("/transactions", flexibleAuth, async (req, res) => {

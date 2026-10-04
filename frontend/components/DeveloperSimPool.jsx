@@ -1,321 +1,305 @@
-/**
- * DeveloperSimPool.js
- * Frontend Component / Vanilla JS Module for Developer Portal
- * Path: public/js/developerSimPool.js (ko src/components/DeveloperSimPool.js)
- *
- * Yana gudanar da dukkan tsarin:
- * - Nuna Plan IDs da zabar Plan
- * - Nuna SIMs da ke Available (Kyauta) ba tare da sun shiga wani Plan ba
- * - Nuna Data Balance da Airtime Balance na kowane SIM
- * - Zabar SIMs ko da sun kai 1,000+ ba tare da matsala ba
- */
+"use client";
 
-class DeveloperSimPoolManager {
-  constructor(containerId, apiBaseUrl = "/api/v1") {
-    this.container = document.getElementById(containerId);
-    this.apiBase = apiBaseUrl.replace(/\/+$/, "");
-    this.rawSimMatrix = [];
-    this.availablePlans = [];
-    this.selectedPlanId = null;
-    this.selectedSimsForAction = new Set();
-    this.currentActiveFilter = "AVAILABLE"; // 'AVAILABLE', 'CURRENT', 'ALL'
-    this.searchQuery = "";
+import React, { useState, useEffect } from "react";
 
-    if (this.container) {
-      this.init();
+export default function DeveloperSimPool({ apiBase = "/api/v1" }) {
+  const [plans, setPlans] = useState([]);
+  const [selectedPlanId, setSelectedPlanId] = useState(null);
+  const [rawSims, setRawSims] = useState([]);
+  const [selectedSimPhones, setSelectedSimPhones] = useState(new Set());
+  const [activeFilter, setActiveFilter] = useState("AVAILABLE");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [loadingPlans, setLoadingPlans] = useState(false);
+  const [loadingSims, setLoadingSims] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetchPlans();
+  }, []);
+
+  useEffect(() => {
+    if (selectedPlanId) {
+      fetchSimAvailability(selectedPlanId);
     }
-  }
+  }, [selectedPlanId]);
 
-  async init() {
-    this.renderLayout();
-    this.bindEvents();
-    await this.loadPlans();
-  }
+  const fetchPlans = async () => {
+    setLoadingPlans(true);
+    try {
+      const res = await fetch(`${apiBase}/data/plans`);
+      const data = await res.json();
+      const list = data.plans || data.data || [
+        { planId: "mtn-tr-1gb-7days", name: "MTN 1GB (7 Days)", price: 400 },
+        { planId: "mtn-tr-1gb", name: "MTN 1GB (30 Days)", price: 500 },
+        { planId: "mtn-tr-2gb-7days", name: "MTN 2GB (7 Days)", price: 750 },
+        { planId: "mtn-tr-500mb-7days", name: "MTN 500MB (7 Days)", price: 300 },
+      ];
+      setPlans(list);
+      if (list.length > 0 && !selectedPlanId) {
+        setSelectedPlanId(list[0].planId);
+      }
+    } catch (err) {
+      console.error("Error fetching plans:", err);
+    } finally {
+      setLoadingPlans(false);
+    }
+  };
 
-  renderLayout() {
-    this.container.innerHTML = `
-      <div class="sim-pool-wrapper" style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #0f172a;">
-        <div style="display: flex; justify-content: space-between; align-items: center; background: #ffffff; padding: 16px 20px; border-radius: 12px; border: 1px solid #e2e8f0; margin-bottom: 16px;">
-          <div>
-            <h3 style="font-size: 16px; font-weight: 900; margin: 0;">Developer Gateway SIM Pool & Plan Mapping</h3>
-            <p style="font-size: 12px; color: #64748b; margin: 2px 0 0;">Dedicated SIM Pools • Filter Available Only • Live Data & Airtime Balances</p>
+  const fetchSimAvailability = async (planId) => {
+    setLoadingSims(true);
+    setSelectedSimPhones(new Set());
+    try {
+      const res = await fetch(`${apiBase}/gateway/plan-pool/availability?planId=${planId}`);
+      const data = await res.json();
+      setRawSims(data.sims || []);
+    } catch (err) {
+      console.error("Error fetching availability matrix:", err);
+    } finally {
+      setLoadingSims(false);
+    }
+  };
+
+  const toggleSelectSim = (phone) => {
+    const next = new Set(selectedSimPhones);
+    if (next.has(phone)) next.delete(phone);
+    else next.add(phone);
+    setSelectedSimPhones(next);
+  };
+
+  const toggleSelectAllVisible = () => {
+    const visible = filteredSims;
+    const allSelected = visible.every((s) => selectedSimPhones.has(s.phone));
+    const next = new Set(selectedSimPhones);
+    visible.forEach((s) => {
+      if (allSelected) next.delete(s.phone);
+      else next.add(s.phone);
+    });
+    setSelectedSimPhones(next);
+  };
+
+  const handleSavePool = async (actionType) => {
+    if (!selectedPlanId) return alert("Please select a target Plan ID first.");
+    const phones = Array.from(selectedSimPhones);
+    if (phones.length === 0 && actionType !== "REPLACE") {
+      return alert("Please select at least one SIM to add.");
+    }
+
+    setSaving(true);
+    try {
+      const res = await fetch(`${apiBase}/gateway/plan-pool/assign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          planId: selectedPlanId,
+          simPhones: phones,
+          action: actionType,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`Success! Updated pool for [${selectedPlanId}]. Total Dedicated SIMs: ${data.totalAssigned}`);
+        fetchSimAvailability(selectedPlanId);
+      } else {
+        alert(data.message || "Failed to update pool.");
+      }
+    } catch (err) {
+      alert("Network Error: " + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const filteredSims = rawSims.filter((sim) => {
+    if (activeFilter === "AVAILABLE" && !sim.isAvailableForTarget) return false;
+    if (activeFilter === "CURRENT" && !sim.isCurrentPlanPool) return false;
+    const q = searchQuery.toLowerCase();
+    const phone = String(sim.phone || "");
+    const dataBal = String(sim.dataBalance || "").toLowerCase();
+    return !q || phone.includes(q) || dataBal.includes(q);
+  });
+
+  const currentPoolCount = rawSims.filter((s) => s.isCurrentPlanPool).length;
+
+  return (
+    <div className="w-full max-w-7xl mx-auto p-4 md:p-6 space-y-6">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white p-5 rounded-2xl border border-slate-200 shadow-sm gap-4">
+        <div>
+          <h2 className="text-lg md:text-xl font-black text-slate-900">
+            Developer Gateway SIM Pool & Plan Mapping
+          </h2>
+          <p className="text-xs md:text-sm text-slate-500 mt-1">
+            Dedicated SIM Allocation • Filter Available Only • Live Data & Airtime Balances
+          </p>
+        </div>
+        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-50 text-sky-700 text-xs font-black border border-sky-100">
+          <span>∞</span> Unlimited SIM Pools
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="lg:col-span-4 bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4">
+          <div className="flex justify-between items-center">
+            <span className="text-sm font-black text-slate-800">Target Data Plans</span>
+            <button onClick={fetchPlans} className="text-xs font-bold text-sky-600 hover:text-sky-700 underline">
+              Reload
+            </button>
           </div>
-          <span style="background: #e0f2fe; color: #0284c7; padding: 4px 10px; border-radius: 8px; font-weight: 800; font-size: 11px;">
-            Unlimited SIMs Allowed
-          </span>
+
+          <div className="space-y-2.5 max-h-[520px] overflow-y-auto pr-1">
+            {loadingPlans ? (
+              <div className="text-center py-8 text-xs text-slate-400">Loading plans...</div>
+            ) : (
+              plans.map((p) => {
+                const isSelected = selectedPlanId === p.planId;
+                return (
+                  <div
+                    key={p.planId}
+                    onClick={() => setSelectedPlanId(p.planId)}
+                    className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                      isSelected
+                        ? "border-sky-500 bg-sky-50/60 shadow-sm"
+                        : "border-slate-200 bg-slate-50/50 hover:bg-slate-100"
+                    }`}
+                  >
+                    <div className="font-mono text-xs font-black text-sky-700">{p.planId}</div>
+                    <div className="text-xs font-bold text-slate-700 mt-1">
+                      {p.name || p.planLabel || "Data Bundle"} • ₦{p.price || p.userPrice || 0}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
 
-        <div style="display: grid; grid-template-columns: 320px 1fr; gap: 16px;">
-          <!-- 1. Left: Plans List -->
-          <div style="background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; padding: 16px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-              <strong style="font-size: 14px;">Select Plan ID</strong>
-              <button id="btnReloadPlans" style="border: none; background: none; color: #0284c7; cursor: pointer; font-weight: bold;">Reload</button>
+        <div className="lg:col-span-8 bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+            <div>
+              <span className="text-xs text-slate-400 uppercase tracking-wider font-bold">Target Plan</span>
+              <div className="text-base font-black font-mono text-sky-600">
+                {selectedPlanId || "Select a Plan"}
+              </div>
             </div>
-            <div id="poolPlansList" style="max-height: 480px; overflow-y: auto;">
-              <div style="text-align: center; color: #94a3b8; padding: 20px; font-size: 12px;">Loading plans...</div>
-            </div>
+            <span className="text-xs font-black text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-100">
+              🟢 {currentPoolCount} Dedicated SIMs in Pool
+            </span>
           </div>
 
-          <!-- 2. Right: SIM Selection Table -->
-          <div style="background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; padding: 16px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-              <div>
-                <span style="font-size: 13px; color: #64748b;">Target Plan:</span>
-                <strong id="labelTargetPlan" style="font-size: 14px; color: #0284c7;">Select a Plan</strong>
-              </div>
-              <span id="labelPoolSimCount" style="font-size: 12px; font-weight: 800; color: #10b981;">0 SIMs in Pool</span>
-            </div>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            <button
+              onClick={() => setActiveFilter("AVAILABLE")}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold ${
+                activeFilter === "AVAILABLE" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-600"
+              }`}
+            >
+              ✓ Available Only (Kyauta)
+            </button>
+            <button
+              onClick={() => setActiveFilter("CURRENT")}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold ${
+                activeFilter === "CURRENT" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-600"
+              }`}
+            >
+              🔗 In This Pool
+            </button>
+            <button
+              onClick={() => setActiveFilter("ALL")}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold ${
+                activeFilter === "ALL" ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-600"
+              }`}
+            >
+              ☰ All SIMs (Duka)
+            </button>
+          </div>
 
-            <!-- Filters -->
-            <div style="display: flex; gap: 8px; margin-bottom: 12px;">
-              <button class="pool-filter-btn active" data-filter="AVAILABLE" style="padding: 6px 12px; border-radius: 8px; border: 1px solid #0284c7; background: #0284c7; color: #fff; font-size: 11.5px; font-weight: bold; cursor: pointer;">
-                Available Only (Kyauta)
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search phone number, data balance, or tariff..."
+              className="flex-1 px-3.5 py-2 text-xs border border-slate-200 rounded-xl outline-none"
+            />
+            <button
+              onClick={toggleSelectAllVisible}
+              className="px-4 py-2 text-xs font-bold bg-slate-100 text-slate-700 rounded-xl"
+            >
+              Select All Visible
+            </button>
+          </div>
+
+          <div className="max-h-[380px] overflow-y-auto border border-slate-200 rounded-xl">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] tracking-wider font-bold sticky top-0 border-b">
+                <tr>
+                  <th className="p-3 w-10"></th>
+                  <th className="p-3">Phone</th>
+                  <th className="p-3">Data Balance</th>
+                  <th className="p-3">Airtime</th>
+                  <th className="p-3">Status / Bound</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {loadingSims ? (
+                  <tr><td colSpan={5} className="text-center py-10 text-slate-400">Loading SIMs...</td></tr>
+                ) : filteredSims.length === 0 ? (
+                  <tr><td colSpan={5} className="text-center py-10 text-slate-400">No SIMs matching criteria.</td></tr>
+                ) : (
+                  filteredSims.map((sim) => {
+                    const isChecked = selectedSimPhones.has(sim.phone) || sim.isCurrentPlanPool;
+                    return (
+                      <tr key={sim.phone} className="hover:bg-slate-50/70">
+                        <td className="p-3">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => toggleSelectSim(sim.phone)}
+                            className="rounded border-slate-300 text-sky-600"
+                          />
+                        </td>
+                        <td className="p-3 font-mono font-bold">{sim.phone}</td>
+                        <td className="p-3 font-black text-emerald-600">{sim.dataBalance || "0.00GB"}</td>
+                        <td className="p-3 font-bold text-sky-700">{sim.airtimeBalance || "NGN 0.00"}</td>
+                        <td className="p-3">
+                          {sim.isCurrentPlanPool ? (
+                            <span className="px-2 py-0.5 rounded-md bg-sky-50 text-sky-700 font-bold text-[10px]">In This Pool</span>
+                          ) : sim.assignedPlanId ? (
+                            <span className="px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 font-bold text-[10px]">Bound: [{sim.assignedPlanId}]</span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-bold text-[10px]">Available</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex justify-between items-center pt-3 border-t">
+            <span className="text-xs text-slate-500">
+              Selected: <strong className="text-slate-900">{selectedSimPhones.size}</strong> SIM(s)
+            </span>
+            <div className="flex gap-2">
+              <button
+                disabled={saving}
+                onClick={() => handleSavePool("ADD")}
+                className="px-4 py-2 rounded-xl text-xs font-black bg-emerald-600 text-white"
+              >
+                {saving ? "Saving..." : "+ ADD TO POOL"}
               </button>
-              <button class="pool-filter-btn" data-filter="CURRENT" style="padding: 6px 12px; border-radius: 8px; border: 1px solid #cbd5e1; background: #f8fafc; color: #475569; font-size: 11.5px; font-weight: bold; cursor: pointer;">
-                In This Plan Pool
+              <button
+                disabled={saving}
+                onClick={() => handleSavePool("REPLACE")}
+                className="px-4 py-2 rounded-xl text-xs font-black bg-sky-600 text-white"
+              >
+                {saving ? "Saving..." : "SAVE DEDICATED POOL"}
               </button>
-              <button class="pool-filter-btn" data-filter="ALL" style="padding: 6px 12px; border-radius: 8px; border: 1px solid #cbd5e1; background: #f8fafc; color: #475569; font-size: 11.5px; font-weight: bold; cursor: pointer;">
-                All SIMs (Duka)
-              </button>
-            </div>
-
-            <div style="display: flex; gap: 8px; margin-bottom: 10px;">
-              <input type="text" id="inputSearchSims" placeholder="Search phone, balance (e.g. 8GB), or sync ID..." style="flex: 1; height: 38px; border-radius: 8px; border: 1px solid #cbd5e1; padding: 0 10px; font-size: 12.5px; outline: none;">
-              <button id="btnSelectAllFiltered" style="height: 38px; padding: 0 14px; border-radius: 8px; border: 1px solid #cbd5e1; background: #f1f5f9; font-weight: bold; font-size: 12px; cursor: pointer;">Select All Visible</button>
-            </div>
-
-            <div style="max-height: 400px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 8px;">
-              <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
-                <thead>
-                  <tr style="background: #f8fafc; border-bottom: 1px solid #e2e8f0; position: sticky; top: 0;">
-                    <th style="padding: 8px 10px; text-align: left; width: 35px;"><input type="checkbox" id="chkMasterSim"></th>
-                    <th style="padding: 8px 10px; text-align: left;">Phone</th>
-                    <th style="padding: 8px 10px; text-align: left;">Data Balance</th>
-                    <th style="padding: 8px 10px; text-align: left;">Airtime</th>
-                    <th style="padding: 8px 10px; text-align: left;">Status / Bound</th>
-                  </tr>
-                </thead>
-                <tbody id="tableBodySims">
-                  <tr><td colspan="5" style="text-align: center; padding: 24px; color: #94a3b8;">Loading SIMs...</td></tr>
-                </tbody>
-              </table>
-            </div>
-
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 14px;">
-              <span style="font-size: 11.5px; color: #64748b;">Selected: <strong id="countSelectedAction">0</strong> SIM(s)</span>
-              <div style="display: flex; gap: 8px;">
-                <button id="btnAddSimsToPool" style="height: 38px; padding: 0 16px; border-radius: 8px; border: none; background: #10b981; color: #fff; font-weight: bold; font-size: 12px; cursor: pointer;">
-                  + ADD TO POOL
-                </button>
-                <button id="btnReplaceSimsPool" style="height: 38px; padding: 0 16px; border-radius: 8px; border: none; background: #0284c7; color: #fff; font-weight: bold; font-size: 12px; cursor: pointer;">
-                  SAVE DEDICATED POOL
-                </button>
-              </div>
             </div>
           </div>
         </div>
       </div>
-    `;
-  }
-
-  bindEvents() {
-    this.container.querySelector("#btnReloadPlans").addEventListener("click", () => this.loadPlans());
-
-    this.container.querySelectorAll(".pool-filter-btn").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        this.container.querySelectorAll(".pool-filter-btn").forEach((b) => {
-          b.style.background = "#f8fafc";
-          b.style.borderColor = "#cbd5e1";
-          b.style.color = "#475569";
-        });
-        e.target.style.background = "#0284c7";
-        e.target.style.borderColor = "#0284c7";
-        e.target.style.color = "#ffffff";
-        this.currentActiveFilter = e.target.getAttribute("data-filter");
-        this.renderSimTable();
-      });
-    });
-
-    const searchInput = this.container.querySelector("#inputSearchSims");
-    searchInput.addEventListener("input", (e) => {
-      this.searchQuery = e.target.value.trim().toLowerCase();
-      this.renderSimTable();
-    });
-
-    this.container.querySelector("#btnSelectAllFiltered").addEventListener("click", () => this.toggleSelectAllVisible());
-    this.container.querySelector("#chkMasterSim").addEventListener("change", () => this.toggleSelectAllVisible());
-
-    this.container.querySelector("#btnAddSimsToPool").addEventListener("click", () => this.savePool("ADD"));
-    this.container.querySelector("#btnReplaceSimsPool").addEventListener("click", () => this.savePool("REPLACE"));
-  }
-
-  async loadPlans() {
-    try {
-      const res = await fetch(`${this.apiBase}/data/plans`).then((r) => r.json());
-      this.availablePlans = res.plans || res.data || [
-        { planId: "mtn-tr-1gb-7days", name: "MTN 1GB (7 Days)", price: 400 },
-        { planId: "mtn-tr-1gb", name: "MTN 1GB (30 Days)", price: 500 },
-        { planId: "mtn-tr-2gb-7days", name: "MTN 2GB (7 Days)", price: 750 },
-        { planId: "mtn-tr-500mb-7days", name: "MTN 500MB (7 Days)", price: 300 }
-      ];
-
-      this.renderPlansList();
-      if (this.availablePlans.length > 0 && !this.selectedPlanId) {
-        this.selectPlan(this.availablePlans[0].planId);
-      }
-    } catch (_) {}
-  }
-
-  renderPlansList() {
-    const listEl = this.container.querySelector("#poolPlansList");
-    listEl.innerHTML = this.availablePlans
-      .map(
-        (p) => `
-        <div class="pool-plan-card" data-plan="${p.planId}" style="padding: 10px; border-radius: 8px; border: 1px solid ${this.selectedPlanId === p.planId ? "#0284c7" : "#e2e8f0"}; background: ${this.selectedPlanId === p.planId ? "#f0f9ff" : "#f8fafc"}; margin-bottom: 6px; cursor: pointer;">
-          <div style="font-weight: bold; font-size: 13px; color: #0284c7; font-family: monospace;">${p.planId}</div>
-          <div style="font-size: 11.5px; color: #334155; margin-top: 2px;">${p.name || p.planLabel || "Data Plan"} • ₦${p.price || p.userPrice || 0}</div>
-          <div id="badgePool-${p.planId}" style="font-size: 10.5px; color: #10b981; font-weight: bold; margin-top: 4px;">Checking pool...</div>
-        </div>
-      `
-      )
-      .join("");
-
-    listEl.querySelectorAll(".pool-plan-card").forEach((card) => {
-      card.addEventListener("click", () => {
-        const id = card.getAttribute("data-plan");
-        this.selectPlan(id);
-      });
-    });
-  }
-
-  async selectPlan(planId) {
-    this.selectedPlanId = planId;
-    this.container.querySelector("#labelTargetPlan").innerText = planId;
-    this.renderPlansList();
-    this.selectedSimsForAction.clear();
-
-    try {
-      const res = await fetch(`${this.apiBase}/gateway/plan-pool/availability?planId=${planId}`).then((r) => r.json());
-      this.rawSimMatrix = res.sims || [];
-
-      const inPool = this.rawSimMatrix.filter((s) => s.isCurrentPlanPool);
-      this.container.querySelector("#labelPoolSimCount").innerText = `${inPool.length} SIMs in Pool`;
-
-      const badge = this.container.querySelector(`#badgePool-${planId}`);
-      if (badge) badge.innerText = `${inPool.length} Dedicated SIMs`;
-
-      this.renderSimTable();
-    } catch (_) {}
-  }
-
-  renderSimTable() {
-    const tbody = this.container.querySelector("#tableBodySims");
-    const filtered = this.rawSimMatrix.filter((sim) => {
-      if (this.currentActiveFilter === "AVAILABLE" && !sim.isAvailableForTarget) return false;
-      if (this.currentActiveFilter === "CURRENT" && !sim.isCurrentPlanPool) return false;
-
-      const phone = String(sim.phone || "");
-      const dataBal = String(sim.dataBalance || "").toLowerCase();
-      return !this.searchQuery || phone.includes(this.searchQuery) || dataBal.includes(this.searchQuery);
-    });
-
-    if (filtered.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; padding: 24px; color: #94a3b8;">No SIM cards matching filter criteria.</td></tr>`;
-      return;
-    }
-
-    tbody.innerHTML = filtered
-      .map((sim) => {
-        const isChecked = this.selectedSimsForAction.has(sim.phone) || sim.isCurrentPlanPool;
-
-        let badge = `<span style="background: #dcfce7; color: #15803d; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 10px;">Available (Kyauta)</span>`;
-        if (sim.isCurrentPlanPool) {
-          badge = `<span style="background: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 10px;">In This Pool</span>`;
-        } else if (sim.assignedPlanId) {
-          badge = `<span style="background: #fee2e2; color: #b91c1c; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 10px;">Bound: [${sim.assignedPlanId}]</span>`;
-        }
-
-        return `
-        <tr style="border-bottom: 1px solid #f1f5f9;">
-          <td style="padding: 8px 10px;"><input type="checkbox" class="chk-sim-row" data-phone="${sim.phone}" ${isChecked ? "checked" : ""}></td>
-          <td style="padding: 8px 10px;"><strong>${sim.phone}</strong></td>
-          <td style="padding: 8px 10px; color: #10b981; font-weight: bold;">${sim.dataBalance || "0.00GB"}</td>
-          <td style="padding: 8px 10px; color: #0284c7; font-weight: bold;">${sim.airtimeBalance || "NGN 0.00"}</td>
-          <td style="padding: 8px 10px;">${badge}</td>
-        </tr>
-      `;
-      })
-      .join("");
-
-    tbody.querySelectorAll(".chk-sim-row").forEach((chk) => {
-      chk.addEventListener("change", (e) => {
-        const phone = e.target.getAttribute("data-phone");
-        if (e.target.checked) this.selectedSimsForAction.add(phone);
-        else this.selectedSimsForAction.delete(phone);
-        this.container.querySelector("#countSelectedAction").innerText = this.selectedSimsForAction.size;
-      });
-    });
-
-    this.container.querySelector("#countSelectedAction").innerText = this.selectedSimsForAction.size;
-  }
-
-  toggleSelectAllVisible() {
-    const filtered = this.rawSimMatrix.filter((sim) => {
-      if (this.currentActiveFilter === "AVAILABLE" && !sim.isAvailableForTarget) return false;
-      if (this.currentActiveFilter === "CURRENT" && !sim.isCurrentPlanPool) return false;
-      return !this.searchQuery || String(sim.phone).includes(this.searchQuery);
-    });
-
-    const allChecked = filtered.every((s) => this.selectedSimsForAction.has(s.phone));
-    filtered.forEach((s) => {
-      if (allChecked) this.selectedSimsForAction.delete(s.phone);
-      else this.selectedSimsForAction.add(s.phone);
-    });
-
-    this.renderSimTable();
-  }
-
-  async savePool(actionType) {
-    if (!this.selectedPlanId) {
-      alert("Please select a Data Plan first.");
-      return;
-    }
-
-    const phones = Array.from(this.selectedSimsForAction);
-    if (phones.length === 0 && actionType !== "REPLACE") {
-      alert("Please select at least one SIM to add.");
-      return;
-    }
-
-    try {
-      const res = await fetch(`${this.apiBase}/gateway/plan-pool/assign`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          planId: this.selectedPlanId,
-          simPhones: phones,
-          action: actionType,
-        }),
-      }).then((r) => r.json());
-
-      if (res.success) {
-        alert(`Success! Updated pool for [${this.selectedPlanId}]. Total Dedicated SIMs: ${res.totalAssigned}`);
-        this.selectPlan(this.selectedPlanId);
-      } else {
-        alert(res.message || "Failed to update pool.");
-      }
-    } catch (e) {
-      alert("Network Error: " + e.message);
-    }
-  }
-}
-
-// Global initialization helper
-if (typeof window !== "undefined") {
-  window.DeveloperSimPoolManager = DeveloperSimPoolManager;
-}
-
-if (typeof module !== "undefined" && module.exports) {
-  module.exports = DeveloperSimPoolManager;
+    </div>
+  );
 }

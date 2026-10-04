@@ -1,20 +1,33 @@
 {
+  "$schema": "https://json.schemastore.org/jsconfig",
   "compilerOptions": {
-    "ignoreDeprecations": "6.0",
     "target": "es2020",
     "lib": ["dom", "dom.iterable", "es2020"],
     "allowJs": true,
+    "checkJs": false,
     "skipLibCheck": true,
     "module": "esnext",
-    "moduleResolution": "bundler",
+    "moduleResolution": "node",
+    "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
       "@/*": ["./*"]
     },
     "resolveJsonModule": true,
     "jsx": "preserve",
-    "noEmit": true
+    "noEmit": true,
+    "types": ["node"]
   },
+  "typeAcquisition": {
+    "enable": true,
+    "include": ["node"]
+  },
+  "include": [
+    "**/*.js",
+    "**/*.jsx",
+    "**/*.ts",
+    "**/*.tsx"
+  ],
   "exclude": [
     "node_modules",
     ".next"

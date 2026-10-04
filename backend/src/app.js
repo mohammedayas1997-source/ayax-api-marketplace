@@ -376,6 +376,8 @@ app.post("/api/v1/vtu/airtime", (req, res, next) => {
   return airtimeRoutes(req, res, next);
 });
 
+app.use("/api/v1/gateway/plan-pool", require("./routes/planPool.routes"));
+
 app.use("/api/v1/gsm", gsmRoutes);
 app.use("/api/v1/gateway", gatewayRoutes);
 app.use("/api/v1/network-profiles", networkProfileRoutes);

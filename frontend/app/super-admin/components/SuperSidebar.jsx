@@ -40,6 +40,13 @@ const menu = [
     badge: "VIP" 
   },
 
+  { 
+  name: "Universal SIM Orchestrator", 
+  href: "/super-admin/master-pools", 
+  icon: Zap,
+  badge: "MASTER" 
+},
+
   { name: "GSM Gateway", href: "/super-admin/gsm-gateway", icon: CircuitBoard },
 
   { name: "API Monitor", href: "/super-admin/api", icon: Server },

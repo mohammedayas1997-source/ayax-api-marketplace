@@ -18,6 +18,7 @@ import {
   Home,
   LogOut,
   Bell,
+  Layers,
 } from "lucide-react";
 
 const links = [
@@ -54,6 +55,13 @@ const links = [
   },
 
   { section: "MARKETPLACE" },
+
+  {
+    name: "Marketplace SIM Pools",
+    href: "/admin/gateway-pools",
+    icon: Layers,
+    badge: "GATEWAY",
+  },
 
   {
     name: "API Plans",
@@ -179,15 +187,21 @@ export default function AdminSidebar({
               key={item.href}
               href={item.href}
               onClick={onClose}
-              className={`flex items-center gap-3 rounded-xl px-4 py-3 transition ${
+              className={`flex items-center justify-between rounded-xl px-4 py-3 transition ${
                 active
                   ? "bg-blue-600 text-white"
                   : "text-slate-300 hover:bg-slate-800"
               }`}
             >
-              <Icon size={18} />
-
-              <span>{item.name}</span>
+              <div className="flex items-center gap-3">
+                <Icon size={18} />
+                <span>{item.name}</span>
+              </div>
+              {item.badge && (
+                <span className="rounded-md border border-amber-500/30 bg-amber-500/20 px-2 py-0.5 text-[9px] font-extrabold tracking-wide text-amber-400">
+                  {item.badge}
+                </span>
+              )}
             </Link>
           );
         })}

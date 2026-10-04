@@ -30,6 +30,7 @@ import {
   Bell,
   KeyRound,
   Zap,
+  Layers,
 } from "lucide-react";
 
 const links = [
@@ -90,6 +91,13 @@ const links = [
   },
 
   { section: "MARKETPLACE" },
+
+  {
+    name: "Universal SIM Orchestrator",
+    href: "/super-admin/master-pools",
+    icon: Zap,
+    badge: "MASTER",
+  },
 
   {
     name: "API Marketplace",

@@ -20,6 +20,7 @@ import {
   Settings,
   Home,
   LogOut,
+  Layers,
 } from "lucide-react";
 
 import { socket } from "@/lib/socket";
@@ -91,6 +92,13 @@ const links = [
   },
 
   { section: "DEVELOPER" },
+  {
+    key: "sim-pools",
+    name: "SIM Pool & Gateway",
+    href: "/dashboard/sim-pools",
+    icon: Layers,
+    badge: "GATEWAY",
+  },
   {
     key: "api-keys",
     name: "API Keys",
@@ -206,14 +214,21 @@ export default function DashboardSidebar({ onClose }) {
               href={item.href}
               onClick={handleNavigation}
               aria-current={active ? "page" : undefined}
-              className={`flex items-center gap-3 rounded-xl px-4 py-3 transition ${
+              className={`flex items-center justify-between rounded-xl px-4 py-3 transition ${
                 active
                   ? "bg-blue-600 text-white"
                   : "text-slate-300 hover:bg-slate-800 hover:text-white"
               }`}
             >
-              <Icon size={18} />
-              <span>{item.name}</span>
+              <div className="flex items-center gap-3">
+                <Icon size={18} />
+                <span>{item.name}</span>
+              </div>
+              {item.badge && (
+                <span className="rounded-md border border-emerald-500/30 bg-emerald-500/20 px-2 py-0.5 text-[9px] font-extrabold tracking-wide text-emerald-400">
+                  {item.badge}
+                </span>
+              )}
             </Link>
           );
         })}

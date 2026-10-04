@@ -878,6 +878,46 @@ model DataPlan {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
+// =========================================================================
+// MYMTN WEB CLOUD GATEWAY & DEDICATED PLAN SIM POOLS (POSTGRESQL)
+// =========================================================================
+
+model GatewaySim {
+  id              String    @id @default(cuid())
+  simId           Int?      // Sync ID (misali: 517551)
+  phone           String    @unique // 08161444444
+  network         String    @default("MTN")
+  gatewayName     String?   // "MTN Gateway Web2 - 08161444444"
+  token           String    // MyMTN Bearer Token
+  refreshToken    String?
+  airtimeBalance  String?   @default("NGN 0.00")
+  dataBalance     String?   @default("0.00GB")
+  tariff          String?   @default("MTN X")
+  status          String    @default("ACTIVE") // ACTIVE, EXPIRED, OFFLINE
+  isPinned        Boolean   @default(true)
+  lastSync        DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([phone, status])
+}
+
+model PlanSimPool {
+  id                String    @id @default(cuid())
+  developerId       String    // "admin_master" ko User ID na developer
+  planId            String    // "mtn-tr-1gb-7days", "140", da sauransu
+  assignedSims      String[]  @default([]) // Jerin lambobin SIM (misali: ["08161444444", "09033738409"])
+  totalSimsCount    Int       @default(0)
+  isActive          Boolean   @default(true)
+  isOutOfStock      Boolean   @default(false)
+  stockReason       String?
+  lastRotatedIndex  Int       @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([developerId, planId])
+  @@index([planId, isOutOfStock])
+}
 
 enum PackageTier {
   REGULAR

@@ -1,16 +1,14 @@
 /**
  * MyMTN Web Automation Gateway (Native Prisma PostgreSQL)
  * Path: backend/src/services/mymtn.gateway.js
- * 
- * Auto-fallback endpoints, geo-proxy support, and live error diagnostics.
  */
 const axios = require("axios");
 const https = require("https");
 const prisma = require("../config/prisma");
 
+// Use official mymtn.com.ng (NOT api.mymtn.com.ng which causes EPROTO SSL crash)
 const MYMTN_BASE_URL = (process.env.MYMTN_API_URL || "https://mymtn.com.ng/api/v1").replace(/\/+$/, "");
 
-// Agent to handle SSL and keep connections alive
 const httpsAgent = new https.Agent({
   rejectUnauthorized: false,
   keepAlive: true,
@@ -26,7 +24,6 @@ class MyMTNAutomationEngine {
         "Accept": "application/json, text/plain, */*",
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36 MyMTN/3.2.0",
-        "X-App-Version": "3.2.0",
         "Origin": "https://mymtn.com.ng",
         "Referer": "https://mymtn.com.ng/",
       },
@@ -54,39 +51,39 @@ class MyMTNAutomationEngine {
     const formatted234 = this.formatPhone(phone, "234");
     const formattedLocal = this.formatPhone(phone, "0");
 
-    // Comprehensive list of active MyMTN Web & Mobile endpoints
+    // Only real, active MyMTN domains (strictly excluding api.mymtn.com.ng)
     const endpoints = [
       {
-        url: `${MYMTN_BASE_URL}/auth/otp/send`,
-        data: { msisdn: formatted234, channel: "WEB" },
-      },
-      {
-        url: `https://mymtn.com.ng/api/v1/auth/otp/request`,
+        url: "https://mymtn.com.ng/api/v1/auth/otp/request",
         data: { msisdn: formattedLocal, channel: "WEB" },
       },
       {
-        url: `https://mymtn.com.ng/api/v1/otp/generate`,
+        url: "https://mymtn.com.ng/api/v1/otp/generate",
         data: { msisdn: formattedLocal, recipient: formatted234 },
       },
       {
-        url: `https://ext.mtn.ng/my-mtn/v1/otp`,
+        url: "https://mymtn.com.ng/api/v1/auth/otp/send",
+        data: { msisdn: formatted234, channel: "WEB" },
+      },
+      {
+        url: "https://ext.mtn.ng/my-mtn/v1/otp",
         data: { phone: formatted234 },
       },
     ];
 
     let lastError = null;
-    let diagnosticDetails = [];
+    let failureReasons = [];
 
     for (const ep of endpoints) {
       try {
-        console.log(`📡 [MYMTN OTP] Attempting: ${ep.url} with ${formatted234}...`);
+        console.log(`📡 [MYMTN OTP] Contacting ${ep.url} for ${formattedLocal}...`);
         const response = await axios.post(ep.url, ep.data, {
           timeout: 20000,
           httpsAgent: httpsAgent,
           headers: {
             "Accept": "application/json, text/plain, */*",
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/128.0.0.0 Mobile Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/128.0.0.0 Mobile Safari/537.36",
             "Origin": "https://mymtn.com.ng",
             "Referer": "https://mymtn.com.ng/",
           },
@@ -111,25 +108,24 @@ class MyMTNAutomationEngine {
       } catch (err) {
         const status = err.response?.status;
         const msg = err.response?.data?.message || err.message;
-        console.warn(`❌ [MYMTN OTP FAIL] ${ep.url} -> Status: ${status || "No Response"} (${msg})`);
-        diagnosticDetails.push(`${ep.url.split("/")[2]}: ${status || err.code || msg}`);
+        console.warn(`⚠️ [MYMTN OTP TRY FAILED] ${ep.url}: status=${status || "none"}, msg=${msg}`);
+        failureReasons.push(`${ep.url.replace("https://", "").split("/")[0]}: ${status || err.code || msg}`);
         lastError = err;
       }
     }
 
-    // Determine accurate feedback
     let userMessage = "MTN Network Gateway temporarily unreachable.";
     if (lastError?.response?.status === 403) {
-      userMessage = "MTN Gateway rejected request (403 Forbidden). MTN firewall blocks non-Nigerian IP addresses.";
-    } else if (lastError?.code === "ETIMEDOUT" || lastError?.code === "ECONNABORTED") {
-      userMessage = "MTN Gateway connection timed out (firewall block or network latency).";
+      userMessage = "MTN Gateway rejected cloud connection (403 Forbidden: Geo-firewall).";
+    } else if (lastError?.code === "ETIMEDOUT") {
+      userMessage = "MTN Gateway connection timed out.";
     } else if (lastError?.response?.data?.message) {
       userMessage = lastError.response.data.message;
     }
 
     return {
       success: false,
-      message: `${userMessage} [${diagnosticDetails[0] || "Unknown"}]`,
+      message: `${userMessage} (${failureReasons[0] || "Gateway Offline"})`,
     };
   }
 
@@ -141,8 +137,14 @@ class MyMTNAutomationEngine {
     const formattedLocal = this.formatPhone(phone, "0");
 
     const endpoints = [
-      { url: `${MYMTN_BASE_URL}/auth/otp/verify`, data: { msisdn: formatted234, otp: String(otp).trim(), sessionId } },
-      { url: `https://mymtn.com.ng/api/v1/auth/otp/verify`, data: { msisdn: formattedLocal, otp: String(otp).trim(), sessionId } },
+      {
+        url: "https://mymtn.com.ng/api/v1/auth/otp/verify",
+        data: { msisdn: formattedLocal, otp: String(otp).trim(), sessionId },
+      },
+      {
+        url: "https://mymtn.com.ng/api/v1/auth/otp/confirm",
+        data: { msisdn: formatted234, otp: String(otp).trim(), sessionId },
+      },
     ];
 
     let lastError = null;
@@ -230,9 +232,10 @@ class MyMTNAutomationEngine {
   async fetchSimBalances(token, phone) {
     const formatted234 = this.formatPhone(phone, "234");
     try {
-      const balanceRes = await this.client.get(`/user/balances?msisdn=${formatted234}`, {
+      const balanceRes = await axios.get(`https://mymtn.com.ng/api/v1/user/balances?msisdn=${formatted234}`, {
         headers: { Authorization: `Bearer ${token}` },
         httpsAgent: httpsAgent,
+        timeout: 15000,
       });
 
       const bData = balanceRes.data?.data || balanceRes.data || {};
@@ -273,8 +276,8 @@ class MyMTNAutomationEngine {
     }
 
     try {
-      const transferRes = await this.client.post(
-        "/data/transfer",
+      const transferRes = await axios.post(
+        "https://mymtn.com.ng/api/v1/data/transfer",
         {
           senderMsisdn: this.formatPhone(activeSim.phone, "234"),
           receiverMsisdn: formattedRecipient,
@@ -284,6 +287,7 @@ class MyMTNAutomationEngine {
         {
           headers: { Authorization: `Bearer ${activeSim.token}` },
           httpsAgent: httpsAgent,
+          timeout: 25000,
         }
       );
 
@@ -307,4 +311,4 @@ class MyMTNAutomationEngine {
   }
 }
 
-module.exports = new MyMTNAutomationEngine();
+module.exports = new MyMTNAutomationEngine()

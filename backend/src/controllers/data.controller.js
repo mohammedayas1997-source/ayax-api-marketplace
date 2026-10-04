@@ -1,6 +1,7 @@
 const prisma = require("../config/prisma");
 const { emitEvent, emitGatewayCommand } = require("../config/socket");
 const axios = require("axios");
+const autoSyncService = require("../services/autosync.service");
 
 // Helper na tsaftace lambar waya zuwa 080...
 const cleanLocalPhone = (phone = "") => {
@@ -44,6 +45,7 @@ const parseBalanceValue = (val) => {
 // Helper: Duba balance na Providers a lokacin da bukata ta taso
 const getProviderBalances = async () => {
   const balances = {
+    AUTOSYNC: 999999,
     ALIHSAN: 0,
     SMARTSMS: 0,
     CLUBCONNECT: 0,
@@ -186,6 +188,17 @@ const getProviderBalances = async () => {
 // Helper: Tura Data ta hanyar API da aka zaba
 const dispatchDataAPI = async ({ provider, network, phone, planCode, numericMB, reference }) => {
   const normNet = network.toUpperCase();
+
+  // 0. AUTOSYNC NG (CLOUD AUTO-SIM GATEWAY)
+  if (provider === "AUTOSYNC") {
+    const res = await autoSyncService.purchaseData({
+      phone: cleanLocalPhone(phone),
+      network: normNet,
+      planCode: planCode || numericMB,
+      reference: reference,
+    });
+    return { success: true, provider: "AUTOSYNC", raw: res.data };
+  }
 
   // 1. AL-IHSAN DATASUB
   if (provider === "ALIHSAN") {
@@ -910,6 +923,7 @@ exports.purchaseData = async (req, res) => {
     const providerErrors = [];
 
     const allProviders = [
+      { name: "AUTOSYNC", balance: balances.AUTOSYNC, hasEnv: Boolean(process.env.AUTOSYNC_TOKEN || "1473|UI7nINVKvWlV1oydtw25JLagPhnZ7MP09d79e6c9") },
       { name: "ALIHSAN", balance: balances.ALIHSAN, hasEnv: Boolean(getAlihsanToken()) },
       { name: "SMARTSMS", balance: balances.SMARTSMS, hasEnv: Boolean(process.env.SMARTSMS_API_TOKEN) },
       { name: "CLUBCONNECT", balance: balances.CLUBCONNECT, hasEnv: Boolean(process.env.CLUBCONNECT_API_KEY) },

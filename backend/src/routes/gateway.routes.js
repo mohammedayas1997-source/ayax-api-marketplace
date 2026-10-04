@@ -40,6 +40,9 @@ router.delete("/devices/:id", deleteDevice);
 
 router.post("/mtn/request-otp", gatewayController.requestSimOtp);
 router.post("/mtn/verify-otp", gatewayController.verifySimOtp);
+router.get("/sims", gatewayController.getGatewaySims);
+router.post("/refresh-balances", gatewayController.refreshBalances);
+router.delete("/sims/:phone", gatewayController.deleteSim)
 
 // =========================
 // SIM Management

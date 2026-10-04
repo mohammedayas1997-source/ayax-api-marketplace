@@ -1416,25 +1416,160 @@ exports.getGsmAnalytics = async (req, res) => {
   }
 };
 
+// =========================================================================
+// 25. MYMTN CLOUD WEB GATEWAY (PLAN A) & GSM GATEWAY COEXISTENCE (PLAN B)
+// =========================================================================
 
-
+/**
+ * @desc    Neman OTP daga MTN don kulla sabon SIM (Plan A Cloud Web2 Gateway)
+ * @route   POST /api/v1/gateway/mtn/request-otp
+ */
 exports.requestSimOtp = async (req, res) => {
   try {
     const { phone } = req.body;
-    if (!phone) return res.status(400).json({ success: false, message: "SIM phone number is required" });
+    if (!phone) {
+      return res.status(400).json({ success: false, message: "SIM phone number is required" });
+    }
     const result = await mymtnGateway.requestOtp(phone);
-    return res.status(200).json(result);
+    return res.status(result.success ? 200 : 400).json(result);
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }
 };
 
+/**
+ * @desc    Tabbatar da OTP & Karbar Session Token da Balances
+ * @route   POST /api/v1/gateway/mtn/verify-otp
+ */
 exports.verifySimOtp = async (req, res) => {
   try {
     const { phone, otp, sessionId } = req.body;
-    if (!phone || !otp) return res.status(400).json({ success: false, message: "Phone and OTP are required" });
-    const result = await mymtnGateway.verifyOtpAndSaveSession(phone, otp, sessionId);
-    return res.status(200).json(result);
+    if (!phone || !otp) {
+      return res.status(400).json({ success: false, message: "Phone and OTP are required" });
+    }
+    const result = await mymtnGateway.verifyOtpAndRegisterSim
+      ? await mymtnGateway.verifyOtpAndRegisterSim(phone, otp, sessionId)
+      : await mymtnGateway.verifyOtpAndSaveSession(phone, otp, sessionId);
+
+    return res.status(result.success ? 200 : 400).json(result);
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * @desc    Dauko jerin katinan SIM na MyMTN (Plan A) tare da GSM Sims (Plan B)
+ * @route   GET /api/v1/gateway/sims
+ */
+exports.getGatewaySims = async (req, res) => {
+  try {
+    const mongoose = require("mongoose");
+    const db = mongoose.connection?.db;
+
+    // 1. Katinan MyMTN Cloud Web2 (Plan A)
+    let cloudSims = [];
+    if (db) {
+      try {
+        cloudSims = await db.collection("gatewaysims").find({}).sort({ updatedAt: -1 }).toArray();
+      } catch (_) {}
+    }
+
+    // 2. Katinan GSM Hardware / Android Device (Plan B)
+    let gsmSims = [];
+    try {
+      gsmSims = await prisma.gsmSim.findMany({
+        include: { device: true },
+        orderBy: { slotIndex: "asc" },
+      });
+    } catch (_) {}
+
+    return res.status(200).json({
+      success: true,
+      count: cloudSims.length + gsmSims.length,
+      planA_cloudSims: cloudSims,
+      planB_gsmSims: gsmSims,
+      sims: cloudSims.length > 0 ? cloudSims : gsmSims,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * @desc    Sabunta Ma'aunin Data da Airtime (Refresh All Balances)
+ * @route   POST /api/v1/gateway/refresh-balances
+ */
+exports.refreshBalances = async (req, res) => {
+  try {
+    const mongoose = require("mongoose");
+    const db = mongoose.connection?.db;
+    let refreshedCount = 0;
+
+    // 1. Sabunta MyMTN Cloud SIMs (Plan A)
+    if (db) {
+      const activeCloudSims = await db.collection("gatewaysims").find({ status: "ACTIVE" }).toArray();
+      for (const sim of activeCloudSims) {
+        if (sim.token && typeof mymtnGateway.fetchSimBalances === "function") {
+          try {
+            const balances = await mymtnGateway.fetchSimBalances(sim.token, sim.phone);
+            await db.collection("gatewaysims").updateOne(
+              { _id: sim._id },
+              {
+                $set: {
+                  airtimeBalance: balances.airtime,
+                  dataBalance: balances.data,
+                  tariff: balances.tariff || "MTN X",
+                  lastSync: new Date(),
+                },
+              }
+            );
+            refreshedCount++;
+          } catch (_) {}
+        }
+      }
+    }
+
+    // 2. Tura USSD Balance check zuwa GSM Devices (Plan B)
+    try {
+      const gsmSims = await prisma.gsmSim.findMany({
+        where: { status: "ACTIVE" },
+        include: { device: true },
+      });
+      for (const sim of gsmSims) {
+        if (sim.device && sim.device.status === "ONLINE") {
+          await sendBalanceCheckCommand({ device: sim.device, sim, type: "DATA" }).catch(() => {});
+        }
+      }
+    } catch (_) {}
+
+    return res.status(200).json({
+      success: true,
+      message: `Refreshed balances across Plan A (Cloud Web2) and Plan B (GSM Devices)!`,
+      refreshedCount,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+/**
+ * @desc    Goge Katin SIM daga Cloud Gateway
+ * @route   DELETE /api/v1/gateway/sims/:phone
+ */
+exports.deleteSim = async (req, res) => {
+  try {
+    const { phone } = req.params;
+    const mongoose = require("mongoose");
+    const db = mongoose.connection?.db;
+
+    if (db) {
+      await db.collection("gatewaysims").deleteOne({ phone: String(phone) });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Gateway SIM ${phone} removed successfully.`,
+    });
   } catch (err) {
     return res.status(500).json({ success: false, message: err.message });
   }

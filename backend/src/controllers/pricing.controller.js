@@ -1,5 +1,6 @@
 const prisma = require("../config/prisma");
 const { emitEvent } = require("../config/socket");
+const mongoose = require("mongoose");
 
 const ALLOWED_TIERS = [
   "REGULAR",
@@ -165,6 +166,21 @@ exports.getPublicPricing = async (req, res) => {
           String(p.serviceCode).toUpperCase().includes(cleanNetwork)
       );
     }
+    // Duba ko wannan Plan ID din yana da layukan da ke dauke da data a Master Pool
+const db = mongoose.connection?.db;
+let poolStatusMap = {};
+
+if (db) {
+  try {
+    const pools = await db.collection("plan_sim_pools").find({}).toArray();
+    pools.forEach(pool => {
+      poolStatusMap[pool.planId] = {
+        isOutOfStock: Boolean(pool.isOutOfStock),
+        totalSims: pool.assignedSims?.length || 0
+      };
+    });
+  } catch (_) {}
+}
 
     return res.status(200).json({
       success: true,

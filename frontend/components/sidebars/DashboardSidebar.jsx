@@ -93,6 +93,13 @@ const links = [
 
   { section: "DEVELOPER" },
   {
+    key: "sim-connections",
+    name: "SIM Connections",
+    href: "/dashboard/sim-connections",
+    icon: Smartphone,
+    badge: "MYMTN",
+  },
+  {
     key: "sim-pools",
     name: "SIM Pool & Gateway",
     href: "/dashboard/sim-pools",

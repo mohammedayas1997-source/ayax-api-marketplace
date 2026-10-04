@@ -1,190 +1,120 @@
-const { PrismaClient } = require("@prisma/client");
 const axios = require("axios");
-const autoSyncService = require("./autosync.service");
 
-const prisma = new PrismaClient();
+const AUTOSYNC_API_URL = "https://autosyncng.com/api";
+const AUTOSYNC_ACCESS_TOKEN =
+  process.env.AUTOSYNC_TOKEN || "1473|UI7nINVKvWlV1oydtw25JLagPhnZ7MP09d79e6c9";
 
-class DataService {
+class AutoSyncService {
   /**
-   * Sayar da Data Bundle ta hanyar Prisma ORM tare da AutoSyncNG Gateway
+   * Tura odar Data ta AutoSyncNG API
    */
   async purchaseData(params) {
-    const { phone, network, planId, amount, pin } = params;
+    const { phone, network, planCode, amount, reference, planType, pin } = params;
 
-    // 1. Tattara ID ko bayanan mai amfani ta kowace hanya (Session ko API Key)
-    const targetId =
-      params.userId ||
-      params.id ||
-      params.user?.id ||
-      params.user?._id ||
-      params.apiKeyUser?.id ||
-      params.apiKeyUser?.userId;
-    const targetEmail = params.email || params.user?.email || params.apiKeyUser?.email;
-    const targetPhone = params.userPhone || params.user?.phone || params.apiKeyUser?.phone;
+    const normNetwork = String(network || "mtn").toLowerCase().trim();
+    const cleanPhone = String(phone).replace(/\D/g, "");
+    const formattedPhone =
+      cleanPhone.startsWith("234") && cleanPhone.length === 13
+        ? `0${cleanPhone.slice(3)}`
+        : cleanPhone;
 
-    let user = null;
+    // Gano endpoint din da ya dace
+    let endpoint = "/data";
+    const codeStr = String(planCode || "").toLowerCase();
+    const typeStr = String(planType || "").toLowerCase();
 
-    if (targetId) {
-      user = await prisma.user.findUnique({
-        where: { id: targetId },
-        include: { wallet: true },
-      });
-    } else if (targetEmail) {
-      user = await prisma.user.findUnique({
-        where: { email: targetEmail },
-        include: { wallet: true },
-      });
-    } else if (targetPhone) {
-      user = await prisma.user.findFirst({
-        where: { phone: targetPhone },
-        include: { wallet: true },
-      });
+    if (typeStr.includes("sme") || codeStr.includes("sme")) {
+      endpoint = "/data/sme";
+    } else if (
+      typeStr.includes("transfer") ||
+      codeStr.includes("tr") ||
+      codeStr.includes("tf")
+    ) {
+      endpoint = "/data/transfer";
+    } else if (typeStr.includes("corp") || codeStr.includes("corp")) {
+      endpoint = "/data/corporate";
     }
 
-    if (!user) {
-      throw new Error("User session expired or user account not found. Please log in again.");
+    // Tabbatar da cewa ba a tura 'undefined' ba
+    let finalVariationCode = String(planCode || "").trim();
+    if (!finalVariationCode || finalVariationCode === "undefined") {
+      if (Number(amount) === 400) finalVariationCode = "mtn-tr-1gb-7days";
+      else if (Number(amount) === 500) finalVariationCode = "mtn-tr-1gb";
+      else if (Number(amount) === 750) finalVariationCode = "mtn-tr-2gb-7days";
+      else if (Number(amount) === 850) finalVariationCode = "mtn-tr-2gb";
     }
 
-    // 2. Duba Ma'aunin Kuɗi (Wallet Balance) - Daga Wallet table ko User table
-    let userWalletRecord = user.wallet || null;
-    if (!userWalletRecord && prisma.wallet) {
-      try {
-        userWalletRecord = await prisma.wallet.findUnique({
-          where: { userId: user.id },
-        });
-      } catch (_) {}
-    }
+    // Lambar PIN ta hada-hada a AutoSyncNG
+    const securityPin =
+      pin ||
+      process.env.AUTOSYNC_PIN ||
+      process.env.GSM_DATA_PIN ||
+      "1997";
 
-    const purchaseAmount = Number(amount);
+    const payload = {
+      service_id: normNetwork,
+      network: normNetwork,
+      variation_code: finalVariationCode,
+      variationCode: finalVariationCode,
+      code: finalVariationCode,
+      plan: finalVariationCode,
+      phone: formattedPhone,
+      mobile_number: formattedPhone,
+      phone_number: formattedPhone,
+      pin: String(securityPin),
+      ref: String(reference),
+      reference: String(reference),
+      request_id: String(reference),
+    };
 
-    // Bincika ko kudin yana cikin Wallet table ko User table
-    const walletBalanceNum = userWalletRecord ? Number(userWalletRecord.balance || 0) : 0;
-    const userBalanceNum = Number(user.walletBalance || user.balance || 0);
-    const availableBalance = walletBalanceNum > 0 ? walletBalanceNum : userBalanceNum;
-
-    if (availableBalance < purchaseAmount) {
-      throw new Error(
-        `Insufficient balance. You have ₦${availableBalance.toLocaleString()}, but ₦${purchaseAmount.toLocaleString()} is required.`
-      );
-    }
-
-    // 3. Rage kuɗin a wallet kafin aika buƙata (Atomic Transaction)
-    const isWalletTableActive = Boolean(userWalletRecord);
-
-    await prisma.$transaction(async (tx) => {
-      if (isWalletTableActive && tx.wallet) {
-        await tx.wallet.update({
-          where: { userId: user.id },
-          data: { balance: { decrement: purchaseAmount } },
-        });
-      }
-      if (tx.user) {
-        await tx.user.update({
-          where: { id: user.id },
-          data: {
-            walletBalance: { decrement: purchaseAmount },
-          },
-        }).catch(() => {});
-      }
-    });
-
-    // 4. Ƙirƙiri rikodin ciniki (Transaction record)
-    const reference = `DATA_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
-
-    let transactionRecord = null;
     try {
-      transactionRecord = await prisma.transaction.create({
-        data: {
-          userId: user.id,
-          type: "DATA",
-          network: String(network).toUpperCase(),
-          phone: String(phone),
-          amount: purchaseAmount,
-          planId: String(planId),
-          reference: reference,
-          status: "PROCESSING",
-          description: `${String(network).toUpperCase()} Data Purchase (${phone})`,
+      console.log(`📡 [AUTOSYNC DISPATCH]: POST ${AUTOSYNC_API_URL}${endpoint}`, payload);
+
+      const response = await axios.post(`${AUTOSYNC_API_URL}${endpoint}`, payload, {
+        headers: {
+          Authorization: `Bearer ${AUTOSYNC_ACCESS_TOKEN}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
         },
-      });
-    } catch (_) {
-      // Idan babu teburin transaction a schema, a ci gaba
-    }
-
-    // 5. Aika oda zuwa AutoSyncNG API Provider
-    let deliverySuccess = false;
-    let failureErrors = [];
-    let providerData = null;
-
-    try {
-      const autoSyncRes = await autoSyncService.purchaseData({
-        phone: String(phone),
-        network: String(network).toUpperCase(),
-        planCode: String(planId),
-        amount: purchaseAmount,
-        reference: reference,
+        timeout: 45000,
       });
 
-      if (autoSyncRes.success) {
-        deliverySuccess = true;
-        providerData = autoSyncRes.data;
-      } else {
-        failureErrors.push(autoSyncRes.message || "AutoSyncNG dispatch rejected");
-      }
-    } catch (apiErr) {
-      const detailed = apiErr.response?.data?.message || apiErr.message || "Network timeout";
-      failureErrors.push(detailed);
-    }
+      console.log(`✅ [AUTOSYNC SUCCESS]:`, response.data);
 
-    // 6. Kammala ko Mayar da Kuɗi (Auto-Refund)
-    if (deliverySuccess) {
-      if (transactionRecord) {
-        await prisma.transaction.update({
-          where: { id: transactionRecord.id },
-          data: { status: "SUCCESSFUL" },
-        }).catch(() => {});
-      }
-
-      const finalBalance = availableBalance - purchaseAmount;
       return {
         success: true,
-        message: `${String(network).toUpperCase()} Data successfully delivered to ${phone}!`,
-        reference,
-        newBalance: finalBalance,
-        data: providerData,
+        status: "SUCCESSFUL",
+        data: response.data,
       };
-    } else {
-      // Mayar da kuɗi kai-tsaye idan odar ba ta tafi ba (Refund)
-      await prisma.$transaction(async (tx) => {
-        if (isWalletTableActive && tx.wallet) {
-          await tx.wallet.update({
-            where: { userId: user.id },
-            data: { balance: { increment: purchaseAmount } },
-          });
-        }
-        if (tx.user) {
-          await tx.user.update({
-            where: { id: user.id },
-            data: { walletBalance: { increment: purchaseAmount } },
-          }).catch(() => {});
-        }
+    } catch (error) {
+      const errData = error.response?.data;
+      console.error("❌ [AUTOSYNC ERROR]:", errData || error.message);
+
+      const errorMessage =
+        errData?.message ||
+        errData?.error ||
+        errData?.errors?.pin?.[0] ||
+        errData?.errors?.variation_code?.[0] ||
+        errData?.desc ||
+        error.message;
+
+      throw new Error(errorMessage);
+    }
+  }
+
+  async checkBalance() {
+    try {
+      const response = await axios.get(`${AUTOSYNC_API_URL}/user`, {
+        headers: {
+          Authorization: `Bearer ${AUTOSYNC_ACCESS_TOKEN}`,
+          Accept: "application/json",
+        },
       });
-
-      if (transactionRecord) {
-        await prisma.transaction.update({
-          where: { id: transactionRecord.id },
-          data: {
-            status: "FAILED",
-            description: `Refunded: ${failureErrors.join(" | ")}`,
-          },
-        }).catch(() => {});
-      }
-
-      const formattedError = failureErrors.length > 0 ? failureErrors.join("; ") : "Provider unavailable";
-      throw new Error(
-        `Transaction Failed: Delivery Error (${formattedError}). ₦${purchaseAmount} has been refunded back to your wallet.`
-      );
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.message || error.message);
     }
   }
 }
 
-module.exports = new DataService();
+module.exports = new AutoSyncService();

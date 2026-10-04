@@ -23,6 +23,11 @@ const {
   stopDeviceAlarm,
   lockGatewayDevice,
   updateSimNumber,
+  requestSimOtp,
+  verifySimOtp,
+  getGatewaySims,
+  refreshBalances,
+  deleteSim,
 } = require("../controllers/gateway.controller");
 
 // =========================
@@ -38,11 +43,14 @@ router.patch("/devices/:id/rename", renameDevice);
 router.patch("/devices/:id/disconnect", disconnectDevice);
 router.delete("/devices/:id", deleteDevice);
 
-router.post("/mtn/request-otp", gatewayController.requestSimOtp);
-router.post("/mtn/verify-otp", gatewayController.verifySimOtp);
-router.get("/sims", gatewayController.getGatewaySims);
-router.post("/refresh-balances", gatewayController.refreshBalances);
-router.delete("/sims/:phone", gatewayController.deleteSim)
+// ==========================================
+// MyMTN Cloud Web2 Gateway (Plan A - ₦0 Fee)
+// ==========================================
+router.post("/mtn/request-otp", requestSimOtp);
+router.post("/mtn/verify-otp", verifySimOtp);
+router.get("/sims", getGatewaySims);
+router.post("/refresh-balances", refreshBalances);
+router.delete("/sims/:phone", deleteSim);
 
 // =========================
 // SIM Management
@@ -67,7 +75,6 @@ router.post("/location", updateLocation);
 router.post("/security-alert", receiveSecurityAlert);
 router.get("/security-alerts", getSecurityAlerts);
 router.patch("/security-alerts/:id/resolve", resolveSecurityAlert);
-
 
 // =========================
 // Remote Device Commands
